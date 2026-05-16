@@ -1,9 +1,16 @@
 import { expect, test } from "@playwright/test";
 
-test("renders the W3 dashboard shell", async ({ page }) => {
+test("redirects public root into the login screen when unauthenticated", async ({ page }) => {
   await page.goto("/");
 
-  await expect(page.getByRole("heading", { name: "Central de crescimento W3" })).toBeVisible();
-  await expect(page.getByRole("button", { name: /Conectar minha primeira conta/ })).toBeVisible();
-  await expect(page.getByText("Top campanhas por ROAS")).toBeVisible();
+  await expect(page).toHaveURL(/\/login/);
+  await expect(page.getByRole("heading", { name: "Entrar na sua conta" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Entrar na sua conta" })).toBeVisible();
+});
+
+test("renders the signup form", async ({ page }) => {
+  await page.goto("/sign-up");
+
+  await expect(page.getByRole("heading", { name: "Criar conta grátis" })).toBeVisible();
+  await expect(page.getByLabel("Empresa")).toBeVisible();
 });

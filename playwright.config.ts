@@ -12,6 +12,10 @@ export default defineConfig({
   },
   webServer: {
     command: "npx next dev --hostname 127.0.0.1 --port 3100",
+    env: {
+      AUTH_SECRET: "playwright-local-secret-playwright-local-secret",
+      NEXTAUTH_SECRET: "playwright-local-secret-playwright-local-secret",
+    },
     url: "http://127.0.0.1:3100",
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,

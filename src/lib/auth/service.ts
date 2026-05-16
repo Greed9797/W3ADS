@@ -1,0 +1,360 @@
+import { addMinutes } from "date-fns";
+
+import { logAudit } from "@/lib/audit/log";
+import { prisma } from "@/lib/db/prisma";
+import { sendTransactionalEmail } from "@/lib/email/resend";
+import { createSecureToken, hashToken } from "@/lib/utils/tokens";
+
+import { hashPassword, verifyPassword } from "./password";
+import type {
+  ForgotPasswordInput,
+  ResetPasswordInput,
+  SignUpInput,
+  WorkspaceInviteInput,
+} from "./schemas";
+import { createWorkspaceSlug } from "./workspace";
+
+export class AuthServiceError extends Error {
+  constructor(
+    message: string,
+    public readonly code: "EMAIL_IN_USE" | "INVALID_TOKEN" | "USER_NOT_FOUND",
+  ) {
+    super(message);
+  }
+}
+
+export function getAuthSessionCookieName() {
+  return process.env.NODE_ENV === "production"
+    ? "__Secure-authjs.session-token"
+    : "authjs.session-token";
+}
+
+export async function createDatabaseSessionForUser(userId: string) {
+  const sessionToken = createSecureToken();
+  const expires = addMinutes(new Date(), 60 * 24 * 30);
+
+  await prisma.session.create({
+    data: {
+      userId,
+      sessionToken,
+      expires,
+    },
+  });
+
+  await logAudit({
+    action: "auth.login",
+    userId,
+    resourceType: "user",
+    resourceId: userId,
+  });
+
+  return {
+    sessionToken,
+    expires,
+  };
+}
+
+async function createUniqueWorkspaceSlug(workspaceName: string) {
+  const baseSlug = createWorkspaceSlug(workspaceName);
+  let candidate = baseSlug;
+  let suffix = 2;
+
+  while (await prisma.workspace.findUnique({ where: { slug: candidate } })) {
+    candidate = `${baseSlug}-${suffix}`;
+    suffix += 1;
+  }
+
+  return candidate;
+}
+
+export async function registerUserWithWorkspace(input: SignUpInput) {
+  const existingUser = await prisma.user.findUnique({
+    where: { email: input.email },
+    select: { id: true },
+  });
+
+  if (existingUser) {
+    throw new AuthServiceError("Email ja cadastrado.", "EMAIL_IN_USE");
+  }
+
+  const passwordHash = await hashPassword(input.password);
+  const invite = input.inviteToken
+    ? await prisma.workspaceInvite.findUnique({
+        where: { token: input.inviteToken },
+        select: {
+          id: true,
+          workspaceId: true,
+          role: true,
+          acceptedAt: true,
+          expiresAt: true,
+        },
+      })
+    : null;
+
+  if (input.inviteToken && (!invite || invite.acceptedAt || invite.expiresAt < new Date())) {
+    throw new AuthServiceError("Convite invalido ou expirado.", "INVALID_TOKEN");
+  }
+
+  const workspaceSlug = invite ? null : await createUniqueWorkspaceSlug(input.workspaceName);
+
+  return prisma.$transaction(async (tx) => {
+    if (invite) {
+      const user = await tx.user.create({
+        data: {
+          email: input.email,
+          name: input.name,
+          passwordHash,
+          memberships: {
+            create: {
+              role: invite.role,
+              workspaceId: invite.workspaceId,
+            },
+          },
+        },
+        include: {
+          memberships: {
+            include: {
+              workspace: true,
+            },
+          },
+        },
+      });
+
+      await tx.workspaceInvite.update({
+        where: { id: invite.id },
+        data: { acceptedAt: new Date() },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          action: "auth.signup",
+          userId: user.id,
+          workspaceId: invite.workspaceId,
+          resourceType: "workspace_invite",
+          resourceId: invite.id,
+          metadata: {
+            role: invite.role,
+          },
+        },
+      });
+
+      return user;
+    }
+
+    const user = await tx.user.create({
+      data: {
+        email: input.email,
+        name: input.name,
+        passwordHash,
+        memberships: {
+          create: {
+            role: "OWNER",
+            workspace: {
+              create: {
+                name: input.workspaceName,
+                slug: workspaceSlug ?? createWorkspaceSlug(input.workspaceName),
+                dashboards: {
+                  create: {
+                    ownerId: "pending",
+                    name: "Performance Geral",
+                    isDefault: true,
+                    layout: { columns: 12, rows: [] },
+                    widgets: {
+                      items: ["revenue", "ad_spend", "blended_roas", "orders"],
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      include: {
+        memberships: {
+          include: {
+            workspace: true,
+          },
+        },
+      },
+    });
+
+    const workspace = user.memberships[0]?.workspace;
+
+    if (workspace) {
+      await tx.dashboard.updateMany({
+        where: {
+          workspaceId: workspace.id,
+          ownerId: "pending",
+        },
+        data: {
+          ownerId: user.id,
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          action: "auth.signup",
+          userId: user.id,
+          workspaceId: workspace.id,
+          resourceType: "workspace",
+          resourceId: workspace.id,
+          metadata: {
+            workspaceSlug,
+          },
+        },
+      });
+    }
+
+    return user;
+  });
+}
+
+export async function getUserByCredentials(email: string, password: string) {
+  const user = await prisma.user.findUnique({
+    where: { email },
+    select: {
+      id: true,
+      email: true,
+      name: true,
+      image: true,
+      passwordHash: true,
+    },
+  });
+
+  if (!user?.passwordHash) {
+    return null;
+  }
+
+  const isValidPassword = await verifyPassword(password, user.passwordHash);
+
+  if (!isValidPassword) {
+    return null;
+  }
+
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    image: user.image,
+  };
+}
+
+export async function requestPasswordReset(input: ForgotPasswordInput) {
+  const user = await prisma.user.findUnique({
+    where: { email: input.email },
+    select: { id: true, email: true, name: true },
+  });
+
+  if (!user) {
+    return;
+  }
+
+  const token = createSecureToken();
+  const tokenHash = hashToken(token);
+  const expiresAt = addMinutes(new Date(), 30);
+
+  await prisma.passwordResetToken.create({
+    data: {
+      userId: user.id,
+      tokenHash,
+      expiresAt,
+    },
+  });
+
+  const appUrl = process.env.NEXTAUTH_URL ?? "http://localhost:3000";
+  const resetUrl = `${appUrl}/reset-password?token=${token}`;
+
+  await sendTransactionalEmail({
+    to: user.email,
+    subject: "Redefinir senha do Adstart W3",
+    html: `<p>Recebemos uma solicitacao para redefinir sua senha.</p><p><a href="${resetUrl}">Redefinir senha</a></p><p>O link expira em 30 minutos.</p>`,
+  });
+
+  await logAudit({
+    action: "auth.password_reset.request",
+    userId: user.id,
+    resourceType: "user",
+    resourceId: user.id,
+  });
+}
+
+export async function resetPassword(input: ResetPasswordInput) {
+  const tokenHash = hashToken(input.token);
+  const resetToken = await prisma.passwordResetToken.findUnique({
+    where: { tokenHash },
+    include: { user: true },
+  });
+
+  if (!resetToken || resetToken.usedAt || resetToken.expiresAt < new Date()) {
+    throw new AuthServiceError("Token invalido ou expirado.", "INVALID_TOKEN");
+  }
+
+  const passwordHash = await hashPassword(input.password);
+
+  await prisma.$transaction([
+    prisma.user.update({
+      where: { id: resetToken.userId },
+      data: { passwordHash },
+    }),
+    prisma.passwordResetToken.update({
+      where: { id: resetToken.id },
+      data: { usedAt: new Date() },
+    }),
+    prisma.auditLog.create({
+      data: {
+        action: "auth.password_reset.complete",
+        userId: resetToken.userId,
+        resourceType: "user",
+        resourceId: resetToken.userId,
+      },
+    }),
+  ]);
+}
+
+export async function createWorkspaceInvite(input: {
+  workspaceId: string;
+  invitedById: string;
+  values: WorkspaceInviteInput;
+}) {
+  const token = createSecureToken();
+  const expiresAt = addMinutes(new Date(), 60 * 24 * 7);
+
+  const invite = await prisma.workspaceInvite.create({
+    data: {
+      workspaceId: input.workspaceId,
+      invitedById: input.invitedById,
+      email: input.values.email,
+      role: input.values.role,
+      token,
+      expiresAt,
+    },
+    include: {
+      workspace: {
+        select: { name: true },
+      },
+    },
+  });
+
+  const appUrl = process.env.NEXTAUTH_URL ?? "http://localhost:3000";
+  const inviteUrl = `${appUrl}/sign-up?invite=${invite.token}`;
+
+  await sendTransactionalEmail({
+    to: invite.email,
+    subject: `Convite para ${invite.workspace.name} no Adstart W3`,
+    html: `<p>Voce foi convidado para acessar o workspace ${invite.workspace.name}.</p><p><a href="${inviteUrl}">Aceitar convite</a></p>`,
+  });
+
+  await logAudit({
+    action: "workspace.member.invite",
+    userId: input.invitedById,
+    workspaceId: input.workspaceId,
+    resourceType: "workspace_invite",
+    resourceId: invite.id,
+    metadata: {
+      email: invite.email,
+      role: invite.role,
+    },
+  });
+
+  return invite;
+}

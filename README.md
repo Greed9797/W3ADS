@@ -77,6 +77,31 @@ META_REDIRECT_URI="http://localhost:3000/api/connectors/meta/callback"
 
 Com `AUTH_DISABLED="true"`, a tela `/connectors` continua funcionando para demo e mostra quando as variaveis da Meta ainda estao pendentes.
 
+## Conectores Google Ads e Shopify
+
+As bases das Fases 3 e 4 tambem estao preparadas sem chamar providers em ambiente sem credenciais:
+
+- Google Ads usa OAuth offline, `customers:listAccessibleCustomers`, GAQL via REST e job Inngest `connector.google_ads.backfill`.
+- Shopify usa OAuth com validacao HMAC, GraphQL Orders, webhook assinado em `/api/webhooks/shopify` e job `connector.shopify.backfill`.
+- Tokens de acesso ficam criptografados com `TOKEN_ENCRYPTION_KEY`; refresh token do Google fica salvo como envelope criptografado.
+
+Variaveis adicionais:
+
+```bash
+GOOGLE_ADS_API_VERSION="v24"
+GOOGLE_ADS_CLIENT_ID="..."
+GOOGLE_ADS_CLIENT_SECRET="..."
+GOOGLE_ADS_DEVELOPER_TOKEN="..."
+GOOGLE_ADS_LOGIN_CUSTOMER_ID="" # opcional para MCC
+GOOGLE_ADS_REDIRECT_URI="http://localhost:3000/api/connectors/google-ads/callback"
+
+SHOPIFY_API_VERSION="2026-04"
+SHOPIFY_APP_API_KEY="..."
+SHOPIFY_APP_API_SECRET="..."
+SHOPIFY_REDIRECT_URI="http://localhost:3000/api/connectors/shopify/callback"
+SHOPIFY_SCOPES="read_orders,read_products,read_customers,read_analytics"
+```
+
 ## Design system W3
 
 Os tokens centrais ficam em `src/app/globals.css`. Componentes React devem consumir CSS variables, evitando hexadecimais hardcoded fora de assets como `public/logo-w3.svg`.

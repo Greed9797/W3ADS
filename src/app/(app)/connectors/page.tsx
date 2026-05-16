@@ -5,7 +5,9 @@ import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getCurrentUserContext } from "@/lib/auth/current";
+import { getGoogleAdsConfigStatus } from "@/lib/connectors/google-ads/oauth";
 import { getMetaConfigStatus } from "@/lib/connectors/meta/oauth";
+import { getShopifyConfigStatus } from "@/lib/connectors/shopify/oauth";
 import { prisma } from "@/lib/db/prisma";
 import { cn } from "@/lib/utils/cn";
 
@@ -43,6 +45,22 @@ function connectorMessage(error: string | undefined, connected: string | undefin
     };
   }
 
+  if (connected === "google-ads") {
+    return {
+      tone: "success" as const,
+      title: "Google Ads conectado.",
+      body: "As contas acessiveis foram salvas com token criptografado e prontas para backfill.",
+    };
+  }
+
+  if (connected === "shopify") {
+    return {
+      tone: "success" as const,
+      title: "Shopify conectada.",
+      body: "A loja foi salva com token criptografado e pronta para sincronizar pedidos.",
+    };
+  }
+
   if (connected === "demo") {
     return {
       tone: "info" as const,
@@ -61,7 +79,17 @@ function connectorMessage(error: string | undefined, connected: string | undefin
     "missing-env": "Configure META_APP_ID, META_APP_SECRET e META_REDIRECT_URI para iniciar o OAuth.",
     "missing-token-key": "Configure TOKEN_ENCRYPTION_KEY antes de salvar tokens OAuth.",
     "meta-api": "Nao conseguimos concluir a conexao com a Meta agora. Tente novamente em alguns minutos.",
-    "provider-denied": "A autorizacao foi cancelada na Meta.",
+    "google-ads-api":
+      "Nao conseguimos concluir a conexao com o Google Ads agora. Confira o developer token e tente novamente.",
+    "invalid-hmac": "A assinatura retornada pela Shopify nao passou na validacao HMAC.",
+    "invalid-shop": "Informe uma loja Shopify valida, como loja.myshopify.com.",
+    "provider-denied": "A autorizacao foi cancelada no provedor.",
+    "missing-google-ads-env":
+      "Configure GOOGLE_ADS_CLIENT_ID, GOOGLE_ADS_CLIENT_SECRET, GOOGLE_ADS_DEVELOPER_TOKEN e GOOGLE_ADS_REDIRECT_URI.",
+    "missing-shop": "Informe o dominio da loja Shopify antes de conectar.",
+    "missing-shopify-env":
+      "Configure SHOPIFY_APP_API_KEY, SHOPIFY_APP_API_SECRET e SHOPIFY_REDIRECT_URI.",
+    "shopify-api": "Nao conseguimos concluir a conexao com a Shopify agora. Tente novamente em alguns minutos.",
   };
 
   return {
@@ -76,14 +104,30 @@ export default async function ConnectorsPage({ searchParams }: ConnectorsPagePro
   const params = await searchParams;
   const message = connectorMessage(firstParam(params.error), firstParam(params.connected));
   const metaStatus = getMetaConfigStatus();
-  const metaAccounts = context.isDemoMode
-    ? 0
-    : await prisma.connectorAccount.count({
-        where: {
-          workspaceId: context.currentWorkspace.id,
-          provider: ConnectorProvider.META_ADS,
-        },
-      });
+  const googleAdsStatus = getGoogleAdsConfigStatus();
+  const shopifyStatus = getShopifyConfigStatus();
+  const [metaAccounts, googleAdsAccounts, shopifyAccounts] = context.isDemoMode
+    ? [0, 0, 0]
+    : await Promise.all([
+        prisma.connectorAccount.count({
+          where: {
+            workspaceId: context.currentWorkspace.id,
+            provider: ConnectorProvider.META_ADS,
+          },
+        }),
+        prisma.connectorAccount.count({
+          where: {
+            workspaceId: context.currentWorkspace.id,
+            provider: ConnectorProvider.GOOGLE_ADS,
+          },
+        }),
+        prisma.connectorAccount.count({
+          where: {
+            workspaceId: context.currentWorkspace.id,
+            provider: ConnectorProvider.SHOPIFY,
+          },
+        }),
+      ]);
 
   const providerCards: ProviderCard[] = [
     {
@@ -114,25 +158,65 @@ export default async function ConnectorsPage({ searchParams }: ConnectorsPagePro
     },
     {
       name: "Google Ads",
-      description: "OAuth, GAQL e backfill entram na etapa seguinte, depois da base Meta estar validada.",
-      statusLabel: "Proxima fase",
-      statusTone: "warning",
-      action: (
+      description: context.isDemoMode
+        ? "OAuth preparado com acesso offline. Em demo, o callback valida estado mas nao grava conta."
+        : "Conecte customers acessiveis, salve refresh token criptografado e sincronize via GAQL.",
+      statusLabel:
+        googleAdsAccounts > 0
+          ? `${googleAdsAccounts} conta(s) ativa(s)`
+          : googleAdsStatus.configured
+            ? "Pronto para OAuth"
+            : "Configurar env",
+      statusTone:
+        googleAdsAccounts > 0 ? "success" : googleAdsStatus.configured ? "info" : "warning",
+      action: googleAdsStatus.configured ? (
+        <Button asChild size="sm">
+          <a href="/api/connectors/google-ads/connect">
+            <Cable size={16} aria-hidden="true" />
+            Conectar Google
+          </a>
+        </Button>
+      ) : (
         <Button disabled size="sm" variant="secondary">
           <Settings size={16} aria-hidden="true" />
-          Em breve
+          Configurar env
         </Button>
       ),
     },
     {
       name: "Shopify",
-      description: "OAuth com HMAC, pedidos GraphQL e webhooks ficam isolados na fase de ecommerce.",
-      statusLabel: "Proxima fase",
-      statusTone: "warning",
-      action: (
+      description: context.isDemoMode
+        ? "OAuth com HMAC preparado. Informe a loja quando as envs da Shopify estiverem configuradas."
+        : "Conecte a loja, ingira pedidos via GraphQL e receba webhooks assinados.",
+      statusLabel:
+        shopifyAccounts > 0
+          ? `${shopifyAccounts} loja(s) ativa(s)`
+          : shopifyStatus.configured
+            ? "Pronto para OAuth"
+            : "Configurar env",
+      statusTone:
+        shopifyAccounts > 0 ? "success" : shopifyStatus.configured ? "info" : "warning",
+      action: shopifyStatus.configured ? (
+        <form action="/api/connectors/shopify/connect" className="flex flex-col gap-2">
+          <label className="text-caption text-[var(--text-tertiary)]" htmlFor="shopify-shop">
+            Loja
+          </label>
+          <input
+            className="h-10 rounded-md border border-[var(--border-strong)] bg-[var(--bg-surface)] px-3 text-sm"
+            id="shopify-shop"
+            name="shop"
+            placeholder="loja.myshopify.com"
+            required
+          />
+          <Button className="w-fit" size="sm" type="submit">
+            <Cable size={16} aria-hidden="true" />
+            Conectar Shopify
+          </Button>
+        </form>
+      ) : (
         <Button disabled size="sm" variant="secondary">
           <Settings size={16} aria-hidden="true" />
-          Em breve
+          Configurar env
         </Button>
       ),
     },

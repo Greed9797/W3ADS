@@ -8,7 +8,10 @@ export type AuditAction =
   | "auth.logout"
   | "auth.password_reset.request"
   | "auth.password_reset.complete"
+  | "connector.google_ads.connect"
   | "connector.meta.connect"
+  | "connector.shopify.connect"
+  | "connector.shopify.uninstall"
   | "workspace.member.invite"
   | "workspace.switch";
 

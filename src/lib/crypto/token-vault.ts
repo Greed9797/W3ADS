@@ -52,3 +52,11 @@ export function decryptToken(token: EncryptedToken, options: TokenVaultOptions =
     decipher.final(),
   ]).toString("utf8");
 }
+
+export function encryptTokenEnvelope(plaintext: string, options: TokenVaultOptions = {}) {
+  return JSON.stringify(encryptToken(plaintext, options));
+}
+
+export function decryptTokenEnvelope(envelope: string, options: TokenVaultOptions = {}) {
+  return decryptToken(JSON.parse(envelope) as EncryptedToken, options);
+}

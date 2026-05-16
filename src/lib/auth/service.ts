@@ -218,10 +218,11 @@ export async function getUserByCredentials(email: string, password: string) {
       name: true,
       image: true,
       passwordHash: true,
+      deletedAt: true,
     },
   });
 
-  if (!user?.passwordHash) {
+  if (!user?.passwordHash || user.deletedAt) {
     return null;
   }
 

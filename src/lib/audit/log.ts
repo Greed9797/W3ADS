@@ -12,6 +12,8 @@ export type AuditAction =
   | "connector.meta.connect"
   | "connector.shopify.connect"
   | "connector.shopify.uninstall"
+  | "lgpd.data_export.request"
+  | "lgpd.delete_account.request"
   | "workspace.member.invite"
   | "workspace.switch";
 

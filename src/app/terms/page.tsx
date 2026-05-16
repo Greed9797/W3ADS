@@ -9,12 +9,23 @@ export default function TermsPage() {
         </CardHeader>
         <CardContent className="space-y-4 text-sm leading-7 text-[var(--text-secondary)]">
           <p>
-            Estes termos sao um rascunho operacional para o beta privado do Adstart W3.
-            A versao juridica revisada entra na fase de LGPD e beta launch.
+            Estes termos regem o uso do Adstart W3 durante o beta privado. O produto consolida
+            métricas de e-commerce e mídia paga para análise operacional do workspace autorizado.
           </p>
           <p>
-            Ao usar a plataforma, voce confirma que tem autorizacao para conectar contas
-            de anuncios, e-commerce e colaboradores ao workspace da sua empresa.
+            Ao conectar Meta Ads, Google Ads ou Shopify, você declara ter permissão para autorizar o
+            acesso aos dados dessas contas e compartilhar as informações com membros do workspace.
+          </p>
+          <p>
+            O beta pode exibir dados parciais durante backfills e sincronizações. A metodologia de
+            cálculo do dashboard é baseada nas tabelas `EcommerceOrder` e `DailyMetric`.
+          </p>
+          <p>
+            Dúvidas sobre privacidade e LGPD:{" "}
+            <a className="font-semibold text-[var(--w3-red)]" href="mailto:dpo@w3educacao.com.br">
+              dpo@w3educacao.com.br
+            </a>
+            .
           </p>
         </CardContent>
       </Card>

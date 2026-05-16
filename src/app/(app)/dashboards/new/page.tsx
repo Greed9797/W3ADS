@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { createDashboardAction } from "@/app/(app)/dashboards/actions";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { HydratedSubmitButton } from "@/components/ui/hydrated-submit-button";
 import { Input } from "@/components/ui/input";
 import { getCurrentUserContext } from "@/lib/auth/current";
 import { canEditDashboards } from "@/lib/auth/permissions";
@@ -67,7 +68,7 @@ export default async function NewDashboardPage() {
         </Card>
 
         <div className="flex flex-wrap gap-3">
-          <Button type="submit">Criar dashboard</Button>
+          <HydratedSubmitButton>Criar dashboard</HydratedSubmitButton>
           <Button asChild type="button" variant="secondary">
             <Link href="/dashboards">Cancelar</Link>
           </Button>

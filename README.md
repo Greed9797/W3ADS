@@ -126,6 +126,15 @@ A rota `/dashboards` lista paineis do workspace e `/dashboards/new` cria dashboa
 - Com `AUTH_DISABLED="true"`, dashboards criados sao persistidos em cookie local para QA sem banco.
 - Com auth/banco ativos, a persistencia usa `Dashboard.layout` e `Dashboard.widgets` no Prisma.
 
+## LGPD e beta polish
+
+- `/profile` centraliza conta, privacidade, exportacao e exclusao.
+- `/profile/data-export` gera JSON baixavel e registra solicitacao em audit log quando o banco esta ativo.
+- `/profile/delete-account` exige confirmacao exata por email; em banco real marca `User.deletedAt` e encerra sessoes.
+- Cookie banner e onboarding de 3 passos rodam no client sem dependencia externa.
+- `/api/health` retorna status basico do app.
+- `NEXT_PUBLIC_POSTHOG_KEY` habilita dispatch local de eventos seguros, sem PII.
+
 ## Design system W3
 
 Os tokens centrais ficam em `src/app/globals.css`. Componentes React devem consumir CSS variables, evitando hexadecimais hardcoded fora de assets como `public/logo-w3.svg`.

@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Fraunces, Geist, JetBrains_Mono } from "next/font/google";
 
+import { CookieBanner } from "@/components/compliance/cookie-banner";
+
 import "./globals.css";
 
 const fraunces = Fraunces({
@@ -35,6 +37,7 @@ export default function RootLayout({
     <html lang="pt-BR">
       <body className={`${fraunces.variable} ${geist.variable} ${jetBrainsMono.variable}`}>
         {children}
+        <CookieBanner />
       </body>
     </html>
   );

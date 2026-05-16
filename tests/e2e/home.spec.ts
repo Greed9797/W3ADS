@@ -43,3 +43,26 @@ test("creates a custom dashboard in demo mode", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Painéis do workspace" })).toBeVisible();
   await expect(page.getByText("Performance paga QA")).toBeVisible();
 });
+
+test("renders LGPD profile flows in demo mode", async ({ page }) => {
+  await page.goto("/profile");
+
+  await expect(page.getByRole("heading", { name: "Conta e privacidade" })).toBeVisible();
+  await page.getByRole("link", { name: "Abrir exportação" }).click();
+  await expect(page.getByRole("heading", { name: "Exportação de dados" })).toBeVisible();
+  await expect(page.getByText("demo@adstartw3.local")).toBeVisible();
+
+  await page.goto("/profile/delete-account");
+  await page.getByLabel("Email de confirmação").fill("email-errado@w3.com");
+  await page.getByRole("button", { name: "Confirmar exclusão" }).click();
+  await expect(page.getByText("O email digitado não confere")).toBeVisible();
+});
+
+test("accepts cookie consent banner", async ({ page }) => {
+  await page.goto("/dashboard");
+
+  const consentButton = page.getByRole("button", { name: "Entendi" });
+  await expect(consentButton).toBeVisible();
+  await consentButton.click();
+  await expect(consentButton).toBeHidden();
+});

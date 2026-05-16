@@ -3,6 +3,7 @@ import {
   LogOut,
   PanelsTopLeft,
   PlugZap,
+  UserCircle,
   Settings,
   UsersRound,
 } from "lucide-react";
@@ -21,6 +22,7 @@ const navItems = [
   { label: "Dashboards", href: "/dashboards", icon: PanelsTopLeft },
   { label: "Conectores", href: "/connectors", icon: PlugZap },
   { label: "Membros", href: "/workspace/members", icon: UsersRound },
+  { label: "Perfil", href: "/profile", icon: UserCircle },
   { label: "Ajustes", href: "/workspace/settings", icon: Settings },
 ];
 

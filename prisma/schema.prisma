@@ -15,6 +15,7 @@ model User {
   passwordHash  String?
   image         String?
   emailVerified DateTime?
+  deletedAt     DateTime?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 

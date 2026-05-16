@@ -55,6 +55,28 @@ Enquanto Supabase nao existir, as telas publicas (`/login`, `/sign-up`, `/forgot
 - Convites de workspace ficam em `WorkspaceInvite`; envio por email e no-op local enquanto `RESEND_API_KEY` nao estiver definida.
 - RLS Supabase esta versionado em `prisma/migrations/20260516221000_auth_multi_tenant/migration.sql` como placeholder para um futuro JWT compativel com `auth.uid()`.
 
+## Conector Meta Ads
+
+A Fase 2 ja tem a base local do OAuth da Meta sem exigir Supabase real:
+
+- `/api/connectors/meta/connect` gera `state` CSRF em cookie httpOnly e redireciona para o Facebook.
+- `/api/connectors/meta/callback` valida `state`, protege modo demo e, com auth/banco ativos, salva `ConnectorAccount` com token AES-256-GCM.
+- `src/lib/connectors/retry.ts` aplica retry exponencial com jitter e respeita `Retry-After`.
+- `src/lib/connectors/meta/client.ts` troca `code` por token, troca para long-lived token e lista ad accounts.
+
+Para testar conexao real depois de criar Supabase/Auth, configure:
+
+```bash
+AUTH_DISABLED="false"
+TOKEN_ENCRYPTION_KEY="$(openssl rand -base64 32)"
+META_API_VERSION="v25.0"
+META_APP_ID="..."
+META_APP_SECRET="..."
+META_REDIRECT_URI="http://localhost:3000/api/connectors/meta/callback"
+```
+
+Com `AUTH_DISABLED="true"`, a tela `/connectors` continua funcionando para demo e mostra quando as variaveis da Meta ainda estao pendentes.
+
 ## Design system W3
 
 Os tokens centrais ficam em `src/app/globals.css`. Componentes React devem consumir CSS variables, evitando hexadecimais hardcoded fora de assets como `public/logo-w3.svg`.

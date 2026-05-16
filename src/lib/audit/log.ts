@@ -8,6 +8,7 @@ export type AuditAction =
   | "auth.logout"
   | "auth.password_reset.request"
   | "auth.password_reset.complete"
+  | "connector.meta.connect"
   | "workspace.member.invite"
   | "workspace.switch";
 

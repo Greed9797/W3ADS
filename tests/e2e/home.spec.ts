@@ -14,3 +14,13 @@ test("renders the signup form", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Criar conta grátis" })).toBeVisible();
   await expect(page.getByLabel("Empresa")).toBeVisible();
 });
+
+test("renders connector cards in demo mode", async ({ page }) => {
+  await page.goto("/connectors");
+
+  await expect(page.getByRole("heading", { name: "Fontes de dados" })).toBeVisible();
+  await expect(page.getByText("Meta Ads")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Configurar env" })).toBeVisible();
+  await expect(page.getByText("Google Ads")).toBeVisible();
+  await expect(page.getByText("Shopify")).toBeVisible();
+});

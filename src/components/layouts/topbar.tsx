@@ -1,4 +1,4 @@
-import { CalendarDays, ChevronDown } from "lucide-react";
+import { CheckCircle2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import type { getCurrentUserContext } from "@/lib/auth/current";
@@ -17,9 +17,8 @@ export function Topbar({ context }: { context: AppContext }) {
         </h1>
       </div>
       <Button variant="secondary" className="gap-2">
-        <CalendarDays aria-hidden className="size-4" />
-        Ultimos 30 dias
-        <ChevronDown aria-hidden className="size-4" />
+        <CheckCircle2 aria-hidden className="size-4 text-[var(--success)]" />
+        Sincronizado agora
       </Button>
     </header>
   );

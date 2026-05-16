@@ -6,6 +6,9 @@ test("opens the dashboard without login while auth is disabled", async ({ page }
   await expect(page).toHaveURL(/\/dashboard/);
   await expect(page.getByRole("heading", { name: "Central de crescimento W3" })).toBeVisible();
   await expect(page.getByText("Workspace Demo / OWNER")).toBeVisible();
+  await expect(page.getByText("Performance Geral")).toBeVisible();
+  await expect(page.getByText("Faturamento × Investimento")).toBeVisible();
+  await expect(page.getByText("Top 10 campanhas por ROAS")).toBeVisible();
 });
 
 test("renders the signup form", async ({ page }) => {

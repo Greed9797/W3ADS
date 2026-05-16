@@ -102,6 +102,20 @@ SHOPIFY_REDIRECT_URI="http://localhost:3000/api/connectors/shopify/callback"
 SHOPIFY_SCOPES="read_orders,read_products,read_customers,read_analytics"
 ```
 
+## Dashboard core
+
+A rota `/dashboard` usa `src/lib/metrics/aggregator.ts` para calcular:
+
+- Faturamento por `EcommerceOrder.orderTotal`
+- Investimento por `DailyMetric.spend`
+- ROAS blended
+- Pedidos
+- Serie diaria de faturamento x investimento
+- Top 10 campanhas por ROAS
+- Funil de impressoes, cliques, sessoes e pedidos
+
+Com `AUTH_DISABLED="true"`, o dashboard usa dados demo deterministas para permitir QA visual sem Supabase. Com auth/banco ativos, os mesmos componentes passam a ler `EcommerceOrder` e `DailyMetric`.
+
 ## Design system W3
 
 Os tokens centrais ficam em `src/app/globals.css`. Componentes React devem consumir CSS variables, evitando hexadecimais hardcoded fora de assets como `public/logo-w3.svg`.

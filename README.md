@@ -116,6 +116,16 @@ A rota `/dashboard` usa `src/lib/metrics/aggregator.ts` para calcular:
 
 Com `AUTH_DISABLED="true"`, o dashboard usa dados demo deterministas para permitir QA visual sem Supabase. Com auth/banco ativos, os mesmos componentes passam a ler `EcommerceOrder` e `DailyMetric`.
 
+## Dashboards customizaveis
+
+A rota `/dashboards` lista paineis do workspace e `/dashboards/new` cria dashboards com widgets selecionados do catalogo MVP em `src/lib/metrics/kpi-catalog.ts`.
+
+- 12 widgets disponiveis: KPIs, grafico receita x investimento, tabela de campanhas, funil e distribuicao de fonte.
+- `/dashboards/[id]` permite adicionar, remover e ordenar widgets por botoes de subir/descer.
+- OWNER e ADMIN editam; VIEWER apenas consulta.
+- Com `AUTH_DISABLED="true"`, dashboards criados sao persistidos em cookie local para QA sem banco.
+- Com auth/banco ativos, a persistencia usa `Dashboard.layout` e `Dashboard.widgets` no Prisma.
+
 ## Design system W3
 
 Os tokens centrais ficam em `src/app/globals.css`. Componentes React devem consumir CSS variables, evitando hexadecimais hardcoded fora de assets como `public/logo-w3.svg`.

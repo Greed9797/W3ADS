@@ -1,6 +1,7 @@
 import {
   LayoutDashboard,
   LogOut,
+  PanelsTopLeft,
   PlugZap,
   Settings,
   UsersRound,
@@ -17,6 +18,7 @@ type AppContext = Awaited<ReturnType<typeof getCurrentUserContext>>;
 
 const navItems = [
   { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+  { label: "Dashboards", href: "/dashboards", icon: PanelsTopLeft },
   { label: "Conectores", href: "/connectors", icon: PlugZap },
   { label: "Membros", href: "/workspace/members", icon: UsersRound },
   { label: "Ajustes", href: "/workspace/settings", icon: Settings },

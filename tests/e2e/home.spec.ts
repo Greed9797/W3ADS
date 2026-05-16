@@ -27,3 +27,19 @@ test("renders connector cards in demo mode", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Google Ads" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Shopify" })).toBeVisible();
 });
+
+test("creates a custom dashboard in demo mode", async ({ page }) => {
+  await page.goto("/dashboards/new");
+
+  await page.getByLabel("Nome").fill("Performance paga QA");
+  await page.getByRole("button", { name: "Criar dashboard" }).click();
+
+  await expect(page).toHaveURL(/\/dashboards\/demo-/);
+  await expect(page.getByText("Dashboard criado.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Performance paga QA" })).toBeVisible();
+  await expect(page.getByText("Biblioteca")).toBeVisible();
+
+  await page.getByRole("link", { name: "Todos os dashboards" }).click();
+  await expect(page.getByRole("heading", { name: "Painéis do workspace" })).toBeVisible();
+  await expect(page.getByText("Performance paga QA")).toBeVisible();
+});

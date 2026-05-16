@@ -1,11 +1,81 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import type { MemberRole, WorkspacePlan } from "@prisma/client";
 
 import { prisma } from "@/lib/db/prisma";
 
 import { auth } from "./auth";
+import { isAuthDisabled } from "./mode";
 
-export async function getCurrentUserContext() {
+type CurrentWorkspace = {
+  id: string;
+  name: string;
+  slug: string;
+  plan: WorkspacePlan;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+type CurrentMembership = {
+  id: string;
+  userId: string;
+  workspaceId: string;
+  role: MemberRole;
+  createdAt: Date;
+  workspace: CurrentWorkspace;
+};
+
+const demoWorkspace: CurrentWorkspace = {
+  id: "demo-workspace",
+  name: "Workspace Demo",
+  slug: "workspace-demo",
+  plan: "FREE" as const,
+  createdAt: new Date("2026-01-01T00:00:00.000Z"),
+  updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+};
+
+const demoMembership: CurrentMembership = {
+  id: "demo-membership",
+  userId: "demo-user",
+  workspaceId: demoWorkspace.id,
+  role: "OWNER" as const,
+  createdAt: new Date("2026-01-01T00:00:00.000Z"),
+  workspace: demoWorkspace,
+};
+
+export type CurrentUserContext = {
+  user: {
+    id: string;
+    email: string;
+    name: string | null;
+    image?: string | null;
+  };
+  memberships: CurrentMembership[];
+  currentMembership: CurrentMembership;
+  currentWorkspace: CurrentWorkspace;
+  isDemoMode: boolean;
+};
+
+function getDemoUserContext(): CurrentUserContext {
+  return {
+    user: {
+      id: "demo-user",
+      email: "demo@adstartw3.local",
+      name: "Equipe W3",
+      image: null,
+    },
+    memberships: [demoMembership],
+    currentMembership: demoMembership,
+    currentWorkspace: demoWorkspace,
+    isDemoMode: true,
+  };
+}
+
+export async function getCurrentUserContext(): Promise<CurrentUserContext> {
+  if (isAuthDisabled()) {
+    return getDemoUserContext();
+  }
+
   const session = await auth();
 
   if (!session?.user?.id) {
@@ -44,5 +114,6 @@ export async function getCurrentUserContext() {
     memberships: user.memberships,
     currentMembership,
     currentWorkspace: currentMembership.workspace,
+    isDemoMode: false,
   };
 }

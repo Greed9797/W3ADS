@@ -14,19 +14,28 @@ export default async function MembersPage({ searchParams }: MembersPageProps) {
   const context = await getCurrentUserContext();
   const params = await searchParams;
   const canInvite = canManageMembers(context.currentMembership.role);
-  const workspaceMembers = await prisma.membership.findMany({
-    where: { workspaceId: context.currentWorkspace.id },
-    orderBy: { createdAt: "asc" },
-    include: {
-      user: {
-        select: {
-          id: true,
-          name: true,
-          email: true,
+  const workspaceMembers = context.isDemoMode
+    ? context.memberships.map((membership) => ({
+        ...membership,
+        user: {
+          id: context.user.id,
+          name: context.user.name,
+          email: context.user.email,
         },
-      },
-    },
-  });
+      }))
+    : await prisma.membership.findMany({
+        where: { workspaceId: context.currentWorkspace.id },
+        orderBy: { createdAt: "asc" },
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            },
+          },
+        },
+      });
 
   return (
     <div className="space-y-6">

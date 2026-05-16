@@ -1,8 +1,14 @@
 import { NextResponse, type NextRequest } from "next/server";
 
+import { isAuthDisabled } from "@/lib/auth/mode";
+
 const protectedRoutes = ["/dashboard", "/dashboards", "/connectors", "/workspace", "/profile"];
 
 export function middleware(request: NextRequest) {
+  if (isAuthDisabled()) {
+    return NextResponse.next();
+  }
+
   const { pathname } = request.nextUrl;
   const isProtectedRoute = protectedRoutes.some(
     (route) => pathname === route || pathname.startsWith(`${route}/`),

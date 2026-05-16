@@ -70,12 +70,14 @@ export function Sidebar({ context }: { context: AppContext }) {
           </div>
         </div>
       </nav>
-      <form action={logoutAction} className="absolute bottom-5 hidden px-5 lg:block">
-        <Button type="submit" variant="ghost">
-          <LogOut aria-hidden className="size-4" />
-          Sair
-        </Button>
-      </form>
+      {context.isDemoMode ? null : (
+        <form action={logoutAction} className="absolute bottom-5 hidden px-5 lg:block">
+          <Button type="submit" variant="ghost">
+            <LogOut aria-hidden className="size-4" />
+            Sair
+          </Button>
+        </form>
+      )}
     </aside>
   );
 }

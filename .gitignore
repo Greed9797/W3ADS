@@ -1,0 +1,10 @@
+.DS_Store
+.code-review-graph/
+.env
+.env*.local
+.next/
+coverage/
+node_modules/
+playwright-report/
+test-results/
+*.tsbuildinfo

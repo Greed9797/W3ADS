@@ -1,0 +1,219 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id              String    @id @default(cuid())
+  email           String    @unique
+  name            String?
+  passwordHash    String?
+  image           String?
+  emailVerifiedAt DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  memberships Membership[]
+  sessions    Session[]
+  auditLogs   AuditLog[]
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt    DateTime
+  sessionToken String   @unique
+  createdAt    DateTime @default(now())
+}
+
+model Workspace {
+  id        String        @id @default(cuid())
+  name      String
+  slug      String        @unique
+  plan      WorkspacePlan @default(FREE)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  memberships  Membership[]
+  connectors   ConnectorAccount[]
+  dashboards   Dashboard[]
+  dailyMetrics DailyMetric[]
+  auditLogs    AuditLog[]
+}
+
+enum WorkspacePlan {
+  FREE
+  PRO
+  AGENCY
+}
+
+model Membership {
+  id          String     @id @default(cuid())
+  userId      String
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspaceId String
+  workspace   Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  role        MemberRole
+  createdAt   DateTime   @default(now())
+
+  @@unique([userId, workspaceId])
+  @@index([workspaceId])
+}
+
+enum MemberRole {
+  OWNER
+  ADMIN
+  VIEWER
+}
+
+model ConnectorAccount {
+  id                     String            @id @default(cuid())
+  workspaceId            String
+  workspace              Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  provider               ConnectorProvider
+  externalAccountId      String
+  accountName            String
+  status                 ConnectorStatus   @default(ACTIVE)
+  accessTokenCiphertext  String
+  refreshTokenCiphertext String?
+  tokenIv                String
+  tokenAuthTag           String
+  tokenKeyVersion        String            @default("v1")
+  tokenExpiresAt         DateTime?
+  metadata               Json?
+  lastSyncedAt           DateTime?
+  lastSyncError          String?
+  createdAt              DateTime          @default(now())
+  updatedAt              DateTime          @updatedAt
+
+  @@unique([workspaceId, provider, externalAccountId])
+  @@index([workspaceId, provider])
+}
+
+enum ConnectorProvider {
+  META_ADS
+  GOOGLE_ADS
+  SHOPIFY
+  GA4
+  SEARCH_CONSOLE
+  TIKTOK_ADS
+}
+
+enum ConnectorStatus {
+  ACTIVE
+  TOKEN_EXPIRED
+  REVOKED
+  ERROR
+}
+
+model DailyMetric {
+  id                 String            @id @default(cuid())
+  workspaceId        String
+  workspace          Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  connectorAccountId String
+  date               DateTime          @db.Date
+  source             ConnectorProvider
+  campaignId         String?
+  campaignName       String?
+  adsetId            String?
+  adsetName          String?
+  adId               String?
+  spend              Decimal?          @db.Decimal(14, 2)
+  impressions        BigInt?
+  clicks             BigInt?
+  conversions        Decimal?          @db.Decimal(14, 2)
+  conversionsValue   Decimal?          @db.Decimal(14, 2)
+  sessions           BigInt?
+  orders             BigInt?
+  revenue            Decimal?          @db.Decimal(14, 2)
+  dedupeHash         String            @unique
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  @@index([workspaceId, date])
+  @@index([workspaceId, source, date])
+  @@index([workspaceId, campaignId, date])
+}
+
+model EcommerceOrder {
+  id                 String            @id @default(cuid())
+  workspaceId        String
+  connectorAccountId String
+  externalOrderId    String
+  platform           ConnectorProvider
+  orderNumber        String?
+  customerEmail      String?
+  orderTotal         Decimal           @db.Decimal(14, 2)
+  orderCurrency      String            @default("BRL")
+  itemsCount         Int
+  status             String
+  utmSource          String?
+  utmMedium          String?
+  utmCampaign        String?
+  placedAt           DateTime
+  createdAt          DateTime          @default(now())
+
+  @@unique([connectorAccountId, externalOrderId])
+  @@index([workspaceId, placedAt])
+}
+
+model Dashboard {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  ownerId     String
+  name        String
+  isDefault   Boolean   @default(false)
+  layout      Json
+  widgets     Json
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([workspaceId])
+}
+
+model AuditLog {
+  id           String     @id @default(cuid())
+  workspaceId  String?
+  workspace    Workspace? @relation(fields: [workspaceId], references: [id])
+  userId       String?
+  user         User?      @relation(fields: [userId], references: [id])
+  action       String
+  resourceType String?
+  resourceId   String?
+  metadata     Json?
+  ip           String?
+  userAgent    String?
+  createdAt    DateTime   @default(now())
+
+  @@index([workspaceId, createdAt])
+  @@index([userId, createdAt])
+}
+
+model SyncJob {
+  id                 String     @id @default(cuid())
+  connectorAccountId String
+  status             SyncStatus
+  startedAt          DateTime   @default(now())
+  finishedAt         DateTime?
+  rowsInserted       Int        @default(0)
+  rowsUpdated        Int        @default(0)
+  errorMessage       String?
+  metadata           Json?
+
+  @@index([connectorAccountId, startedAt])
+}
+
+enum SyncStatus {
+  PENDING
+  RUNNING
+  SUCCESS
+  FAILED
+  PARTIAL
+}

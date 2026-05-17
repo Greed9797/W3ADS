@@ -15,6 +15,7 @@ export type AuditAction =
   | "lgpd.data_export.request"
   | "lgpd.delete_account.request"
   | "feedback.submit"
+  | "observability.client_error"
   | "workspace.member.invite"
   | "workspace.switch";
 

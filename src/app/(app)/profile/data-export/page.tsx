@@ -1,6 +1,7 @@
 import { Download } from "lucide-react";
 
 import { requestDataExportAction } from "@/app/(app)/profile/actions";
+import { EventTracker } from "@/components/observability/event-tracker";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getCurrentUserContext } from "@/lib/auth/current";
@@ -30,6 +31,13 @@ export default async function DataExportPage({ searchParams }: DataExportPagePro
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
+      {params.requested ? (
+        <EventTracker
+          name="data_export_request"
+          userId={context.user.id}
+          workspaceId={context.currentWorkspace.id}
+        />
+      ) : null}
       <section>
         <p className="text-caption text-[var(--text-tertiary)]">LGPD</p>
         <h2 className="mt-2 text-2xl font-semibold tracking-[-0.02em]">Exportação de dados</h2>

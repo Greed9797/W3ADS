@@ -1,9 +1,35 @@
 "use client";
 
+import { useEffect } from "react";
+
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { buildSanitizedClientError } from "@/lib/observability/analytics";
 
-export default function ErrorPage({ reset }: { error: Error & { digest?: string }; reset: () => void }) {
+type ErrorPageProps = {
+  error: Error & { digest?: string };
+  reset: () => void;
+};
+
+export default function ErrorPage({ error, reset }: ErrorPageProps) {
+  useEffect(() => {
+    void fetch("/api/observability/client-error", {
+      method: "POST",
+      keepalive: true,
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(
+        buildSanitizedClientError({
+          message: error.message,
+          stack: error.stack,
+          digest: error.digest,
+          path: window.location.pathname,
+        }),
+      ),
+    }).catch(() => undefined);
+  }, [error]);
+
   return (
     <main className="grid min-h-screen place-items-center bg-[var(--bg-canvas)] px-4 text-[var(--text-primary)]">
       <Card className="w-full max-w-xl">

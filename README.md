@@ -135,6 +135,9 @@ A rota `/dashboards` lista paineis do workspace e `/dashboards/new` cria dashboa
 - `/api/health` retorna status basico do app.
 - `/feedback` coleta problemas, duvidas e sugestoes do beta; em demo salva apenas cookie,
   com banco ativo persiste em `BetaFeedback` e grava audit log.
+- `NEXT_PUBLIC_POSTHOG_KEY` habilita envio opcional para a Capture API do PostHog.
+- Erros capturados no client sao enviados para `/api/observability/client-error`; em demo a rota
+  responde sem tocar no banco, com Supabase ativo grava `AuditLog`.
 - `NEXT_PUBLIC_POSTHOG_KEY` habilita dispatch local de eventos seguros, sem PII.
 
 ## Design system W3

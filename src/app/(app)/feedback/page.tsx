@@ -1,8 +1,10 @@
 import { MessageSquareText } from "lucide-react";
 
 import { submitFeedbackAction } from "@/app/(app)/feedback/actions";
+import { EventTracker } from "@/components/observability/event-tracker";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { HydratedSubmitButton } from "@/components/ui/hydrated-submit-button";
+import { getCurrentUserContext } from "@/lib/auth/current";
 import { feedbackTypes, normalizeFeedbackPagePath } from "@/lib/feedback/schema";
 
 type FeedbackPageProps = {
@@ -24,6 +26,7 @@ function feedbackTypeLabel(type: (typeof feedbackTypes)[number]) {
 }
 
 export default async function FeedbackPage({ searchParams }: FeedbackPageProps) {
+  const context = await getCurrentUserContext();
   const params = await searchParams;
   const pagePath = normalizeFeedbackPagePath(firstParam(params.from)) ?? "/feedback";
   const hasInvalidError = firstParam(params.error) === "invalid";
@@ -31,6 +34,14 @@ export default async function FeedbackPage({ searchParams }: FeedbackPageProps) 
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
+      {wasSent ? (
+        <EventTracker
+          name="feedback_submit"
+          properties={{ pagePath }}
+          userId={context.user.id}
+          workspaceId={context.currentWorkspace.id}
+        />
+      ) : null}
       <section>
         <p className="text-caption text-[var(--text-tertiary)]">Beta fechado</p>
         <h2 className="mt-2 text-2xl font-semibold tracking-[-0.02em]">Enviar feedback</h2>

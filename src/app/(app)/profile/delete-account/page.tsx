@@ -1,6 +1,7 @@
 import { AlertTriangle } from "lucide-react";
 
 import { requestDeleteAccountAction } from "@/app/(app)/profile/actions";
+import { EventTracker } from "@/components/observability/event-tracker";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { HydratedSubmitButton } from "@/components/ui/hydrated-submit-button";
 import { Input } from "@/components/ui/input";
@@ -16,6 +17,13 @@ export default async function DeleteAccountPage({ searchParams }: DeleteAccountP
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
+      {params.requested ? (
+        <EventTracker
+          name="delete_account_request"
+          userId={context.user.id}
+          workspaceId={context.currentWorkspace.id}
+        />
+      ) : null}
       <section>
         <p className="text-caption text-[var(--text-tertiary)]">LGPD</p>
         <h2 className="mt-2 text-2xl font-semibold tracking-[-0.02em]">Excluir conta</h2>

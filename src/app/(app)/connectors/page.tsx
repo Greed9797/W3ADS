@@ -2,6 +2,7 @@ import { ConnectorProvider } from "@prisma/client";
 import { Cable, CircleAlert, Settings } from "lucide-react";
 import type { ReactNode } from "react";
 
+import { EventTracker } from "@/components/observability/event-tracker";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getCurrentUserContext } from "@/lib/auth/current";
@@ -102,6 +103,7 @@ function connectorMessage(error: string | undefined, connected: string | undefin
 export default async function ConnectorsPage({ searchParams }: ConnectorsPageProps) {
   const context = await getCurrentUserContext();
   const params = await searchParams;
+  const connectedProvider = firstParam(params.connected);
   const message = connectorMessage(firstParam(params.error), firstParam(params.connected));
   const metaStatus = getMetaConfigStatus();
   const googleAdsStatus = getGoogleAdsConfigStatus();
@@ -224,6 +226,14 @@ export default async function ConnectorsPage({ searchParams }: ConnectorsPagePro
 
   return (
     <div className="space-y-6">
+      {connectedProvider && connectedProvider !== "demo" ? (
+        <EventTracker
+          name="connector_connect"
+          properties={{ provider: connectedProvider }}
+          userId={context.user.id}
+          workspaceId={context.currentWorkspace.id}
+        />
+      ) : null}
       <div>
         <p className="text-caption text-[var(--text-tertiary)]">Conectores</p>
         <h2 className="mt-2 text-2xl font-semibold tracking-[-0.02em]">Fontes de dados</h2>

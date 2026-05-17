@@ -133,6 +133,8 @@ A rota `/dashboards` lista paineis do workspace e `/dashboards/new` cria dashboa
 - `/profile/delete-account` exige confirmacao exata por email; em banco real marca `User.deletedAt` e encerra sessoes.
 - Cookie banner e onboarding de 3 passos rodam no client sem dependencia externa.
 - `/api/health` retorna status basico do app.
+- `/feedback` coleta problemas, duvidas e sugestoes do beta; em demo salva apenas cookie,
+  com banco ativo persiste em `BetaFeedback` e grava audit log.
 - `NEXT_PUBLIC_POSTHOG_KEY` habilita dispatch local de eventos seguros, sem PII.
 
 ## Design system W3

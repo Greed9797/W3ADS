@@ -24,7 +24,8 @@ model User {
   sessions            Session[]
   auditLogs           AuditLog[]
   passwordResetTokens PasswordResetToken[]
-  sentInvites         WorkspaceInvite[] @relation("WorkspaceInviteInviter")
+  sentInvites         WorkspaceInvite[]    @relation("WorkspaceInviteInviter")
+  betaFeedbacks       BetaFeedback[]
 }
 
 model Account {
@@ -71,12 +72,13 @@ model Workspace {
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
 
-  memberships  Membership[]
-  connectors   ConnectorAccount[]
-  dashboards   Dashboard[]
-  dailyMetrics DailyMetric[]
-  auditLogs    AuditLog[]
-  invites      WorkspaceInvite[]
+  memberships   Membership[]
+  connectors    ConnectorAccount[]
+  dashboards    Dashboard[]
+  dailyMetrics  DailyMetric[]
+  auditLogs     AuditLog[]
+  invites       WorkspaceInvite[]
+  betaFeedbacks BetaFeedback[]
 }
 
 enum WorkspacePlan {
@@ -243,6 +245,36 @@ model AuditLog {
 
   @@index([workspaceId, createdAt])
   @@index([userId, createdAt])
+}
+
+model BetaFeedback {
+  id          String             @id @default(cuid())
+  workspaceId String?
+  workspace   Workspace?         @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  userId      String?
+  user        User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
+  type        BetaFeedbackType   @default(SUGGESTION)
+  message     String             @db.Text
+  pagePath    String?
+  status      BetaFeedbackStatus @default(OPEN)
+  metadata    Json?
+  createdAt   DateTime           @default(now())
+
+  @@index([workspaceId, createdAt])
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+}
+
+enum BetaFeedbackType {
+  BUG
+  SUGGESTION
+  QUESTION
+}
+
+enum BetaFeedbackStatus {
+  OPEN
+  REVIEWED
+  CLOSED
 }
 
 model PasswordResetToken {

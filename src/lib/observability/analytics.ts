@@ -1,7 +1,13 @@
 type EnvLike = Record<string, string | undefined>;
 
 type AnalyticsEventInput = {
-  name: "signup" | "connector_connect" | "dashboard_view" | "data_export_request" | "delete_account_request";
+  name:
+    | "signup"
+    | "connector_connect"
+    | "dashboard_view"
+    | "data_export_request"
+    | "delete_account_request"
+    | "feedback_submit";
   userId: string;
   workspaceId?: string;
   properties?: Record<string, string | number | boolean | null | undefined>;

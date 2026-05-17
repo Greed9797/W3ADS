@@ -66,3 +66,17 @@ test("accepts cookie consent banner", async ({ page }) => {
   await consentButton.click();
   await expect(consentButton).toBeHidden();
 });
+
+test("submits beta feedback in demo mode", async ({ page }) => {
+  await page.goto("/feedback");
+
+  await expect(page.getByRole("heading", { name: "Enviar feedback" })).toBeVisible();
+  await page.getByLabel("Tipo").selectOption("BUG");
+  await page
+    .getByLabel("Mensagem")
+    .fill("O card de ROAS precisa deixar mais claro quando nao existe investimento.");
+  await page.getByRole("button", { name: "Enviar feedback" }).click();
+
+  await expect(page).toHaveURL(/\/feedback\?sent=1/);
+  await expect(page.getByText("Feedback recebido.")).toBeVisible();
+});

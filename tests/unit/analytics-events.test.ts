@@ -11,20 +11,20 @@ describe("analytics helpers", () => {
   it("builds a safe analytics event without PII", () => {
     expect(
       buildAnalyticsEvent({
-        name: "dashboard_view",
+        name: "feedback_submit",
         userId: "user-1",
         workspaceId: "workspace-1",
         properties: {
           email: "cliente@w3.com",
-          period: "30d",
+          feedbackType: "BUG",
         },
       }),
     ).toEqual({
-      name: "dashboard_view",
+      name: "feedback_submit",
       distinctId: "user-1",
       properties: {
         workspaceId: "workspace-1",
-        period: "30d",
+        feedbackType: "BUG",
       },
     });
   });

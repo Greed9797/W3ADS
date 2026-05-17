@@ -1,5 +1,6 @@
 import { CheckCircle2 } from "lucide-react";
 
+import { FeedbackLink } from "@/components/feedback/feedback-link";
 import { Button } from "@/components/ui/button";
 import type { getCurrentUserContext } from "@/lib/auth/current";
 
@@ -16,10 +17,13 @@ export function Topbar({ context }: { context: AppContext }) {
           Central de crescimento W3
         </h1>
       </div>
-      <Button variant="secondary" className="gap-2">
-        <CheckCircle2 aria-hidden className="size-4 text-[var(--success)]" />
-        Sincronizado agora
-      </Button>
+      <div className="flex flex-wrap gap-2">
+        <FeedbackLink />
+        <Button variant="secondary" className="gap-2">
+          <CheckCircle2 aria-hidden className="size-4 text-[var(--success)]" />
+          Sincronizado agora
+        </Button>
+      </div>
     </header>
   );
 }

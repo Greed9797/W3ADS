@@ -1,6 +1,7 @@
 import {
   LayoutDashboard,
   LogOut,
+  MessageSquareText,
   PanelsTopLeft,
   PlugZap,
   UserCircle,
@@ -23,6 +24,7 @@ const navItems = [
   { label: "Conectores", href: "/connectors", icon: PlugZap },
   { label: "Membros", href: "/workspace/members", icon: UsersRound },
   { label: "Perfil", href: "/profile", icon: UserCircle },
+  { label: "Feedback", href: "/feedback", icon: MessageSquareText },
   { label: "Ajustes", href: "/workspace/settings", icon: Settings },
 ];
 

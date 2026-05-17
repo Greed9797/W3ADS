@@ -14,6 +14,7 @@ export type AuditAction =
   | "connector.shopify.uninstall"
   | "lgpd.data_export.request"
   | "lgpd.delete_account.request"
+  | "feedback.submit"
   | "workspace.member.invite"
   | "workspace.switch";
 

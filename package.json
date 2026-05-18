@@ -14,7 +14,8 @@
     "test:coverage": "vitest run --coverage",
     "e2e": "playwright test",
     "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate dev"
+    "prisma:migrate": "prisma migrate dev",
+    "vercel:env:push": "node scripts/push-vercel-env.mjs"
   },
   "dependencies": {
     "@auth/prisma-adapter": "^2.11.2",

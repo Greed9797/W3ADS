@@ -76,6 +76,18 @@ NEXT_PUBLIC_POSTHOG_KEY=
 NEXT_PUBLIC_POSTHOG_HOST=https://app.posthog.com
 ```
 
+Fluxo recomendado sem expor segredos no chat:
+
+1. Copie `.env.example` para `.env.production.local`.
+2. Preencha os valores reais localmente no seu Mac.
+3. Rode:
+
+```bash
+npm run vercel:env:push
+```
+
+O script remove e recria as envs no ambiente `production` da Vercel sem imprimir os valores no terminal.
+
 `AUTH_DISABLED=true` em production bloqueia o build. Essa trava e intencional.
 
 Credenciais de Meta, Google Ads, Shopify, Nuvemshop, Tray, WBuy, iSet e Magazord nao entram em env. Elas devem ser criadas em `/connectors/settings` por um `W3_ADMIN` e salvas no Supabase Vault.

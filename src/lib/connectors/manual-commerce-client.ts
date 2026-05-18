@@ -5,24 +5,121 @@ import type { ConnectorCredentialPayload } from "@/lib/connectors/credentials";
 
 type FetchLike = typeof fetch;
 
+const WBUY_API_BASE_URL = "https://sistema.sistemawbuy.com.br/api/v1";
+const DEFAULT_USER_AGENT = "W3ADS (integracoes@w3educacao.com.br)";
+
 function credentialString(credentials: ConnectorCredentialPayload, key: string) {
   const value = credentials[key];
 
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
-function appendPath(baseUrl: string, path: string) {
-  return new URL(path.startsWith("/") ? path : `/${path}`, baseUrl).toString();
+function normalizeBaseUrl(baseUrl: string) {
+  const trimmed = baseUrl.trim().replace(/\/+$/, "");
+  const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  const url = new URL(withProtocol);
+
+  return `${url.protocol}//${url.host}${url.pathname.replace(/\/+$/, "")}`;
 }
 
-function buildHeaders(credentials: ConnectorCredentialPayload) {
+function appendPath(baseUrl: string, path: string) {
+  const cleanBase = baseUrl.replace(/\/+$/, "");
+  const cleanPath = path.replace(/^\/+/, "");
+
+  return `${cleanBase}/${cleanPath}`;
+}
+
+function appendIsetBasePath(baseUrl: string) {
+  const normalized = normalizeBaseUrl(baseUrl);
+  if (/\/ws\/v1$/i.test(normalized)) {
+    return normalized;
+  }
+
+  return `${normalized}/ws/v1`;
+}
+
+function providerBaseUrl(provider: ConnectorProvider, credentials: ConnectorCredentialPayload) {
+  const configuredBaseUrl = credentialString(credentials, "baseUrl");
+
+  if (provider === ConnectorProvider.WBUY) {
+    return configuredBaseUrl ? normalizeBaseUrl(configuredBaseUrl) : WBUY_API_BASE_URL;
+  }
+
+  if (!configuredBaseUrl) {
+    throw new Error(`${provider} baseUrl is required`);
+  }
+
+  if (provider === ConnectorProvider.ISET) {
+    return appendIsetBasePath(configuredBaseUrl);
+  }
+
+  return normalizeBaseUrl(configuredBaseUrl);
+}
+
+function providerOrdersPath(provider: ConnectorProvider, credentials: ConnectorCredentialPayload) {
+  const configuredPath = credentialString(credentials, "ordersPath");
+  if (configuredPath) {
+    return configuredPath;
+  }
+
+  switch (provider) {
+    case ConnectorProvider.WBUY:
+      return "/order";
+    case ConnectorProvider.ISET:
+    case ConnectorProvider.MAGAZORD:
+      return "/pedidos";
+    default:
+      return "/orders";
+  }
+}
+
+function buildHeaders(provider: ConnectorProvider, credentials: ConnectorCredentialPayload) {
   const headers: Record<string, string> = {
     Accept: "application/json",
+    "User-Agent": DEFAULT_USER_AGENT,
   };
   const apiKey = credentialString(credentials, "apiKey");
   const apiSecret = credentialString(credentials, "apiSecret");
   const apiUser = credentialString(credentials, "apiUser");
   const apiPassword = credentialString(credentials, "apiPassword");
+
+  if (provider === ConnectorProvider.TRAY) {
+    return headers;
+  }
+
+  if (provider === ConnectorProvider.WBUY) {
+    if (apiUser && apiPassword) {
+      headers.Authorization = `Bearer ${Buffer.from(`${apiUser}:${apiPassword}`).toString(
+        "base64",
+      )}`;
+    } else if (apiKey) {
+      headers["x-token"] = apiKey;
+    }
+
+    return headers;
+  }
+
+  if (provider === ConnectorProvider.ISET) {
+    if (apiKey) {
+      headers.Authorization = `Bearer ${apiKey}`;
+      headers["X-Integration-Key"] = apiKey;
+    }
+
+    return headers;
+  }
+
+  if (provider === ConnectorProvider.MAGAZORD) {
+    if (apiUser && apiPassword) {
+      headers.Authorization = `Basic ${Buffer.from(`${apiUser}:${apiPassword}`).toString(
+        "base64",
+      )}`;
+    }
+    if (apiKey) {
+      headers["X-Api-Token"] = apiKey;
+    }
+
+    return headers;
+  }
 
   if (apiUser && apiPassword) {
     headers.Authorization = `Basic ${Buffer.from(`${apiUser}:${apiPassword}`).toString("base64")}`;
@@ -39,6 +136,19 @@ function buildHeaders(credentials: ConnectorCredentialPayload) {
   }
 
   return headers;
+}
+
+function appendProviderQueryParams(
+  provider: ConnectorProvider,
+  url: URL,
+  credentials: ConnectorCredentialPayload,
+) {
+  if (provider === ConnectorProvider.TRAY) {
+    const accessToken = credentialString(credentials, "apiKey");
+    if (accessToken) {
+      url.searchParams.set("access_token", accessToken);
+    }
+  }
 }
 
 function extractOrderPayloads(value: unknown): Record<string, unknown>[] {
@@ -78,13 +188,11 @@ export class ManualCommerceClient {
   }
 
   private ordersUrl(range?: { since: string; until: string }) {
-    const baseUrl = credentialString(this.credentials, "baseUrl");
-    if (!baseUrl) {
-      throw new Error(`${this.provider} baseUrl is required`);
-    }
-
     const url = new URL(
-      appendPath(baseUrl, credentialString(this.credentials, "ordersPath") ?? "/orders"),
+      appendPath(
+        providerBaseUrl(this.provider, this.credentials),
+        providerOrdersPath(this.provider, this.credentials),
+      ),
     );
 
     if (range) {
@@ -95,6 +203,7 @@ export class ManualCommerceClient {
     } else {
       url.searchParams.set("limit", "1");
     }
+    appendProviderQueryParams(this.provider, url, this.credentials);
 
     return url;
   }
@@ -102,7 +211,7 @@ export class ManualCommerceClient {
   async healthCheck() {
     const response = await callWithRetry(() =>
       this.fetchImpl(this.ordersUrl(), {
-        headers: buildHeaders(this.credentials),
+        headers: buildHeaders(this.provider, this.credentials),
       }),
     );
 
@@ -116,7 +225,7 @@ export class ManualCommerceClient {
   async listOrders(range: { since: string; until: string }) {
     const response = await callWithRetry(() =>
       this.fetchImpl(this.ordersUrl(range), {
-        headers: buildHeaders(this.credentials),
+        headers: buildHeaders(this.provider, this.credentials),
       }),
     );
 

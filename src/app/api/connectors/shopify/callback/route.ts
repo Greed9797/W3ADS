@@ -140,6 +140,7 @@ export async function GET(request: NextRequest) {
         buildConnectorBackfillEvent({
           provider: ConnectorProvider.SHOPIFY,
           connectorAccountId: connectorAccount.id,
+          scopes: token.scope ?? config.scopes,
         }),
       );
     }

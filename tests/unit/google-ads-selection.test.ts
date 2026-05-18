@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   GOOGLE_ADS_CUSTOMER_CLIENT_QUERY,
+  GoogleAdsClient,
   normalizeGoogleAdsCustomerClientRow,
   selectGoogleAdsAdvertiserAccounts,
 } from "@/lib/connectors/google-ads/client";
@@ -73,6 +74,116 @@ describe("Google Ads account selection", () => {
         loginCustomerId: "111",
         rootCustomerId: "111",
       },
+    ]);
+  });
+
+  it("does not send pageSize to googleAds:search", async () => {
+    const calls: Array<[URL | string, RequestInit | undefined]> = [];
+    const fetchMock = async (url: URL | string, init?: RequestInit) => {
+      calls.push([url, init]);
+
+      return Response.json({ results: [] });
+    };
+    const client = new GoogleAdsClient({
+      config: {
+        clientId: "client-id",
+        clientSecret: "client-secret",
+        developerToken: "developer-token",
+        redirectUri: "https://app.w3ads.com.br/api/connectors/google-ads/callback",
+        apiVersion: "v24",
+      },
+      fetchImpl: fetchMock as typeof fetch,
+    });
+
+    await client.searchCampaignMetrics({
+      accessToken: "access-token",
+      customerId: "222",
+      since: "2026-05-01",
+      until: "2026-05-18",
+      loginCustomerId: "111",
+    });
+
+    const [, init] = calls[0];
+    expect(JSON.parse(String(init?.body))).not.toHaveProperty("pageSize");
+  });
+
+  it("recursively expands sub-MCC hierarchies and returns final advertisers only", async () => {
+    const fetchMock = async (url: URL | string) => {
+      const requestUrl = String(url);
+
+      if (requestUrl.endsWith("/customers:listAccessibleCustomers")) {
+        return Response.json({ resourceNames: ["customers/111"] });
+      }
+
+      if (requestUrl.includes("/customers/111/googleAds:search")) {
+        return Response.json({
+          results: [
+            {
+              customerClient: {
+                id: "222",
+                clientCustomer: "customers/222",
+                descriptiveName: "Sub MCC",
+                manager: true,
+                level: 1,
+              },
+            },
+            {
+              customerClient: {
+                id: "333",
+                clientCustomer: "customers/333",
+                descriptiveName: "Cliente Direto",
+                manager: false,
+                level: 1,
+              },
+            },
+          ],
+        });
+      }
+
+      if (requestUrl.includes("/customers/222/googleAds:search")) {
+        return Response.json({
+          results: [
+            {
+              customerClient: {
+                id: "444",
+                clientCustomer: "customers/444",
+                descriptiveName: "Cliente Sub MCC",
+                manager: false,
+                level: 1,
+              },
+            },
+          ],
+        });
+      }
+
+      throw new Error(`Unexpected Google Ads URL ${requestUrl}`);
+    };
+    const client = new GoogleAdsClient({
+      config: {
+        clientId: "client-id",
+        clientSecret: "client-secret",
+        developerToken: "developer-token",
+        redirectUri: "https://app.w3ads.com.br/api/connectors/google-ads/callback",
+        apiVersion: "v24",
+      },
+      fetchImpl: fetchMock as typeof fetch,
+    });
+
+    await expect(client.listSelectableCustomers("access-token")).resolves.toEqual([
+      expect.objectContaining({
+        id: "333",
+        name: "Cliente Direto",
+        isManager: false,
+        loginCustomerId: "111",
+        rootCustomerId: "111",
+      }),
+      expect.objectContaining({
+        id: "444",
+        name: "Cliente Sub MCC",
+        isManager: false,
+        loginCustomerId: "111",
+        rootCustomerId: "111",
+      }),
     ]);
   });
 });

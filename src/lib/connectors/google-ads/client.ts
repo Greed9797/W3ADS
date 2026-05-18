@@ -289,7 +289,6 @@ export class GoogleAdsClient {
           body: JSON.stringify({
             query: GOOGLE_ADS_CUSTOMER_CLIENT_QUERY,
             pageToken,
-            pageSize: 1000,
           }),
         }),
       );
@@ -297,7 +296,7 @@ export class GoogleAdsClient {
       accounts.push(
         ...(response.results ?? []).map((row) =>
           normalizeGoogleAdsCustomerClientRow(row, {
-            rootCustomerId: input.rootCustomerId,
+            rootCustomerId: input.loginCustomerId ?? input.rootCustomerId,
             loginCustomerId,
           }),
         ),
@@ -311,25 +310,52 @@ export class GoogleAdsClient {
   async listSelectableCustomers(accessToken: string) {
     const accessibleCustomers = await this.listAccessibleCustomers(accessToken);
     const expanded: GoogleAdsSelectableCustomer[] = [];
+    const visited = new Set<string>();
 
     for (const customer of accessibleCustomers) {
-      try {
-        const hierarchy = await this.searchCustomerClients({
-          accessToken,
-          rootCustomerId: customer.customerId,
-          loginCustomerId: customer.customerId,
-        });
-        expanded.push(...hierarchy);
-      } catch {
-        expanded.push({
-          id: customer.customerId,
-          name: customer.displayName,
-          resourceName: customer.resourceName,
-          isManager: false,
-          level: 0,
-          loginCustomerId: customer.customerId,
-          rootCustomerId: customer.customerId,
-        });
+      const loginCustomerId = customer.customerId;
+      const queue = [customer.customerId];
+      let hierarchyFound = false;
+
+      while (queue.length > 0) {
+        const currentCustomerId = queue.shift();
+        if (!currentCustomerId) {
+          continue;
+        }
+
+        const visitKey = `${loginCustomerId}:${currentCustomerId}`;
+        if (visited.has(visitKey)) {
+          continue;
+        }
+        visited.add(visitKey);
+
+        try {
+          const hierarchy = await this.searchCustomerClients({
+            accessToken,
+            rootCustomerId: currentCustomerId,
+            loginCustomerId,
+          });
+          hierarchyFound = true;
+          expanded.push(...hierarchy);
+
+          for (const account of hierarchy) {
+            if (account.isManager && account.id !== currentCustomerId) {
+              queue.push(account.id);
+            }
+          }
+        } catch {
+          if (!hierarchyFound && currentCustomerId === customer.customerId) {
+            expanded.push({
+              id: customer.customerId,
+              name: customer.displayName,
+              resourceName: customer.resourceName,
+              isManager: false,
+              level: 0,
+              loginCustomerId,
+              rootCustomerId: customer.customerId,
+            });
+          }
+        }
       }
     }
 
@@ -361,7 +387,6 @@ export class GoogleAdsClient {
           body: JSON.stringify({
             query,
             pageToken,
-            pageSize: 1000,
           }),
         }),
       );

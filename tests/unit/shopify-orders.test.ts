@@ -1,10 +1,11 @@
 import { ConnectorProvider } from "@prisma/client";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   buildShopifyWebhookAddress,
   normalizeShopifyOrder,
   normalizeShopifyWebhookOrder,
+  ShopifyClient,
 } from "@/lib/connectors/shopify/client";
 import {
   mapShopifyOrderToEcommerceOrder,
@@ -128,5 +129,44 @@ describe("Shopify orders normalization", () => {
         redirectUri: "https://app.w3ads.com.br/api/connectors/shopify/callback",
       }),
     ).toBe("https://app.w3ads.com.br/api/webhooks/shopify");
+  });
+
+  it("creates webhook subscriptions through the GraphQL Admin API", async () => {
+    const fetchMock = vi.fn(async () =>
+      Response.json({
+        data: {
+          webhookSubscriptionCreate: {
+            webhookSubscription: { id: "gid://shopify/WebhookSubscription/1" },
+            userErrors: [],
+          },
+        },
+      }),
+    );
+    const client = new ShopifyClient({
+      config: {
+        apiKey: "api-key",
+        apiSecret: "api-secret",
+        redirectUri: "https://app.w3ads.com.br/api/connectors/shopify/callback",
+        scopes: "read_orders",
+        apiVersion: "2026-04",
+      },
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+
+    await client.ensureWebhookSubscriptions({
+      shop: "loja.myshopify.com",
+      accessToken: "shop-token",
+    });
+
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("https://loja.myshopify.com/admin/api/2026-04/graphql.json");
+    expect(String(init.body)).toContain("webhookSubscriptionCreate");
+    expect(JSON.parse(String(init.body)).variables).toMatchObject({
+      topic: "ORDERS_CREATE",
+      webhookSubscription: {
+        callbackUrl: "https://app.w3ads.com.br/api/webhooks/shopify",
+        format: "JSON",
+      },
+    });
   });
 });

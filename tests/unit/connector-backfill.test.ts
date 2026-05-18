@@ -58,4 +58,29 @@ describe("connector backfill helpers", () => {
       }).name,
     ).toBe("connector.ecommerce.backfill");
   });
+
+  it("limits Shopify backfill to 60 days unless read_all_orders is configured", () => {
+    expect(
+      buildConnectorBackfillEvent({
+        provider: ConnectorProvider.SHOPIFY,
+        connectorAccountId: "connector-3",
+        now: new Date("2026-05-18T12:00:00.000Z"),
+      }).data.range,
+    ).toEqual({
+      since: "2026-03-19",
+      until: "2026-05-18",
+    });
+
+    expect(
+      buildConnectorBackfillEvent({
+        provider: ConnectorProvider.SHOPIFY,
+        connectorAccountId: "connector-3",
+        now: new Date("2026-05-18T12:00:00.000Z"),
+        scopes: "read_orders,read_all_orders",
+      }).data.range,
+    ).toEqual({
+      since: "2026-02-17",
+      until: "2026-05-18",
+    });
+  });
 });

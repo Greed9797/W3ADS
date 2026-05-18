@@ -66,6 +66,24 @@ async function fetchJson<T>(url: URL | string, fetchImpl: FetchLike, init?: Requ
   return JSON.parse(body) as T;
 }
 
+async function fetchJsonWithHeaders<T>(
+  url: URL | string,
+  fetchImpl: FetchLike,
+  init?: RequestInit,
+): Promise<{ data: T; headers: Headers }> {
+  const response = await fetchImpl(url, init);
+  const body = await response.text();
+
+  if (!response.ok) {
+    throw new NuvemshopApiError(response.status, body, response.headers);
+  }
+
+  return {
+    data: JSON.parse(body) as T,
+    headers: response.headers,
+  };
+}
+
 function asString(value: string | number | undefined | null) {
   return value === undefined || value === null ? null : String(value);
 }
@@ -106,9 +124,10 @@ export class NuvemshopClient {
   }
 
   async exchangeCodeForAccessToken(code: string): Promise<NuvemshopToken> {
-    const body = new URLSearchParams({
+    const body = JSON.stringify({
       client_id: this.config.clientId,
       client_secret: this.config.clientSecret,
+      grant_type: "authorization_code",
       code,
     });
     const response = await callWithRetry(() =>
@@ -117,7 +136,7 @@ export class NuvemshopClient {
         this.fetchImpl,
         {
           method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          headers: { "Content-Type": "application/json" },
           body,
         },
       ),
@@ -131,6 +150,33 @@ export class NuvemshopClient {
     };
   }
 
+  private ordersUrl(input: { storeId: string; since: string; until: string; page: number }) {
+    const url = new URL(`${this.config.apiBaseUrl}/${input.storeId}/orders`);
+    url.searchParams.set("created_at_min", `${input.since}T00:00:00Z`);
+    url.searchParams.set("created_at_max", `${input.until}T23:59:59Z`);
+    url.searchParams.set("status", "any");
+    url.searchParams.set("page", String(input.page));
+    url.searchParams.set("per_page", "200");
+
+    return url;
+  }
+
+  private nextLink(headers: Headers) {
+    const link = headers.get("Link") ?? headers.get("link");
+    if (!link) {
+      return null;
+    }
+
+    for (const part of link.split(",")) {
+      const match = part.match(/<([^>]+)>;\s*rel="?next"?/i);
+      if (match?.[1]) {
+        return match[1];
+      }
+    }
+
+    return null;
+  }
+
   async listOrders(input: {
     storeId: string;
     accessToken: string;
@@ -139,31 +185,24 @@ export class NuvemshopClient {
   }) {
     const orders: ShopifyOrder[] = [];
     let page = 1;
-    const perPage = 200;
+    let nextUrl: URL | string | null = this.ordersUrl({ ...input, page });
 
-    while (true) {
-      const url = new URL(`${this.config.apiBaseUrl}/${input.storeId}/orders`);
-      url.searchParams.set("created_at_min", `${input.since}T00:00:00Z`);
-      url.searchParams.set("created_at_max", `${input.until}T23:59:59Z`);
-      url.searchParams.set("status", "any");
-      url.searchParams.set("page", String(page));
-      url.searchParams.set("per_page", String(perPage));
-
+    while (nextUrl) {
       const response = await callWithRetry(() =>
-        fetchJson<NuvemshopOrderPayload[]>(url, this.fetchImpl, {
+        fetchJsonWithHeaders<NuvemshopOrderPayload[]>(nextUrl as URL | string, this.fetchImpl, {
           headers: {
             Authentication: `bearer ${input.accessToken}`,
-            "User-Agent": "AdstartW3/1.0",
+            "User-Agent": "W3ADS (integracoes@w3educacao.com.br)",
           },
         }),
       );
 
-      orders.push(...response.map(normalizeNuvemshopOrder));
+      orders.push(...response.data.map(normalizeNuvemshopOrder));
 
-      if (response.length < perPage) {
-        break;
-      }
       page += 1;
+      nextUrl =
+        this.nextLink(response.headers) ??
+        (response.data.length === 200 ? this.ordersUrl({ ...input, page }) : null);
     }
 
     return orders;

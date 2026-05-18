@@ -206,7 +206,7 @@ export function validateProviderConfigInput(input: ProviderConfigInput) {
   }
 
   if (isManualCommerceProvider(input.provider)) {
-    if (!hasText(input.baseUrl)) {
+    if (input.provider !== ConnectorProvider.WBUY && !hasText(input.baseUrl)) {
       return { success: false as const, error: "Informe a URL da API da loja." };
     }
     if (
@@ -434,8 +434,18 @@ export async function publicManualCredentialsFromProviderConfig(
 
   return {
     ...credentials,
-    baseUrl: requiredConfigText(config, "baseUrl"),
-    ordersPath: config.ordersPath?.trim() || "/orders",
+    baseUrl:
+      config.provider === ConnectorProvider.WBUY && !config.baseUrl?.trim()
+        ? "https://sistema.sistemawbuy.com.br/api/v1"
+        : requiredConfigText(config, "baseUrl"),
+    ordersPath:
+      config.ordersPath?.trim() ||
+      (config.provider === ConnectorProvider.WBUY
+        ? "/order"
+        : config.provider === ConnectorProvider.ISET ||
+            config.provider === ConnectorProvider.MAGAZORD
+          ? "/pedidos"
+          : "/orders"),
   };
 }
 

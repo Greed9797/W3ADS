@@ -34,6 +34,24 @@ export function buildBackfillRange(now = new Date(), lookbackDays = 90): Connect
   };
 }
 
+function hasShopifyReadAllOrders(scopes: string | null | undefined) {
+  return (scopes ?? "")
+    .split(/[,\s]+/)
+    .map((scope) => scope.trim())
+    .includes("read_all_orders");
+}
+
+export function lookbackDaysForProvider(input: {
+  provider: ConnectorProvider;
+  scopes?: string | null;
+}) {
+  if (input.provider === ConnectorProvider.SHOPIFY && !hasShopifyReadAllOrders(input.scopes)) {
+    return 60;
+  }
+
+  return 90;
+}
+
 function eventNameForProvider(provider: ConnectorProvider): ConnectorBackfillEventName {
   switch (provider) {
     case ConnectorProvider.META_ADS:
@@ -57,12 +75,16 @@ export function buildConnectorBackfillEvent(input: {
   provider: ConnectorProvider;
   connectorAccountId: string;
   now?: Date;
+  scopes?: string | null;
 }): ConnectorBackfillEvent {
   return {
     name: eventNameForProvider(input.provider),
     data: {
       connectorAccountId: input.connectorAccountId,
-      range: buildBackfillRange(input.now),
+      range: buildBackfillRange(
+        input.now,
+        lookbackDaysForProvider({ provider: input.provider, scopes: input.scopes }),
+      ),
     },
   };
 }

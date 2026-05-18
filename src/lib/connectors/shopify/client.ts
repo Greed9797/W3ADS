@@ -80,6 +80,18 @@ type ShopifyOrdersResponse = {
   errors?: unknown;
 };
 
+type ShopifyWebhookSubscriptionResponse = {
+  data?: {
+    webhookSubscriptionCreate?: {
+      userErrors?: Array<{
+        field?: string[];
+        message?: string;
+      }>;
+    };
+  };
+  errors?: unknown;
+};
+
 export type ShopifyOrder = {
   externalOrderId: string;
   orderNumber: string | null;
@@ -123,6 +135,25 @@ query Orders($cursor: String, $query: String) {
   }
 }
 `;
+
+const SHOPIFY_WEBHOOK_SUBSCRIPTION_CREATE_MUTATION = `
+mutation WebhookSubscriptionCreate(
+  $topic: WebhookSubscriptionTopic!,
+  $webhookSubscription: WebhookSubscriptionInput!
+) {
+  webhookSubscriptionCreate(topic: $topic, webhookSubscription: $webhookSubscription) {
+    webhookSubscription { id }
+    userErrors { field message }
+  }
+}
+`;
+
+const SHOPIFY_GRAPHQL_WEBHOOK_TOPICS: Record<(typeof SHOPIFY_WEBHOOK_TOPICS)[number], string> = {
+  "orders/create": "ORDERS_CREATE",
+  "orders/updated": "ORDERS_UPDATED",
+  "orders/paid": "ORDERS_PAID",
+  "app/uninstalled": "APP_UNINSTALLED",
+};
 
 export class ShopifyApiError extends Error {
   status: number;
@@ -235,6 +266,10 @@ function shouldIgnoreWebhookCreateError(error: unknown) {
   );
 }
 
+function shouldIgnoreWebhookUserError(message: string | undefined) {
+  return Boolean(message && /already|taken|address/i.test(message));
+}
+
 export class ShopifyClient {
   private readonly config: ShopifyConfig;
   private readonly fetchImpl: FetchLike;
@@ -306,9 +341,9 @@ export class ShopifyClient {
 
     for (const topic of SHOPIFY_WEBHOOK_TOPICS) {
       try {
-        await callWithRetry(() =>
-          fetchJson<unknown>(
-            `https://${shop}/admin/api/${this.config.apiVersion}/webhooks.json`,
+        const response = await callWithRetry(() =>
+          fetchJson<ShopifyWebhookSubscriptionResponse>(
+            `https://${shop}/admin/api/${this.config.apiVersion}/graphql.json`,
             this.fetchImpl,
             {
               method: "POST",
@@ -317,15 +352,30 @@ export class ShopifyClient {
                 "X-Shopify-Access-Token": input.accessToken,
               },
               body: JSON.stringify({
-                webhook: {
-                  topic,
-                  address,
-                  format: "json",
+                query: SHOPIFY_WEBHOOK_SUBSCRIPTION_CREATE_MUTATION,
+                variables: {
+                  topic: SHOPIFY_GRAPHQL_WEBHOOK_TOPICS[topic],
+                  webhookSubscription: {
+                    callbackUrl: address,
+                    format: "JSON",
+                  },
                 },
               }),
             },
           ),
         );
+
+        if (response.errors) {
+          throw new Error("Shopify GraphQL webhook creation returned errors");
+        }
+
+        const userErrors = response.data?.webhookSubscriptionCreate?.userErrors ?? [];
+        const unexpectedErrors = userErrors.filter(
+          (userError) => !shouldIgnoreWebhookUserError(userError.message),
+        );
+        if (unexpectedErrors.length > 0) {
+          throw new Error(unexpectedErrors.map((error) => error.message).join("; "));
+        }
       } catch (error) {
         if (!shouldIgnoreWebhookCreateError(error)) {
           throw error;

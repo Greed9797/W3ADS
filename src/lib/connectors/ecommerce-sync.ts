@@ -14,6 +14,7 @@ import {
 } from "@/lib/connectors/provider-config";
 import type { ShopifyOrder } from "@/lib/connectors/shopify/client";
 import { prisma } from "@/lib/db/prisma";
+import { buildSyncJobCreateInput, type ProductionSyncType } from "@/lib/jobs/sync-operations";
 
 import { ManualCommerceClient } from "./manual-commerce-client";
 
@@ -179,19 +180,20 @@ async function loadOrdersForConnector(input: {
 export async function syncEcommerceOrders(input: {
   connectorAccountId: string;
   range: EcommerceSyncRange;
+  syncType?: ProductionSyncType;
 }) {
+  const connector = await prisma.connectorAccount.findUniqueOrThrow({
+    where: { id: input.connectorAccountId },
+  });
   const syncJob = await prisma.syncJob.create({
-    data: {
-      connectorAccountId: input.connectorAccountId,
-      status: SyncStatus.RUNNING,
+    data: buildSyncJobCreateInput({
+      connector,
+      syncType: input.syncType ?? "BACKFILL",
       metadata: input.range,
-    },
+    }),
   });
 
   try {
-    const connector = await prisma.connectorAccount.findUniqueOrThrow({
-      where: { id: input.connectorAccountId },
-    });
     const accessToken = await connectorAccessTokenFromAccount(connector);
     const orders = await loadOrdersForConnector({
       provider: connector.provider,

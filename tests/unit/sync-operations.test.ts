@@ -53,6 +53,7 @@ describe("sync operations", () => {
         data: {
           connectorAccountId: "meta-1",
           range: { since: "2026-05-11", until: "2026-05-18" },
+          syncType: "INCREMENTAL",
         },
       },
       {
@@ -60,6 +61,7 @@ describe("sync operations", () => {
         data: {
           connectorAccountId: "shopify-1",
           range: { since: "2026-05-15", until: "2026-05-18" },
+          syncType: "INCREMENTAL",
         },
       },
     ]);

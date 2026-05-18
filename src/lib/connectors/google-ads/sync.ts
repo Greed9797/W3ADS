@@ -11,6 +11,7 @@ import {
   getActiveProviderConfig,
 } from "@/lib/connectors/provider-config";
 import { prisma } from "@/lib/db/prisma";
+import { buildSyncJobCreateInput, type ProductionSyncType } from "@/lib/jobs/sync-operations";
 
 import { GoogleAdsClient, type GoogleAdsCampaignMetric } from "./client";
 
@@ -99,19 +100,20 @@ export function mapGoogleAdsMetricToDailyMetric(input: {
 export async function syncGoogleAdsDailyMetrics(input: {
   connectorAccountId: string;
   range: GoogleAdsSyncRange;
+  syncType?: ProductionSyncType;
 }) {
+  const connector = await prisma.connectorAccount.findUniqueOrThrow({
+    where: { id: input.connectorAccountId },
+  });
   const syncJob = await prisma.syncJob.create({
-    data: {
-      connectorAccountId: input.connectorAccountId,
-      status: SyncStatus.RUNNING,
+    data: buildSyncJobCreateInput({
+      connector,
+      syncType: input.syncType ?? "BACKFILL",
       metadata: input.range,
-    },
+    }),
   });
 
   try {
-    const connector = await prisma.connectorAccount.findUniqueOrThrow({
-      where: { id: input.connectorAccountId },
-    });
     const providerConfig = await getActiveProviderConfig({
       workspaceId: connector.workspaceId,
       provider: ConnectorProvider.GOOGLE_ADS,

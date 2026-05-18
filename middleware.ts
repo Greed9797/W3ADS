@@ -1,10 +1,16 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { isAuthDisabled } from "@/lib/auth/mode";
+import { rateLimitMiddleware } from "@/lib/security/rate-limit";
 
 const protectedRoutes = ["/dashboard", "/dashboards", "/connectors", "/workspace", "/profile"];
 
-export function middleware(request: NextRequest) {
+export async function middleware(request: NextRequest) {
+  const rateLimitResponse = await rateLimitMiddleware(request);
+  if (rateLimitResponse) {
+    return rateLimitResponse;
+  }
+
   if (isAuthDisabled()) {
     return NextResponse.next();
   }
@@ -35,5 +41,5 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!api|_next/static|_next/image|favicon.ico|.*\\..*).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|.*\\..*).*)"],
 };

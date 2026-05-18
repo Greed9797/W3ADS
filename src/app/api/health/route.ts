@@ -1,14 +1,14 @@
 import { NextResponse } from "next/server";
 
-import { isAuthDisabled } from "@/lib/auth/mode";
+import { prisma } from "@/lib/db/prisma";
+import { getOperationalHealth } from "@/lib/health/checks";
 
 export const runtime = "nodejs";
 
 export async function GET() {
-  return NextResponse.json({
-    ok: true,
-    service: "adstart-w3",
-    timestamp: new Date().toISOString(),
-    authDisabled: isAuthDisabled(),
+  const health = await getOperationalHealth({ prisma });
+
+  return NextResponse.json(health, {
+    status: health.ok ? 200 : 503,
   });
 }

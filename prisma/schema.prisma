@@ -355,6 +355,10 @@ model PasswordResetToken {
 model SyncJob {
   id                 String     @id @default(cuid())
   connectorAccountId String
+  workspaceId         String
+  provider            ConnectorProvider
+  syncType            SyncType   @default(BACKFILL)
+  cursor              String?
   status             SyncStatus
   startedAt          DateTime   @default(now())
   finishedAt         DateTime?
@@ -364,6 +368,7 @@ model SyncJob {
   metadata           Json?
 
   @@index([connectorAccountId, startedAt])
+  @@index([workspaceId, provider, status, startedAt])
 }
 
 enum SyncStatus {
@@ -372,4 +377,11 @@ enum SyncStatus {
   SUCCESS
   FAILED
   PARTIAL
+}
+
+enum SyncType {
+  BACKFILL
+  INCREMENTAL
+  TOKEN_REFRESH
+  MANUAL
 }

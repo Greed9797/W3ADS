@@ -11,11 +11,14 @@ export type ConnectorBackfillEventName =
   | "connector.shopify.backfill"
   | "connector.ecommerce.backfill";
 
+export type ConnectorSyncType = "BACKFILL" | "INCREMENTAL" | "TOKEN_REFRESH" | "MANUAL";
+
 export type ConnectorBackfillEvent = {
   name: ConnectorBackfillEventName;
   data: {
     connectorAccountId: string;
     range: ConnectorBackfillRange;
+    syncType?: ConnectorSyncType;
   };
 };
 
@@ -76,15 +79,25 @@ export function buildConnectorBackfillEvent(input: {
   connectorAccountId: string;
   now?: Date;
   scopes?: string | null;
+  range?: ConnectorBackfillRange;
+  syncType?: ConnectorSyncType;
 }): ConnectorBackfillEvent {
-  return {
-    name: eventNameForProvider(input.provider),
-    data: {
-      connectorAccountId: input.connectorAccountId,
-      range: buildBackfillRange(
+  const data: ConnectorBackfillEvent["data"] = {
+    connectorAccountId: input.connectorAccountId,
+    range:
+      input.range ??
+      buildBackfillRange(
         input.now,
         lookbackDaysForProvider({ provider: input.provider, scopes: input.scopes }),
       ),
-    },
+  };
+
+  if (input.syncType) {
+    data.syncType = input.syncType;
+  }
+
+  return {
+    name: eventNameForProvider(input.provider),
+    data,
   };
 }

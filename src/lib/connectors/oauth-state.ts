@@ -1,6 +1,6 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
-export type ConnectorOAuthProvider = "META_ADS" | "GOOGLE_ADS" | "SHOPIFY";
+export type ConnectorOAuthProvider = "META_ADS" | "GOOGLE_ADS" | "SHOPIFY" | "NUVEMSHOP";
 
 export type ConnectorOAuthStatePayload = {
   provider: ConnectorOAuthProvider;

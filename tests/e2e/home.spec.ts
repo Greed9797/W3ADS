@@ -23,9 +23,11 @@ test("renders connector cards in demo mode", async ({ page }) => {
 
   await expect(page.getByRole("heading", { name: "Fontes de dados" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Meta Ads" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Configurar env" })).toHaveCount(3);
+  await expect(page.getByRole("button", { name: "Configurar env" })).toHaveCount(4);
   await expect(page.getByRole("heading", { name: "Google Ads" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Shopify" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Nuvemshop" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "WBuy" })).toBeVisible();
 });
 
 test("creates a custom dashboard in demo mode", async ({ page }) => {

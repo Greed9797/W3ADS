@@ -158,6 +158,10 @@ export async function syncGoogleAdsDailyMetrics(input: {
       customerId: connector.externalAccountId,
       since: input.range.since,
       until: input.range.until,
+      loginCustomerId:
+        connector.metadata && typeof connector.metadata === "object" && "loginCustomerId" in connector.metadata
+          ? String(connector.metadata.loginCustomerId)
+          : undefined,
     });
 
     for (const metric of metrics) {

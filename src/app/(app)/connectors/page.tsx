@@ -8,6 +8,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getCurrentUserContext } from "@/lib/auth/current";
 import { getGoogleAdsConfigStatus } from "@/lib/connectors/google-ads/oauth";
 import { getMetaConfigStatus } from "@/lib/connectors/meta/oauth";
+import { getNuvemshopConfigStatus } from "@/lib/connectors/nuvemshop/oauth";
+import {
+  getConnectorDefinition,
+  manualCommerceProviders,
+} from "@/lib/connectors/registry";
 import { getShopifyConfigStatus } from "@/lib/connectors/shopify/oauth";
 import { prisma } from "@/lib/db/prisma";
 import { cn } from "@/lib/utils/cn";
@@ -62,6 +67,22 @@ function connectorMessage(error: string | undefined, connected: string | undefin
     };
   }
 
+  if (connected === "nuvemshop") {
+    return {
+      tone: "success" as const,
+      title: "Nuvemshop conectada.",
+      body: "A loja selecionada foi salva com credenciais criptografadas e pronta para sincronizar pedidos.",
+    };
+  }
+
+  if (connected && ["iset", "tray", "wbuy", "magazord"].includes(connected)) {
+    return {
+      tone: "success" as const,
+      title: "Loja conectada.",
+      body: "Validamos as credenciais antes de salvar e a sincronizacao de pedidos ja pode rodar.",
+    };
+  }
+
   if (connected === "demo") {
     return {
       tone: "info" as const,
@@ -91,6 +112,16 @@ function connectorMessage(error: string | undefined, connected: string | undefin
     "missing-shopify-env":
       "Configure SHOPIFY_APP_API_KEY, SHOPIFY_APP_API_SECRET e SHOPIFY_REDIRECT_URI.",
     "shopify-api": "Nao conseguimos concluir a conexao com a Shopify agora. Tente novamente em alguns minutos.",
+    "missing-nuvemshop-env":
+      "Configure NUVEMSHOP_CLIENT_ID, NUVEMSHOP_CLIENT_SECRET e NUVEMSHOP_REDIRECT_URI.",
+    "nuvemshop-api":
+      "Nao conseguimos concluir a conexao com a Nuvemshop agora. Tente novamente em alguns minutos.",
+    "missing-selection": "Selecione pelo menos uma conta antes de vincular.",
+    "selection-expired": "A selecao expirou. Inicie a conexao novamente.",
+    "selection-failed": "Nao conseguimos salvar a selecao agora. Tente novamente.",
+    "invalid-manual-connector": "Revise os dados da loja e tente novamente.",
+    "manual-credentials":
+      "Nao conseguimos validar essas credenciais. Confira a URL, caminho de pedidos e chaves da API.",
   };
 
   return {
@@ -108,35 +139,33 @@ export default async function ConnectorsPage({ searchParams }: ConnectorsPagePro
   const metaStatus = getMetaConfigStatus();
   const googleAdsStatus = getGoogleAdsConfigStatus();
   const shopifyStatus = getShopifyConfigStatus();
-  const [metaAccounts, googleAdsAccounts, shopifyAccounts] = context.isDemoMode
-    ? [0, 0, 0]
-    : await Promise.all([
-        prisma.connectorAccount.count({
-          where: {
-            workspaceId: context.currentWorkspace.id,
-            provider: ConnectorProvider.META_ADS,
-          },
-        }),
-        prisma.connectorAccount.count({
-          where: {
-            workspaceId: context.currentWorkspace.id,
-            provider: ConnectorProvider.GOOGLE_ADS,
-          },
-        }),
-        prisma.connectorAccount.count({
-          where: {
-            workspaceId: context.currentWorkspace.id,
-            provider: ConnectorProvider.SHOPIFY,
-          },
-        }),
-      ]);
+  const nuvemshopStatus = getNuvemshopConfigStatus();
+  const connectorCounts = new Map<ConnectorProvider, number>();
+  if (!context.isDemoMode) {
+    const connectors = await prisma.connectorAccount.groupBy({
+      by: ["provider"],
+      where: {
+        workspaceId: context.currentWorkspace.id,
+      },
+      _count: { provider: true },
+    });
+
+    for (const connector of connectors) {
+      connectorCounts.set(connector.provider, connector._count.provider);
+    }
+  }
+
+  const metaAccounts = connectorCounts.get(ConnectorProvider.META_ADS) ?? 0;
+  const googleAdsAccounts = connectorCounts.get(ConnectorProvider.GOOGLE_ADS) ?? 0;
+  const shopifyAccounts = connectorCounts.get(ConnectorProvider.SHOPIFY) ?? 0;
+  const nuvemshopAccounts = connectorCounts.get(ConnectorProvider.NUVEMSHOP) ?? 0;
 
   const providerCards: ProviderCard[] = [
     {
       name: "Meta Ads",
       description: context.isDemoMode
         ? "OAuth preparado. Com AUTH_DISABLED=true, o callback valida estado mas nao grava token."
-        : "Conecte contas de anuncio, salve tokens criptografados e prepare o backfill de 90 dias.",
+        : "Conecte o perfil e vincule somente as contas de anuncio dos clientes selecionados.",
       statusLabel:
         metaAccounts > 0
           ? `${metaAccounts} conta(s) ativa(s)`
@@ -162,7 +191,7 @@ export default async function ConnectorsPage({ searchParams }: ConnectorsPagePro
       name: "Google Ads",
       description: context.isDemoMode
         ? "OAuth preparado com acesso offline. Em demo, o callback valida estado mas nao grava conta."
-        : "Conecte customers acessiveis, salve refresh token criptografado e sincronize via GAQL.",
+        : "Conecte o usuario/MCC, expanda a hierarquia e vincule apenas contas anunciante.",
       statusLabel:
         googleAdsAccounts > 0
           ? `${googleAdsAccounts} conta(s) ativa(s)`
@@ -222,6 +251,108 @@ export default async function ConnectorsPage({ searchParams }: ConnectorsPagePro
         </Button>
       ),
     },
+    {
+      name: "Nuvemshop",
+      description: context.isDemoMode
+        ? "OAuth preparado. Em demo, a conexao valida estado mas nao grava loja."
+        : "Conecte via OAuth, selecione a loja e sincronize pedidos e receita.",
+      statusLabel:
+        nuvemshopAccounts > 0
+          ? `${nuvemshopAccounts} loja(s) ativa(s)`
+          : nuvemshopStatus.configured
+            ? "Pronto para OAuth"
+            : "Configurar env",
+      statusTone:
+        nuvemshopAccounts > 0 ? "success" : nuvemshopStatus.configured ? "info" : "warning",
+      action: nuvemshopStatus.configured ? (
+        <Button asChild size="sm">
+          <a href="/api/connectors/nuvemshop/connect">
+            <Cable size={16} aria-hidden="true" />
+            Conectar Nuvemshop
+          </a>
+        </Button>
+      ) : (
+        <Button disabled size="sm" variant="secondary">
+          <Settings size={16} aria-hidden="true" />
+          Configurar env
+        </Button>
+      ),
+    },
+    ...manualCommerceProviders.map((provider) => {
+      const definition = getConnectorDefinition(provider);
+      const count = connectorCounts.get(provider) ?? 0;
+
+      return {
+        name: definition.name,
+        description: context.isDemoMode
+          ? "Conexao manual preparada. Em demo, as credenciais nao sao gravadas."
+          : "Informe URL da loja e credenciais REST. Validamos antes de salvar.",
+        statusLabel: count > 0 ? `${count} loja(s) ativa(s)` : "Credenciais manuais",
+        statusTone: count > 0 ? ("success" as const) : ("warning" as const),
+        action: (
+          <form action="/api/connectors/manual" className="grid gap-2" method="post">
+            <input name="provider" type="hidden" value={provider} />
+            <label className="text-caption text-[var(--text-tertiary)]" htmlFor={`${provider}-name`}>
+              Loja
+            </label>
+            <input
+              className="h-10 rounded-md border border-[var(--border-strong)] bg-[var(--bg-surface)] px-3 text-sm"
+              id={`${provider}-name`}
+              name="storeName"
+              placeholder="Nome da loja"
+              required
+            />
+            <label className="text-caption text-[var(--text-tertiary)]" htmlFor={`${provider}-url`}>
+              URL API
+            </label>
+            <input
+              className="h-10 rounded-md border border-[var(--border-strong)] bg-[var(--bg-surface)] px-3 text-sm"
+              id={`${provider}-url`}
+              name="baseUrl"
+              placeholder="https://loja.exemplo.com.br"
+              required
+            />
+            <label className="text-caption text-[var(--text-tertiary)]" htmlFor={`${provider}-path`}>
+              Caminho pedidos
+            </label>
+            <input
+              className="h-10 rounded-md border border-[var(--border-strong)] bg-[var(--bg-surface)] px-3 text-sm"
+              id={`${provider}-path`}
+              name="ordersPath"
+              placeholder="/orders"
+            />
+            <div className="grid gap-2 sm:grid-cols-2">
+              <input
+                className="h-10 rounded-md border border-[var(--border-strong)] bg-[var(--bg-surface)] px-3 text-sm"
+                name="apiUser"
+                placeholder="Usuario API"
+              />
+              <input
+                className="h-10 rounded-md border border-[var(--border-strong)] bg-[var(--bg-surface)] px-3 text-sm"
+                name="apiPassword"
+                placeholder="Senha API"
+                type="password"
+              />
+              <input
+                className="h-10 rounded-md border border-[var(--border-strong)] bg-[var(--bg-surface)] px-3 text-sm"
+                name="apiKey"
+                placeholder="API key/token"
+              />
+              <input
+                className="h-10 rounded-md border border-[var(--border-strong)] bg-[var(--bg-surface)] px-3 text-sm"
+                name="apiSecret"
+                placeholder="API secret"
+                type="password"
+              />
+            </div>
+            <Button className="w-fit" size="sm" type="submit">
+              <Cable size={16} aria-hidden="true" />
+              Validar e vincular
+            </Button>
+          </form>
+        ),
+      };
+    }),
   ];
 
   return (
@@ -258,7 +389,7 @@ export default async function ConnectorsPage({ searchParams }: ConnectorsPagePro
         </div>
       ) : null}
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 xl:grid-cols-3">
         {providerCards.map((provider) => (
           <Card key={provider.name}>
             <CardHeader>

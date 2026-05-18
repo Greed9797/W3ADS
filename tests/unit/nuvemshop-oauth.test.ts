@@ -55,7 +55,7 @@ describe("Nuvemshop OAuth", () => {
       storeId: "2093261",
     });
 
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe("https://www.tiendanube.com/apps/authorize/token");
     expect(init.method).toBe("POST");
     expect(String(init.body)).toContain("client_secret=app-secret");

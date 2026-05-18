@@ -49,5 +49,13 @@ describe("connector backfill helpers", () => {
         now: new Date("2026-05-18T12:00:00.000Z"),
       }).name,
     ).toBe("connector.shopify.backfill");
+
+    expect(
+      buildConnectorBackfillEvent({
+        provider: ConnectorProvider.NUVEMSHOP,
+        connectorAccountId: "connector-4",
+        now: new Date("2026-05-18T12:00:00.000Z"),
+      }).name,
+    ).toBe("connector.ecommerce.backfill");
   });
 });

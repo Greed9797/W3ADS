@@ -8,7 +8,8 @@ export type ConnectorBackfillRange = {
 export type ConnectorBackfillEventName =
   | "connector.meta.backfill"
   | "connector.google_ads.backfill"
-  | "connector.shopify.backfill";
+  | "connector.shopify.backfill"
+  | "connector.ecommerce.backfill";
 
 export type ConnectorBackfillEvent = {
   name: ConnectorBackfillEventName;
@@ -41,6 +42,12 @@ function eventNameForProvider(provider: ConnectorProvider): ConnectorBackfillEve
       return "connector.google_ads.backfill";
     case ConnectorProvider.SHOPIFY:
       return "connector.shopify.backfill";
+    case ConnectorProvider.NUVEMSHOP:
+    case ConnectorProvider.ISET:
+    case ConnectorProvider.TRAY:
+    case ConnectorProvider.WBUY:
+    case ConnectorProvider.MAGAZORD:
+      return "connector.ecommerce.backfill";
     default:
       throw new Error(`Provider ${provider} does not support MVP backfill`);
   }

@@ -14,7 +14,9 @@ export type ConnectorProviderDefinition = {
   supportsAdMetrics: boolean;
 };
 
-export const CONNECTOR_PROVIDER_DEFINITIONS = {
+export const CONNECTOR_PROVIDER_DEFINITIONS: Partial<
+  Record<ConnectorProvider, ConnectorProviderDefinition>
+> = {
   [ConnectorProvider.META_ADS]: {
     provider: ConnectorProvider.META_ADS,
     name: "Meta Ads",
@@ -95,7 +97,7 @@ export const CONNECTOR_PROVIDER_DEFINITIONS = {
     supportsOrders: true,
     supportsAdMetrics: false,
   },
-} satisfies Partial<Record<ConnectorProvider, ConnectorProviderDefinition>>;
+};
 
 export const selectableAdsProviders = [
   ConnectorProvider.META_ADS,

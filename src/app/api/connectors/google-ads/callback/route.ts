@@ -1,16 +1,13 @@
-import { ConnectorProvider, ConnectorStatus } from "@prisma/client";
+import { ConnectorProvider } from "@prisma/client";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { logAudit } from "@/lib/audit/log";
 import { getCurrentUserContext } from "@/lib/auth/current";
-import { buildConnectorBackfillEvent } from "@/lib/connectors/backfill";
 import { GoogleAdsClient } from "@/lib/connectors/google-ads/client";
 import { getGoogleAdsConfigStatus } from "@/lib/connectors/google-ads/oauth";
 import { GOOGLE_ADS_OAUTH_STATE_COOKIE } from "@/lib/connectors/google-ads/state";
 import { verifyConnectorOAuthState } from "@/lib/connectors/oauth-state";
-import { encryptToken, encryptTokenEnvelope } from "@/lib/crypto/token-vault";
-import { prisma } from "@/lib/db/prisma";
-import { inngest } from "@/lib/jobs/inngest-client";
+import { createConnectorSelectionSession } from "@/lib/connectors/selection";
 
 export const runtime = "nodejs";
 
@@ -81,86 +78,46 @@ export async function GET(request: NextRequest) {
   try {
     const client = new GoogleAdsClient();
     const token = await client.exchangeCodeForTokens(code);
-    const customers = await client.listAccessibleCustomers(token.access_token);
+    const customers = await client.listSelectableCustomers(token.access_token);
     const expiresAt = tokenExpiresAt(token.expires_in);
-    const connectorAccountIds: string[] = [];
-
-    await prisma.$transaction(async (tx) => {
-      for (const customer of customers) {
-        const encryptedAccessToken = encryptToken(token.access_token);
-        const encryptedRefreshToken = token.refresh_token
-          ? encryptTokenEnvelope(token.refresh_token)
-          : undefined;
-
-        const connectorAccount = await tx.connectorAccount.upsert({
-          where: {
-            workspaceId_provider_externalAccountId: {
-              workspaceId: context.currentWorkspace.id,
-              provider: ConnectorProvider.GOOGLE_ADS,
-              externalAccountId: customer.customerId,
-            },
-          },
-          update: {
-            accountName: customer.displayName,
-            status: ConnectorStatus.ACTIVE,
-            accessTokenCiphertext: encryptedAccessToken.ciphertext,
-            refreshTokenCiphertext: encryptedRefreshToken,
-            tokenIv: encryptedAccessToken.iv,
-            tokenAuthTag: encryptedAccessToken.authTag,
-            tokenKeyVersion: encryptedAccessToken.keyVersion,
-            tokenExpiresAt: expiresAt,
-            metadata: {
-              resourceName: customer.resourceName,
-            },
-            lastSyncError: null,
-          },
-          create: {
-            workspaceId: context.currentWorkspace.id,
-            provider: ConnectorProvider.GOOGLE_ADS,
-            externalAccountId: customer.customerId,
-            accountName: customer.displayName,
-            status: ConnectorStatus.ACTIVE,
-            accessTokenCiphertext: encryptedAccessToken.ciphertext,
-            refreshTokenCiphertext: encryptedRefreshToken,
-            tokenIv: encryptedAccessToken.iv,
-            tokenAuthTag: encryptedAccessToken.authTag,
-            tokenKeyVersion: encryptedAccessToken.keyVersion,
-            tokenExpiresAt: expiresAt,
-            metadata: {
-              resourceName: customer.resourceName,
-            },
-          },
-        });
-        connectorAccountIds.push(connectorAccount.id);
-      }
-    });
-
-    if (process.env.INNGEST_EVENT_KEY) {
-      await Promise.all(
-        connectorAccountIds.map((connectorAccountId) =>
-          inngest.send(
-            buildConnectorBackfillEvent({
-              provider: ConnectorProvider.GOOGLE_ADS,
-              connectorAccountId,
-            }),
-          ),
-        ),
-      );
-    }
-
-    await logAudit({
-      action: "connector.google_ads.connect",
-      userId: context.user.id,
+    const selection = await createConnectorSelectionSession({
       workspaceId: context.currentWorkspace.id,
-      resourceType: "connector_account",
-      metadata: {
-        provider: "GOOGLE_ADS",
-        accounts: customers.length,
-        backfillQueued: Boolean(process.env.INNGEST_EVENT_KEY),
+      userId: context.user.id,
+      provider: ConnectorProvider.GOOGLE_ADS,
+      accounts: customers.map((customer) => ({
+        externalAccountId: customer.id,
+        accountName: customer.name,
+        metadata: {
+          resourceName: customer.resourceName,
+          currencyCode: customer.currencyCode,
+          timeZone: customer.timeZone,
+          loginCustomerId: customer.loginCustomerId,
+          rootCustomerId: customer.rootCustomerId,
+        },
+      })),
+      credentials: {
+        accessToken: token.access_token,
+        refreshToken: token.refresh_token,
+        tokenExpiresAt: expiresAt?.toISOString(),
       },
     });
 
-    return redirectToConnectors(request, { provider: "google-ads", connected: "google-ads" });
+    await logAudit({
+      action: "connector.google_ads.selection_created",
+      userId: context.user.id,
+      workspaceId: context.currentWorkspace.id,
+      resourceType: "connector_selection_session",
+      resourceId: selection.id,
+      metadata: {
+        provider: "GOOGLE_ADS",
+        accounts: customers.length,
+      },
+    });
+
+    const url = new URL("/connectors/select", request.nextUrl.origin);
+    url.searchParams.set("session", selection.id);
+
+    return NextResponse.redirect(url);
   } catch (caught) {
     const message = caught instanceof Error ? caught.message : "unknown";
     const errorCode = message.includes("TOKEN_ENCRYPTION_KEY")

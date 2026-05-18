@@ -4,11 +4,12 @@ import { NextResponse, type NextRequest } from "next/server";
 import { logAudit } from "@/lib/audit/log";
 import { getCurrentUserContext } from "@/lib/auth/current";
 import { NuvemshopClient } from "@/lib/connectors/nuvemshop/client";
-import {
-  getNuvemshopConfigStatus,
-  NUVEMSHOP_OAUTH_STATE_COOKIE,
-} from "@/lib/connectors/nuvemshop/oauth";
+import { NUVEMSHOP_OAUTH_STATE_COOKIE } from "@/lib/connectors/nuvemshop/oauth";
 import { verifyConnectorOAuthState } from "@/lib/connectors/oauth-state";
+import {
+  buildNuvemshopConfigFromProviderConfig,
+  getActiveProviderConfig,
+} from "@/lib/connectors/provider-config";
 import { createConnectorSelectionSession } from "@/lib/connectors/selection";
 
 export const runtime = "nodejs";
@@ -59,13 +60,17 @@ export async function GET(request: NextRequest) {
     return redirectToConnectors(request, { provider: "nuvemshop", connected: "demo" });
   }
 
-  const status = getNuvemshopConfigStatus();
-  if (!status.configured) {
-    return redirectToConnectors(request, { provider: "nuvemshop", error: "missing-nuvemshop-env" });
+  const providerConfig = await getActiveProviderConfig({
+    workspaceId: context.currentWorkspace.id,
+    provider: ConnectorProvider.NUVEMSHOP,
+  });
+  if (!providerConfig) {
+    return redirectToConnectors(request, { provider: "nuvemshop", error: "missing-provider-config" });
   }
 
   try {
-    const token = await new NuvemshopClient().exchangeCodeForAccessToken(code);
+    const config = await buildNuvemshopConfigFromProviderConfig(providerConfig);
+    const token = await new NuvemshopClient({ config }).exchangeCodeForAccessToken(code);
     const selection = await createConnectorSelectionSession({
       workspaceId: context.currentWorkspace.id,
       userId: context.user.id,
@@ -77,14 +82,14 @@ export async function GET(request: NextRequest) {
           metadata: {
             scope: token.scope,
             tokenType: token.tokenType,
-            apiBaseUrl: status.apiBaseUrl,
+            apiBaseUrl: config.apiBaseUrl,
           },
         },
       ],
       credentials: {
         accessToken: token.accessToken,
         storeId: token.storeId,
-        apiBaseUrl: status.apiBaseUrl,
+        apiBaseUrl: config.apiBaseUrl,
       },
     });
 
@@ -103,8 +108,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(url);
   } catch (caught) {
     const message = caught instanceof Error ? caught.message : "unknown";
-    const errorCode = message.includes("TOKEN_ENCRYPTION_KEY")
-      ? "missing-token-key"
+    const errorCode = message.includes("Secret not found")
+      ? "missing-provider-config"
       : "nuvemshop-api";
 
     return redirectToConnectors(request, { provider: "nuvemshop", error: errorCode });

@@ -3,10 +3,16 @@ import { ConnectorProvider, ConnectorStatus, SyncStatus } from "@prisma/client";
 import Decimal from "decimal.js";
 
 import { normalizeManualCommerceOrder } from "@/lib/connectors/manual-commerce";
-import { connectorCredentialsFromAccount } from "@/lib/connectors/credentials";
+import {
+  connectorAccessTokenFromAccount,
+  connectorCredentialsFromAccountVaultAware,
+} from "@/lib/connectors/credentials";
 import { NuvemshopClient } from "@/lib/connectors/nuvemshop/client";
+import {
+  buildNuvemshopConfigFromProviderConfig,
+  getActiveProviderConfig,
+} from "@/lib/connectors/provider-config";
 import type { ShopifyOrder } from "@/lib/connectors/shopify/client";
-import { decryptToken } from "@/lib/crypto/token-vault";
 import { prisma } from "@/lib/db/prisma";
 
 import { ManualCommerceClient } from "./manual-commerce-client";
@@ -141,17 +147,15 @@ async function loadOrdersForConnector(input: {
   });
 
   if (input.provider === ConnectorProvider.NUVEMSHOP) {
-    const metadata =
-      connector.metadata && typeof connector.metadata === "object" && !Array.isArray(connector.metadata)
-        ? connector.metadata
-        : {};
+    const providerConfig = await getActiveProviderConfig({
+      workspaceId: connector.workspaceId,
+      provider: ConnectorProvider.NUVEMSHOP,
+    });
+    if (!providerConfig) {
+      throw new Error("Nuvemshop provider config is missing");
+    }
     const client = new NuvemshopClient({
-      config: {
-        clientId: process.env.NUVEMSHOP_CLIENT_ID ?? "placeholder",
-        clientSecret: process.env.NUVEMSHOP_CLIENT_SECRET ?? "placeholder",
-        redirectUri: process.env.NUVEMSHOP_REDIRECT_URI ?? "http://localhost:3000/api/connectors/nuvemshop/callback",
-        apiBaseUrl: String(metadata.apiBaseUrl ?? process.env.NUVEMSHOP_API_BASE_URL ?? "https://api.tiendanube.com/v1"),
-      },
+      config: await buildNuvemshopConfigFromProviderConfig(providerConfig),
     });
 
     return client.listOrders({
@@ -162,7 +166,7 @@ async function loadOrdersForConnector(input: {
     });
   }
 
-  const credentials = connectorCredentialsFromAccount(connector);
+  const credentials = await connectorCredentialsFromAccountVaultAware(connector);
   const manualClient = new ManualCommerceClient({
     provider: input.provider,
     credentials,
@@ -188,12 +192,7 @@ export async function syncEcommerceOrders(input: {
     const connector = await prisma.connectorAccount.findUniqueOrThrow({
       where: { id: input.connectorAccountId },
     });
-    const accessToken = decryptToken({
-      ciphertext: connector.accessTokenCiphertext,
-      iv: connector.tokenIv,
-      authTag: connector.tokenAuthTag,
-      keyVersion: connector.tokenKeyVersion,
-    });
+    const accessToken = await connectorAccessTokenFromAccount(connector);
     const orders = await loadOrdersForConnector({
       provider: connector.provider,
       connectorAccountId: connector.id,

@@ -23,11 +23,20 @@ test("renders connector cards in demo mode", async ({ page }) => {
 
   await expect(page.getByRole("heading", { name: "Fontes de dados" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Meta Ads" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Configurar env" })).toHaveCount(4);
+  await expect(page.getByRole("link", { name: "Configurar no app" })).toHaveCount(8);
   await expect(page.getByRole("heading", { name: "Google Ads" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Shopify" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Nuvemshop" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "WBuy" })).toBeVisible();
+});
+
+test("renders connector provider settings in demo mode", async ({ page }) => {
+  await page.goto("/connectors/settings/meta_ads");
+
+  await expect(page.getByRole("heading", { name: "Meta Ads" })).toBeVisible();
+  await expect(page.getByLabel("Meta App ID")).toBeVisible();
+  await expect(page.getByLabel("Meta App Secret")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Salvar configuração" })).toBeVisible();
 });
 
 test("creates a custom dashboard in demo mode", async ({ page }) => {

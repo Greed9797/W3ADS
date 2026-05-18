@@ -2,11 +2,12 @@ import { ConnectorProvider, ConnectorStatus, Prisma } from "@prisma/client";
 
 import {
   decryptConnectorCredentials,
-  encryptConnectorCredentials,
+  vaultCredentialFields,
   type ConnectorCredentialPayload,
 } from "@/lib/connectors/credentials";
 import { encryptToken, encryptTokenEnvelope, type EncryptedToken } from "@/lib/crypto/token-vault";
 import { prisma } from "@/lib/db/prisma";
+import { getSecretStore, type SecretStore } from "@/lib/security/secret-store";
 
 export type ConnectorSelectableAccount = {
   externalAccountId: string;
@@ -96,8 +97,13 @@ export async function createConnectorSelectionSession(input: {
   accounts: ConnectorSelectableAccount[];
   credentials: ConnectorSelectionCredentials;
   expiresAt?: Date;
+  store?: SecretStore;
 }) {
-  const encrypted = encryptConnectorCredentials(input.credentials);
+  const store = input.store ?? getSecretStore();
+  const credentialSecretId = await store.createSecret({
+    name: `w3ads:${input.workspaceId}:${input.provider}:${input.userId}:selection`,
+    value: JSON.stringify(input.credentials),
+  });
 
   return prisma.connectorSelectionSession.create({
     data: {
@@ -105,13 +111,31 @@ export async function createConnectorSelectionSession(input: {
       userId: input.userId,
       provider: input.provider,
       accounts: input.accounts as unknown as Prisma.InputJsonValue,
-      credentialCiphertext: encrypted.ciphertext,
-      credentialIv: encrypted.iv,
-      credentialAuthTag: encrypted.authTag,
-      credentialKeyVersion: encrypted.keyVersion,
+      credentialCiphertext: "vault",
+      credentialIv: "vault",
+      credentialAuthTag: "vault",
+      credentialKeyVersion: "vault",
+      credentialSecretId,
       expiresAt: input.expiresAt ?? new Date(Date.now() + 10 * 60 * 1000),
     },
   });
+}
+
+export async function loadSelectionCredentials(
+  session: {
+    credentialSecretId?: string | null;
+    credentialCiphertext: string;
+    credentialIv: string;
+    credentialAuthTag: string;
+    credentialKeyVersion: string;
+  },
+  store: SecretStore = getSecretStore(),
+) {
+  if (session.credentialSecretId) {
+    return JSON.parse(await store.getSecret(session.credentialSecretId)) as ConnectorSelectionCredentials;
+  }
+
+  return decryptSelectionCredentials(session);
 }
 
 export function decryptSelectionCredentials(session: {
@@ -141,4 +165,24 @@ export function encryptSelectedAccountCredentials(credentials: ConnectorSelectio
     tokenExpiresAt:
       typeof credentials.tokenExpiresAt === "string" ? new Date(credentials.tokenExpiresAt) : null,
   };
+}
+
+export async function vaultSelectedAccountCredentials(input: {
+  workspaceId: string;
+  provider: ConnectorProvider;
+  externalAccountId: string;
+  credentials: ConnectorSelectionCredentials;
+  store?: SecretStore;
+}) {
+  const { refreshToken, tokenExpiresAt, ...credentialPayload } = input.credentials;
+
+  return vaultCredentialFields({
+    workspaceId: input.workspaceId,
+    provider: input.provider,
+    externalAccountId: input.externalAccountId,
+    credentials: credentialPayload,
+    refreshToken: typeof refreshToken === "string" ? refreshToken : null,
+    tokenExpiresAt: typeof tokenExpiresAt === "string" ? new Date(tokenExpiresAt) : null,
+    store: input.store,
+  });
 }

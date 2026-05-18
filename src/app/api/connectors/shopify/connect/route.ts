@@ -1,13 +1,17 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { ConnectorProvider } from "@prisma/client";
 
 import { getCurrentUserContext } from "@/lib/auth/current";
 import {
   buildShopifyOAuthUrl,
-  getShopifyConfigStatus,
   normalizeShopDomain,
 } from "@/lib/connectors/shopify/oauth";
 import { SHOPIFY_OAUTH_STATE_COOKIE } from "@/lib/connectors/shopify/state";
 import { createConnectorOAuthState } from "@/lib/connectors/oauth-state";
+import {
+  buildShopifyConfigFromProviderConfig,
+  getActiveProviderConfig,
+} from "@/lib/connectors/provider-config";
 
 export const runtime = "nodejs";
 
@@ -24,10 +28,18 @@ function redirectToConnectors(request: NextRequest, params: Record<string, strin
 export async function GET(request: NextRequest) {
   const context = await getCurrentUserContext();
 
-  const status = getShopifyConfigStatus();
-  if (!status.configured) {
-    return redirectToConnectors(request, { provider: "shopify", error: "missing-shopify-env" });
+  if (context.isDemoMode) {
+    return redirectToConnectors(request, { provider: "shopify", connected: "demo" });
   }
+
+  const providerConfig = await getActiveProviderConfig({
+    workspaceId: context.currentWorkspace.id,
+    provider: ConnectorProvider.SHOPIFY,
+  });
+  if (!providerConfig) {
+    return redirectToConnectors(request, { provider: "shopify", error: "missing-provider-config" });
+  }
+  const config = await buildShopifyConfigFromProviderConfig(providerConfig);
 
   const shopParam = request.nextUrl.searchParams.get("shop");
   if (!shopParam) {
@@ -47,7 +59,7 @@ export async function GET(request: NextRequest) {
     workspaceId: context.currentWorkspace.id,
     shop,
   });
-  const response = NextResponse.redirect(buildShopifyOAuthUrl({ shop, state }));
+  const response = NextResponse.redirect(buildShopifyOAuthUrl({ shop, state, config }));
 
   response.cookies.set(SHOPIFY_OAUTH_STATE_COOKIE, state, {
     httpOnly: true,

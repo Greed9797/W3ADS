@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import type { MemberRole, WorkspacePlan } from "@prisma/client";
+import type { MemberRole, PlatformRole, WorkspacePlan } from "@prisma/client";
 
 import { prisma } from "@/lib/db/prisma";
 
@@ -49,6 +49,7 @@ export type CurrentUserContext = {
     email: string;
     name: string | null;
     image?: string | null;
+    platformRole: PlatformRole;
   };
   memberships: CurrentMembership[];
   currentMembership: CurrentMembership;
@@ -63,6 +64,7 @@ function getDemoUserContext(): CurrentUserContext {
       email: "demo@adstartw3.local",
       name: "Equipe W3",
       image: null,
+      platformRole: "W3_ADMIN",
     },
     memberships: [demoMembership],
     currentMembership: demoMembership,

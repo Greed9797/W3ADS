@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS "ConnectorSelectionSession" (
   "credentialIv" TEXT NOT NULL,
   "credentialAuthTag" TEXT NOT NULL,
   "credentialKeyVersion" TEXT NOT NULL DEFAULT 'v1',
+  "credentialSecretId" TEXT,
   "expiresAt" TIMESTAMP(3) NOT NULL,
   "consumedAt" TIMESTAMP(3),
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,

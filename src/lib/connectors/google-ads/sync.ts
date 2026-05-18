@@ -2,11 +2,14 @@ import { createHash } from "node:crypto";
 import { ConnectorProvider, ConnectorStatus, SyncStatus } from "@prisma/client";
 
 import {
-  decryptToken,
-  decryptTokenEnvelope,
-  encryptToken,
-  encryptTokenEnvelope,
-} from "@/lib/crypto/token-vault";
+  connectorAccessTokenFromAccount,
+  connectorRefreshTokenFromAccount,
+  vaultCredentialFields,
+} from "@/lib/connectors/credentials";
+import {
+  buildGoogleAdsConfigFromProviderConfig,
+  getActiveProviderConfig,
+} from "@/lib/connectors/provider-config";
 import { prisma } from "@/lib/db/prisma";
 
 import { GoogleAdsClient, type GoogleAdsCampaignMetric } from "./client";
@@ -109,16 +112,21 @@ export async function syncGoogleAdsDailyMetrics(input: {
     const connector = await prisma.connectorAccount.findUniqueOrThrow({
       where: { id: input.connectorAccountId },
     });
-    let accessToken = decryptToken({
-      ciphertext: connector.accessTokenCiphertext,
-      iv: connector.tokenIv,
-      authTag: connector.tokenAuthTag,
-      keyVersion: connector.tokenKeyVersion,
+    const providerConfig = await getActiveProviderConfig({
+      workspaceId: connector.workspaceId,
+      provider: ConnectorProvider.GOOGLE_ADS,
     });
-    const client = new GoogleAdsClient();
+    if (!providerConfig) {
+      throw new Error("Google Ads provider config is missing");
+    }
+    let accessToken = await connectorAccessTokenFromAccount(connector);
+    const client = new GoogleAdsClient({
+      config: await buildGoogleAdsConfigFromProviderConfig(providerConfig),
+    });
 
     if (googleAdsTokenNeedsRefresh(connector.tokenExpiresAt)) {
-      if (!connector.refreshTokenCiphertext) {
+      const refreshToken = await connectorRefreshTokenFromAccount(connector);
+      if (!refreshToken) {
         await prisma.connectorAccount.update({
           where: { id: connector.id },
           data: {
@@ -129,24 +137,22 @@ export async function syncGoogleAdsDailyMetrics(input: {
         throw new Error("Google Ads refresh token is missing");
       }
 
-      const refreshToken = decryptTokenEnvelope(connector.refreshTokenCiphertext);
       const refreshed = await client.refreshAccessToken(refreshToken);
-      const encryptedAccessToken = encryptToken(refreshed.access_token);
-      const encryptedRefreshToken = refreshed.refresh_token
-        ? encryptTokenEnvelope(refreshed.refresh_token)
-        : connector.refreshTokenCiphertext;
+      const credentialFields = await vaultCredentialFields({
+        workspaceId: connector.workspaceId,
+        provider: ConnectorProvider.GOOGLE_ADS,
+        externalAccountId: connector.externalAccountId,
+        credentials: { accessToken: refreshed.access_token },
+        refreshToken: refreshed.refresh_token ?? refreshToken,
+        tokenExpiresAt: tokenExpiresAt(refreshed.expires_in),
+      });
 
       accessToken = refreshed.access_token;
 
       await prisma.connectorAccount.update({
         where: { id: connector.id },
         data: {
-          accessTokenCiphertext: encryptedAccessToken.ciphertext,
-          refreshTokenCiphertext: encryptedRefreshToken,
-          tokenIv: encryptedAccessToken.iv,
-          tokenAuthTag: encryptedAccessToken.authTag,
-          tokenKeyVersion: encryptedAccessToken.keyVersion,
-          tokenExpiresAt: tokenExpiresAt(refreshed.expires_in),
+          ...credentialFields,
           status: ConnectorStatus.ACTIVE,
           lastSyncError: null,
         },

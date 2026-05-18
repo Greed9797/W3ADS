@@ -2,9 +2,11 @@ import { createHash } from "node:crypto";
 
 import {
   decryptToken,
+  decryptTokenEnvelope,
   encryptToken,
   type EncryptedToken,
 } from "@/lib/crypto/token-vault";
+import { getSecretStore, type SecretStore } from "@/lib/security/secret-store";
 
 export type ConnectorCredentialValue = string | number | boolean | null | undefined;
 export type ConnectorCredentialPayload = Record<string, ConnectorCredentialValue>;
@@ -35,6 +37,105 @@ export function connectorCredentialsFromAccount(account: {
     authTag: account.tokenAuthTag,
     keyVersion: account.tokenKeyVersion,
   });
+}
+
+function parseCredentialSecret(value: string): ConnectorCredentialPayload {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as ConnectorCredentialPayload;
+    }
+  } catch {
+    return { accessToken: value };
+  }
+
+  return { accessToken: value };
+}
+
+export async function connectorCredentialsFromAccountVaultAware(
+  account: {
+    credentialSecretId?: string | null;
+    accessTokenCiphertext: string;
+    tokenIv: string;
+    tokenAuthTag: string;
+    tokenKeyVersion: string;
+  },
+  store: SecretStore = getSecretStore(),
+) {
+  if (account.credentialSecretId) {
+    return parseCredentialSecret(await store.getSecret(account.credentialSecretId));
+  }
+
+  return connectorCredentialsFromAccount(account);
+}
+
+export async function connectorAccessTokenFromAccount(
+  account: {
+    credentialSecretId?: string | null;
+    accessTokenCiphertext: string;
+    tokenIv: string;
+    tokenAuthTag: string;
+    tokenKeyVersion: string;
+  },
+  store: SecretStore = getSecretStore(),
+) {
+  const credentials = await connectorCredentialsFromAccountVaultAware(account, store);
+  const accessToken = credentials.accessToken;
+  if (typeof accessToken !== "string" || !accessToken) {
+    throw new Error("Connector access token is missing");
+  }
+
+  return accessToken;
+}
+
+export async function connectorRefreshTokenFromAccount(
+  account: {
+    refreshCredentialSecretId?: string | null;
+    refreshTokenCiphertext?: string | null;
+  },
+  store: SecretStore = getSecretStore(),
+) {
+  if (account.refreshCredentialSecretId) {
+    return store.getSecret(account.refreshCredentialSecretId);
+  }
+  if (account.refreshTokenCiphertext) {
+    return decryptTokenEnvelope(account.refreshTokenCiphertext);
+  }
+
+  return null;
+}
+
+export async function vaultCredentialFields(input: {
+  workspaceId: string;
+  provider: string;
+  externalAccountId: string;
+  credentials: ConnectorCredentialPayload;
+  refreshToken?: string | null;
+  tokenExpiresAt?: Date | null;
+  store?: SecretStore;
+}) {
+  const store = input.store ?? getSecretStore();
+  const credentialSecretId = await store.createSecret({
+    name: `w3ads:${input.workspaceId}:${input.provider}:${input.externalAccountId}:credentials`,
+    value: JSON.stringify(input.credentials),
+  });
+  const refreshCredentialSecretId = input.refreshToken
+    ? await store.createSecret({
+        name: `w3ads:${input.workspaceId}:${input.provider}:${input.externalAccountId}:refresh`,
+        value: input.refreshToken,
+      })
+    : null;
+
+  return {
+    accessTokenCiphertext: "vault",
+    refreshTokenCiphertext: null,
+    tokenIv: "vault",
+    tokenAuthTag: "vault",
+    tokenKeyVersion: "vault",
+    credentialSecretId,
+    refreshCredentialSecretId,
+    tokenExpiresAt: input.tokenExpiresAt ?? null,
+  };
 }
 
 export function stableExternalAccountId(provider: string, accountSeed: string) {

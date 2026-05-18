@@ -1,9 +1,14 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { ConnectorProvider } from "@prisma/client";
 
 import { getCurrentUserContext } from "@/lib/auth/current";
 import { createConnectorOAuthState } from "@/lib/connectors/oauth-state";
-import { buildMetaOAuthUrl, getMetaConfigStatus } from "@/lib/connectors/meta/oauth";
+import { buildMetaOAuthUrl } from "@/lib/connectors/meta/oauth";
 import { META_OAUTH_STATE_COOKIE } from "@/lib/connectors/meta/state";
+import {
+  buildMetaConfigFromProviderConfig,
+  getActiveProviderConfig,
+} from "@/lib/connectors/provider-config";
 
 export const runtime = "nodejs";
 
@@ -20,17 +25,25 @@ function redirectToConnectors(request: NextRequest, params: Record<string, strin
 export async function GET(request: NextRequest) {
   const context = await getCurrentUserContext();
 
-  const status = getMetaConfigStatus();
-  if (!status.configured) {
-    return redirectToConnectors(request, { provider: "meta", error: "missing-env" });
+  if (context.isDemoMode) {
+    return redirectToConnectors(request, { provider: "meta", connected: "demo" });
   }
+
+  const providerConfig = await getActiveProviderConfig({
+    workspaceId: context.currentWorkspace.id,
+    provider: ConnectorProvider.META_ADS,
+  });
+  if (!providerConfig) {
+    return redirectToConnectors(request, { provider: "meta", error: "missing-provider-config" });
+  }
+  const config = await buildMetaConfigFromProviderConfig(providerConfig);
 
   const state = createConnectorOAuthState({
     provider: "META_ADS",
     userId: context.user.id,
     workspaceId: context.currentWorkspace.id,
   });
-  const response = NextResponse.redirect(buildMetaOAuthUrl({ state }));
+  const response = NextResponse.redirect(buildMetaOAuthUrl({ state, config }));
 
   response.cookies.set(META_OAUTH_STATE_COOKIE, state, {
     httpOnly: true,

@@ -4,16 +4,18 @@ import { NextResponse, type NextRequest } from "next/server";
 import { logAudit } from "@/lib/audit/log";
 import { getCurrentUserContext } from "@/lib/auth/current";
 import { buildConnectorBackfillEvent } from "@/lib/connectors/backfill";
+import { vaultCredentialFields } from "@/lib/connectors/credentials";
 import { verifyConnectorOAuthState } from "@/lib/connectors/oauth-state";
+import {
+  buildShopifyConfigFromProviderConfig,
+  getActiveProviderConfig,
+} from "@/lib/connectors/provider-config";
 import { ShopifyClient } from "@/lib/connectors/shopify/client";
 import {
-  getShopifyConfig,
-  getShopifyConfigStatus,
   normalizeShopDomain,
   verifyShopifyQueryHmac,
 } from "@/lib/connectors/shopify/oauth";
 import { SHOPIFY_OAUTH_STATE_COOKIE } from "@/lib/connectors/shopify/state";
-import { encryptToken } from "@/lib/crypto/token-vault";
 import { prisma } from "@/lib/db/prisma";
 import { inngest } from "@/lib/jobs/inngest-client";
 
@@ -39,16 +41,6 @@ function redirectToConnectors(request: NextRequest, params: Record<string, strin
 }
 
 export async function GET(request: NextRequest) {
-  const status = getShopifyConfigStatus();
-  if (!status.configured) {
-    return redirectToConnectors(request, { provider: "shopify", error: "missing-shopify-env" });
-  }
-
-  const config = getShopifyConfig();
-  if (!verifyShopifyQueryHmac(request.nextUrl.searchParams, config.apiSecret)) {
-    return redirectToConnectors(request, { provider: "shopify", error: "invalid-hmac" });
-  }
-
   const state = request.nextUrl.searchParams.get("state");
   const storedState = request.cookies.get(SHOPIFY_OAUTH_STATE_COOKIE)?.value;
 
@@ -65,6 +57,19 @@ export async function GET(request: NextRequest) {
 
   const shop = normalizeShopDomain(shopParam);
   const context = await getCurrentUserContext();
+  const providerConfig = await getActiveProviderConfig({
+    workspaceId: context.currentWorkspace.id,
+    provider: ConnectorProvider.SHOPIFY,
+  });
+  if (!providerConfig) {
+    return redirectToConnectors(request, { provider: "shopify", error: "missing-provider-config" });
+  }
+
+  const config = await buildShopifyConfigFromProviderConfig(providerConfig);
+  if (!verifyShopifyQueryHmac(request.nextUrl.searchParams, config.apiSecret)) {
+    return redirectToConnectors(request, { provider: "shopify", error: "invalid-hmac" });
+  }
+
   const verifiedState = verifyConnectorOAuthState(state, {
     expectedProvider: "SHOPIFY",
     expectedUserId: context.user.id,
@@ -81,9 +86,14 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const client = new ShopifyClient();
+    const client = new ShopifyClient({ config });
     const token = await client.exchangeCodeForAccessToken({ shop, code });
-    const encryptedToken = encryptToken(token.access_token);
+    const credentialFields = await vaultCredentialFields({
+      workspaceId: context.currentWorkspace.id,
+      provider: ConnectorProvider.SHOPIFY,
+      externalAccountId: shop,
+      credentials: { accessToken: token.access_token },
+    });
 
     const connectorAccount = await prisma.connectorAccount.upsert({
       where: {
@@ -96,12 +106,7 @@ export async function GET(request: NextRequest) {
       update: {
         accountName: shop,
         status: ConnectorStatus.ACTIVE,
-        accessTokenCiphertext: encryptedToken.ciphertext,
-        refreshTokenCiphertext: null,
-        tokenIv: encryptedToken.iv,
-        tokenAuthTag: encryptedToken.authTag,
-        tokenKeyVersion: encryptedToken.keyVersion,
-        tokenExpiresAt: null,
+        ...credentialFields,
         metadata: {
           scope: token.scope,
           apiVersion: config.apiVersion,
@@ -114,12 +119,7 @@ export async function GET(request: NextRequest) {
         externalAccountId: shop,
         accountName: shop,
         status: ConnectorStatus.ACTIVE,
-        accessTokenCiphertext: encryptedToken.ciphertext,
-        refreshTokenCiphertext: null,
-        tokenIv: encryptedToken.iv,
-        tokenAuthTag: encryptedToken.authTag,
-        tokenKeyVersion: encryptedToken.keyVersion,
-        tokenExpiresAt: null,
+        ...credentialFields,
         metadata: {
           scope: token.scope,
           apiVersion: config.apiVersion,
@@ -156,8 +156,8 @@ export async function GET(request: NextRequest) {
     return redirectToConnectors(request, { provider: "shopify", connected: "shopify" });
   } catch (caught) {
     const message = caught instanceof Error ? caught.message : "unknown";
-    const errorCode = message.includes("TOKEN_ENCRYPTION_KEY")
-      ? "missing-token-key"
+    const errorCode = message.includes("Secret not found")
+      ? "missing-provider-config"
       : "shopify-api";
 
     return redirectToConnectors(request, { provider: "shopify", error: errorCode });

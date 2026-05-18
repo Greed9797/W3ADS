@@ -4,10 +4,9 @@ import { logAudit } from "@/lib/audit/log";
 import { getCurrentUserContext } from "@/lib/auth/current";
 import { buildConnectorBackfillEvent } from "@/lib/connectors/backfill";
 import {
-  buildSelectedConnectorAccounts,
-  decryptSelectionCredentials,
-  encryptSelectedAccountCredentials,
+  loadSelectionCredentials,
   parseSelectableAccounts,
+  vaultSelectedAccountCredentials,
 } from "@/lib/connectors/selection";
 import { prisma } from "@/lib/db/prisma";
 import { inngest } from "@/lib/jobs/inngest-client";
@@ -54,33 +53,51 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const credentials = decryptSelectionCredentials(selection);
-    const { encryptedAccessToken, encryptedRefreshToken, tokenExpiresAt } =
-      encryptSelectedAccountCredentials(credentials);
+    const credentials = await loadSelectionCredentials(selection);
     const accounts = parseSelectableAccounts(selection.accounts);
-    const selected = buildSelectedConnectorAccounts({
-      workspaceId: context.currentWorkspace.id,
-      provider: selection.provider,
-      accounts,
-      selectedExternalAccountIds,
-      encryptedCredentials: encryptedAccessToken,
-      refreshTokenCiphertext: encryptedRefreshToken,
-      tokenExpiresAt,
+    const accountsById = new Map(accounts.map((account) => [account.externalAccountId, account]));
+    const selected = selectedExternalAccountIds.map((id) => {
+      const account = accountsById.get(id);
+      if (!account) {
+        throw new Error("Selected connector account was not found");
+      }
+
+      return account;
     });
     const connectorAccountIds = await prisma.$transaction(async (tx) => {
       const ids: string[] = [];
 
       for (const account of selected) {
+        const credentialFields = await vaultSelectedAccountCredentials({
+          workspaceId: context.currentWorkspace.id,
+          provider: selection.provider,
+          externalAccountId: account.externalAccountId,
+          credentials,
+        });
         const connectorAccount = await tx.connectorAccount.upsert({
           where: {
             workspaceId_provider_externalAccountId: {
-              workspaceId: account.workspaceId,
-              provider: account.provider,
+              workspaceId: context.currentWorkspace.id,
+              provider: selection.provider,
               externalAccountId: account.externalAccountId,
             },
           },
-          update: account,
-          create: account,
+          update: {
+            accountName: account.accountName,
+            status: "ACTIVE",
+            ...credentialFields,
+            metadata: account.metadata ?? undefined,
+            lastSyncError: null,
+          },
+          create: {
+            workspaceId: context.currentWorkspace.id,
+            provider: selection.provider,
+            externalAccountId: account.externalAccountId,
+            accountName: account.accountName,
+            status: "ACTIVE",
+            ...credentialFields,
+            metadata: account.metadata ?? undefined,
+          },
         });
         ids.push(connectorAccount.id);
       }
@@ -128,9 +145,7 @@ export async function POST(request: NextRequest) {
     });
   } catch (caught) {
     const message = caught instanceof Error ? caught.message : "unknown";
-    const error = message.includes("TOKEN_ENCRYPTION_KEY")
-      ? "missing-token-key"
-      : "selection-failed";
+    const error = message.includes("Secret not found") ? "selection-expired" : "selection-failed";
 
     return redirectToConnectors(request, { error });
   }

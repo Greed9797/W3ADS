@@ -6,14 +6,12 @@ import { EventTracker } from "@/components/observability/event-tracker";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getCurrentUserContext } from "@/lib/auth/current";
-import { getGoogleAdsConfigStatus } from "@/lib/connectors/google-ads/oauth";
-import { getMetaConfigStatus } from "@/lib/connectors/meta/oauth";
-import { getNuvemshopConfigStatus } from "@/lib/connectors/nuvemshop/oauth";
+import { canManageProviderConfigs } from "@/lib/auth/platform-permissions";
+import { listPublicProviderConfigs } from "@/lib/connectors/provider-config";
 import {
   getConnectorDefinition,
   manualCommerceProviders,
 } from "@/lib/connectors/registry";
-import { getShopifyConfigStatus } from "@/lib/connectors/shopify/oauth";
 import { prisma } from "@/lib/db/prisma";
 import { cn } from "@/lib/utils/cn";
 
@@ -98,22 +96,16 @@ function connectorMessage(error: string | undefined, connected: string | undefin
   const messages: Record<string, string> = {
     "invalid-state": "O retorno da Meta nao passou na validacao de seguranca. Tente conectar de novo.",
     "missing-code": "A Meta nao retornou o codigo de autorizacao. Tente conectar novamente.",
-    "missing-env": "Configure META_APP_ID, META_APP_SECRET e META_REDIRECT_URI para iniciar o OAuth.",
-    "missing-token-key": "Configure TOKEN_ENCRYPTION_KEY antes de salvar tokens OAuth.",
+    "missing-provider-config":
+      "Esse conector ainda nao foi configurado no app pela equipe W3.",
     "meta-api": "Nao conseguimos concluir a conexao com a Meta agora. Tente novamente em alguns minutos.",
     "google-ads-api":
       "Nao conseguimos concluir a conexao com o Google Ads agora. Confira o developer token e tente novamente.",
     "invalid-hmac": "A assinatura retornada pela Shopify nao passou na validacao HMAC.",
     "invalid-shop": "Informe uma loja Shopify valida, como loja.myshopify.com.",
     "provider-denied": "A autorizacao foi cancelada no provedor.",
-    "missing-google-ads-env":
-      "Configure GOOGLE_ADS_CLIENT_ID, GOOGLE_ADS_CLIENT_SECRET, GOOGLE_ADS_DEVELOPER_TOKEN e GOOGLE_ADS_REDIRECT_URI.",
     "missing-shop": "Informe o dominio da loja Shopify antes de conectar.",
-    "missing-shopify-env":
-      "Configure SHOPIFY_APP_API_KEY, SHOPIFY_APP_API_SECRET e SHOPIFY_REDIRECT_URI.",
     "shopify-api": "Nao conseguimos concluir a conexao com a Shopify agora. Tente novamente em alguns minutos.",
-    "missing-nuvemshop-env":
-      "Configure NUVEMSHOP_CLIENT_ID, NUVEMSHOP_CLIENT_SECRET e NUVEMSHOP_REDIRECT_URI.",
     "nuvemshop-api":
       "Nao conseguimos concluir a conexao com a Nuvemshop agora. Tente novamente em alguns minutos.",
     "missing-selection": "Selecione pelo menos uma conta antes de vincular.",
@@ -136,11 +128,9 @@ export default async function ConnectorsPage({ searchParams }: ConnectorsPagePro
   const params = await searchParams;
   const connectedProvider = firstParam(params.connected);
   const message = connectorMessage(firstParam(params.error), firstParam(params.connected));
-  const metaStatus = getMetaConfigStatus();
-  const googleAdsStatus = getGoogleAdsConfigStatus();
-  const shopifyStatus = getShopifyConfigStatus();
-  const nuvemshopStatus = getNuvemshopConfigStatus();
+  const canConfigureProviders = canManageProviderConfigs(context.user);
   const connectorCounts = new Map<ConnectorProvider, number>();
+  const providerConfigs = new Set<ConnectorProvider>();
   if (!context.isDemoMode) {
     const connectors = await prisma.connectorAccount.groupBy({
       by: ["provider"],
@@ -153,6 +143,13 @@ export default async function ConnectorsPage({ searchParams }: ConnectorsPagePro
     for (const connector of connectors) {
       connectorCounts.set(connector.provider, connector._count.provider);
     }
+
+    const configs = await listPublicProviderConfigs(context.currentWorkspace.id);
+    for (const config of configs) {
+      if (config.status === "ACTIVE") {
+        providerConfigs.add(config.provider);
+      }
+    }
   }
 
   const metaAccounts = connectorCounts.get(ConnectorProvider.META_ADS) ?? 0;
@@ -160,20 +157,50 @@ export default async function ConnectorsPage({ searchParams }: ConnectorsPagePro
   const shopifyAccounts = connectorCounts.get(ConnectorProvider.SHOPIFY) ?? 0;
   const nuvemshopAccounts = connectorCounts.get(ConnectorProvider.NUVEMSHOP) ?? 0;
 
+  function missingConfigAction(provider: ConnectorProvider) {
+    if (canConfigureProviders) {
+      return (
+        <Button asChild size="sm" variant="secondary">
+          <a href={`/connectors/settings/${provider.toLowerCase()}`}>
+            <Settings size={16} aria-hidden="true" />
+            Configurar no app
+          </a>
+        </Button>
+      );
+    }
+
+    return (
+      <Button disabled size="sm" variant="secondary">
+        <Settings size={16} aria-hidden="true" />
+        Aguardando W3
+      </Button>
+    );
+  }
+
+  function statusLabel(provider: ConnectorProvider, count: number, unit: string) {
+    if (count > 0) return `${count} ${unit}(s) ativa(s)`;
+    if (providerConfigs.has(provider)) return "Pronto para conectar";
+
+    return "Aguardando configuração W3";
+  }
+
+  function statusTone(provider: ConnectorProvider, count: number) {
+    if (count > 0) return "success" as const;
+    if (providerConfigs.has(provider)) return "info" as const;
+
+    return "warning" as const;
+  }
+
   const providerCards: ProviderCard[] = [
     {
       name: "Meta Ads",
       description: context.isDemoMode
-        ? "OAuth preparado. Com AUTH_DISABLED=true, o callback valida estado mas nao grava token."
+        ? "Configure o app Meta pelo CRUD interno antes de conectar contas de anuncio."
         : "Conecte o perfil e vincule somente as contas de anuncio dos clientes selecionados.",
       statusLabel:
-        metaAccounts > 0
-          ? `${metaAccounts} conta(s) ativa(s)`
-          : metaStatus.configured
-            ? "Pronto para OAuth"
-            : "Configurar env",
-      statusTone: metaAccounts > 0 ? "success" : metaStatus.configured ? "info" : "warning",
-      action: metaStatus.configured ? (
+        statusLabel(ConnectorProvider.META_ADS, metaAccounts, "conta"),
+      statusTone: statusTone(ConnectorProvider.META_ADS, metaAccounts),
+      action: providerConfigs.has(ConnectorProvider.META_ADS) ? (
         <Button asChild size="sm">
           <a href="/api/connectors/meta/connect">
             <Cable size={16} aria-hidden="true" />
@@ -181,26 +208,18 @@ export default async function ConnectorsPage({ searchParams }: ConnectorsPagePro
           </a>
         </Button>
       ) : (
-        <Button disabled size="sm" variant="secondary">
-          <Settings size={16} aria-hidden="true" />
-          Configurar env
-        </Button>
+        missingConfigAction(ConnectorProvider.META_ADS)
       ),
     },
     {
       name: "Google Ads",
       description: context.isDemoMode
-        ? "OAuth preparado com acesso offline. Em demo, o callback valida estado mas nao grava conta."
+        ? "Configure OAuth e developer token pelo CRUD interno antes de conectar clientes."
         : "Conecte o usuario/MCC, expanda a hierarquia e vincule apenas contas anunciante.",
       statusLabel:
-        googleAdsAccounts > 0
-          ? `${googleAdsAccounts} conta(s) ativa(s)`
-          : googleAdsStatus.configured
-            ? "Pronto para OAuth"
-            : "Configurar env",
-      statusTone:
-        googleAdsAccounts > 0 ? "success" : googleAdsStatus.configured ? "info" : "warning",
-      action: googleAdsStatus.configured ? (
+        statusLabel(ConnectorProvider.GOOGLE_ADS, googleAdsAccounts, "conta"),
+      statusTone: statusTone(ConnectorProvider.GOOGLE_ADS, googleAdsAccounts),
+      action: providerConfigs.has(ConnectorProvider.GOOGLE_ADS) ? (
         <Button asChild size="sm">
           <a href="/api/connectors/google-ads/connect">
             <Cable size={16} aria-hidden="true" />
@@ -208,26 +227,18 @@ export default async function ConnectorsPage({ searchParams }: ConnectorsPagePro
           </a>
         </Button>
       ) : (
-        <Button disabled size="sm" variant="secondary">
-          <Settings size={16} aria-hidden="true" />
-          Configurar env
-        </Button>
+        missingConfigAction(ConnectorProvider.GOOGLE_ADS)
       ),
     },
     {
       name: "Shopify",
       description: context.isDemoMode
-        ? "OAuth com HMAC preparado. Informe a loja quando as envs da Shopify estiverem configuradas."
+        ? "Configure API key e secret pelo CRUD interno antes de conectar lojas."
         : "Conecte a loja, ingira pedidos via GraphQL e receba webhooks assinados.",
       statusLabel:
-        shopifyAccounts > 0
-          ? `${shopifyAccounts} loja(s) ativa(s)`
-          : shopifyStatus.configured
-            ? "Pronto para OAuth"
-            : "Configurar env",
-      statusTone:
-        shopifyAccounts > 0 ? "success" : shopifyStatus.configured ? "info" : "warning",
-      action: shopifyStatus.configured ? (
+        statusLabel(ConnectorProvider.SHOPIFY, shopifyAccounts, "loja"),
+      statusTone: statusTone(ConnectorProvider.SHOPIFY, shopifyAccounts),
+      action: providerConfigs.has(ConnectorProvider.SHOPIFY) ? (
         <form action="/api/connectors/shopify/connect" className="flex flex-col gap-2">
           <label className="text-caption text-[var(--text-tertiary)]" htmlFor="shopify-shop">
             Loja
@@ -245,26 +256,18 @@ export default async function ConnectorsPage({ searchParams }: ConnectorsPagePro
           </Button>
         </form>
       ) : (
-        <Button disabled size="sm" variant="secondary">
-          <Settings size={16} aria-hidden="true" />
-          Configurar env
-        </Button>
+        missingConfigAction(ConnectorProvider.SHOPIFY)
       ),
     },
     {
       name: "Nuvemshop",
       description: context.isDemoMode
-        ? "OAuth preparado. Em demo, a conexao valida estado mas nao grava loja."
+        ? "Configure client ID e secret pelo CRUD interno antes de conectar lojas."
         : "Conecte via OAuth, selecione a loja e sincronize pedidos e receita.",
       statusLabel:
-        nuvemshopAccounts > 0
-          ? `${nuvemshopAccounts} loja(s) ativa(s)`
-          : nuvemshopStatus.configured
-            ? "Pronto para OAuth"
-            : "Configurar env",
-      statusTone:
-        nuvemshopAccounts > 0 ? "success" : nuvemshopStatus.configured ? "info" : "warning",
-      action: nuvemshopStatus.configured ? (
+        statusLabel(ConnectorProvider.NUVEMSHOP, nuvemshopAccounts, "loja"),
+      statusTone: statusTone(ConnectorProvider.NUVEMSHOP, nuvemshopAccounts),
+      action: providerConfigs.has(ConnectorProvider.NUVEMSHOP) ? (
         <Button asChild size="sm">
           <a href="/api/connectors/nuvemshop/connect">
             <Cable size={16} aria-hidden="true" />
@@ -272,10 +275,7 @@ export default async function ConnectorsPage({ searchParams }: ConnectorsPagePro
           </a>
         </Button>
       ) : (
-        <Button disabled size="sm" variant="secondary">
-          <Settings size={16} aria-hidden="true" />
-          Configurar env
-        </Button>
+        missingConfigAction(ConnectorProvider.NUVEMSHOP)
       ),
     },
     ...manualCommerceProviders.map((provider) => {
@@ -285,11 +285,11 @@ export default async function ConnectorsPage({ searchParams }: ConnectorsPagePro
       return {
         name: definition.name,
         description: context.isDemoMode
-          ? "Conexao manual preparada. Em demo, as credenciais nao sao gravadas."
-          : "Informe URL da loja e credenciais REST. Validamos antes de salvar.",
-        statusLabel: count > 0 ? `${count} loja(s) ativa(s)` : "Credenciais manuais",
-        statusTone: count > 0 ? ("success" as const) : ("warning" as const),
-        action: (
+          ? "Configuração manual preparada no app. Em demo, nada e gravado no banco."
+          : "Use a configuração W3 do workspace para validar e vincular a loja.",
+        statusLabel: statusLabel(provider, count, "loja"),
+        statusTone: statusTone(provider, count),
+        action: providerConfigs.has(provider) ? (
           <form action="/api/connectors/manual" className="grid gap-2" method="post">
             <input name="provider" type="hidden" value={provider} />
             <label className="text-caption text-[var(--text-tertiary)]" htmlFor={`${provider}-name`}>
@@ -302,54 +302,13 @@ export default async function ConnectorsPage({ searchParams }: ConnectorsPagePro
               placeholder="Nome da loja"
               required
             />
-            <label className="text-caption text-[var(--text-tertiary)]" htmlFor={`${provider}-url`}>
-              URL API
-            </label>
-            <input
-              className="h-10 rounded-md border border-[var(--border-strong)] bg-[var(--bg-surface)] px-3 text-sm"
-              id={`${provider}-url`}
-              name="baseUrl"
-              placeholder="https://loja.exemplo.com.br"
-              required
-            />
-            <label className="text-caption text-[var(--text-tertiary)]" htmlFor={`${provider}-path`}>
-              Caminho pedidos
-            </label>
-            <input
-              className="h-10 rounded-md border border-[var(--border-strong)] bg-[var(--bg-surface)] px-3 text-sm"
-              id={`${provider}-path`}
-              name="ordersPath"
-              placeholder="/orders"
-            />
-            <div className="grid gap-2 sm:grid-cols-2">
-              <input
-                className="h-10 rounded-md border border-[var(--border-strong)] bg-[var(--bg-surface)] px-3 text-sm"
-                name="apiUser"
-                placeholder="Usuario API"
-              />
-              <input
-                className="h-10 rounded-md border border-[var(--border-strong)] bg-[var(--bg-surface)] px-3 text-sm"
-                name="apiPassword"
-                placeholder="Senha API"
-                type="password"
-              />
-              <input
-                className="h-10 rounded-md border border-[var(--border-strong)] bg-[var(--bg-surface)] px-3 text-sm"
-                name="apiKey"
-                placeholder="API key/token"
-              />
-              <input
-                className="h-10 rounded-md border border-[var(--border-strong)] bg-[var(--bg-surface)] px-3 text-sm"
-                name="apiSecret"
-                placeholder="API secret"
-                type="password"
-              />
-            </div>
             <Button className="w-fit" size="sm" type="submit">
               <Cable size={16} aria-hidden="true" />
               Validar e vincular
             </Button>
           </form>
+        ) : (
+          missingConfigAction(provider)
         ),
       };
     }),

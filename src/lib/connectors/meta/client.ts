@@ -1,6 +1,6 @@
 import { callWithRetry } from "@/lib/connectors/retry";
 
-import { getMetaConfig, type MetaConfig } from "./oauth";
+import type { MetaConfig } from "./oauth";
 
 type FetchLike = typeof fetch;
 
@@ -114,8 +114,8 @@ export class MetaMarketingClient {
   private readonly config: MetaConfig;
   private readonly fetchImpl: FetchLike;
 
-  constructor(input: { config?: MetaConfig; fetchImpl?: FetchLike } = {}) {
-    this.config = input.config ?? getMetaConfig();
+  constructor(input: { config: MetaConfig; fetchImpl?: FetchLike }) {
+    this.config = input.config;
     this.fetchImpl = input.fetchImpl ?? fetch;
   }
 

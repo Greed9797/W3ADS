@@ -1,12 +1,14 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { ConnectorProvider } from "@prisma/client";
 
 import { getCurrentUserContext } from "@/lib/auth/current";
-import {
-  buildGoogleAdsOAuthUrl,
-  getGoogleAdsConfigStatus,
-} from "@/lib/connectors/google-ads/oauth";
+import { buildGoogleAdsOAuthUrl } from "@/lib/connectors/google-ads/oauth";
 import { GOOGLE_ADS_OAUTH_STATE_COOKIE } from "@/lib/connectors/google-ads/state";
 import { createConnectorOAuthState } from "@/lib/connectors/oauth-state";
+import {
+  buildGoogleAdsConfigFromProviderConfig,
+  getActiveProviderConfig,
+} from "@/lib/connectors/provider-config";
 
 export const runtime = "nodejs";
 
@@ -23,20 +25,28 @@ function redirectToConnectors(request: NextRequest, params: Record<string, strin
 export async function GET(request: NextRequest) {
   const context = await getCurrentUserContext();
 
-  const status = getGoogleAdsConfigStatus();
-  if (!status.configured) {
+  if (context.isDemoMode) {
+    return redirectToConnectors(request, { provider: "google-ads", connected: "demo" });
+  }
+
+  const providerConfig = await getActiveProviderConfig({
+    workspaceId: context.currentWorkspace.id,
+    provider: ConnectorProvider.GOOGLE_ADS,
+  });
+  if (!providerConfig) {
     return redirectToConnectors(request, {
       provider: "google-ads",
-      error: "missing-google-ads-env",
+      error: "missing-provider-config",
     });
   }
+  const config = await buildGoogleAdsConfigFromProviderConfig(providerConfig);
 
   const state = createConnectorOAuthState({
     provider: "GOOGLE_ADS",
     userId: context.user.id,
     workspaceId: context.currentWorkspace.id,
   });
-  const response = NextResponse.redirect(buildGoogleAdsOAuthUrl({ state }));
+  const response = NextResponse.redirect(buildGoogleAdsOAuthUrl({ state, config }));
 
   response.cookies.set(GOOGLE_ADS_OAUTH_STATE_COOKIE, state, {
     httpOnly: true,

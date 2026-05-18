@@ -65,18 +65,14 @@ A Fase 2 ja tem a base local do OAuth da Meta sem exigir Supabase real:
 - `src/lib/connectors/meta/client.ts` troca `code` por token via POST, troca para long-lived token, lista ad accounts com `Authorization` header e pausa quando o header de uso da Meta passa do limite definido.
 - Quando `INNGEST_EVENT_KEY` estiver configurada, cada conta conectada dispara backfill automatico de 90 dias.
 
-Para testar conexao real depois de criar Supabase/Auth, configure:
+Para testar conexao real depois de criar Supabase/Auth:
 
-```bash
-AUTH_DISABLED="false"
-TOKEN_ENCRYPTION_KEY="$(openssl rand -base64 32)"
-META_API_VERSION="v25.0"
-META_APP_ID="..."
-META_APP_SECRET="..."
-META_REDIRECT_URI="http://localhost:3000/api/connectors/meta/callback"
-```
+1. Aplique as migrations no Supabase/Postgres.
+2. Ative a extensao Supabase Vault/KMS no projeto.
+3. Acesse `/platform/bootstrap` para promover o primeiro usuario a `W3_ADMIN`.
+4. Acesse `/connectors/settings` e cadastre as credenciais dos provedores no app.
 
-Com `AUTH_DISABLED="true"`, a tela `/connectors` continua funcionando para demo e mostra quando as variaveis da Meta ainda estao pendentes.
+Com `AUTH_DISABLED="true"`, a tela `/connectors` continua funcionando para demo e mostra os atalhos de configuracao no app.
 
 ## Conectores Google Ads e Shopify
 
@@ -86,30 +82,11 @@ As bases das Fases 3 e 4 tambem estao preparadas sem chamar providers em ambient
 - Shopify usa OAuth com validacao HMAC, GraphQL Orders, registro dos webhooks `orders/create`, `orders/updated`, `orders/paid` e `app/uninstalled`, webhook assinado em `/api/webhooks/shopify` e job `connector.shopify.backfill`.
 - Nuvemshop usa OAuth oficial, token sem expiracao e `user_id` como loja; pedidos entram no job generico `connector.ecommerce.backfill`.
 - iSet, Tray, WBuy e Magazord usam conexao manual REST: URL da API, caminho de pedidos e credenciais sao validados antes de salvar.
-- Tokens, API keys, usuarios/senhas e URLs de API ficam criptografados com `TOKEN_ENCRYPTION_KEY`; refresh token do Google fica salvo como envelope criptografado.
-- O state de todos os conectores e assinado com `AUTH_SECRET`, `NEXTAUTH_SECRET` ou `TOKEN_ENCRYPTION_KEY`; em producao configure pelo menos um segredo forte.
-
-Variaveis adicionais:
-
-```bash
-GOOGLE_ADS_API_VERSION="v24"
-GOOGLE_ADS_CLIENT_ID="..."
-GOOGLE_ADS_CLIENT_SECRET="..."
-GOOGLE_ADS_DEVELOPER_TOKEN="..."
-GOOGLE_ADS_LOGIN_CUSTOMER_ID="" # opcional para MCC
-GOOGLE_ADS_REDIRECT_URI="http://localhost:3000/api/connectors/google-ads/callback"
-
-SHOPIFY_API_VERSION="2026-04"
-SHOPIFY_APP_API_KEY="..."
-SHOPIFY_APP_API_SECRET="..."
-SHOPIFY_REDIRECT_URI="http://localhost:3000/api/connectors/shopify/callback"
-SHOPIFY_SCOPES="read_orders,read_products,read_customers,read_analytics"
-
-NUVEMSHOP_CLIENT_ID="..."
-NUVEMSHOP_CLIENT_SECRET="..."
-NUVEMSHOP_REDIRECT_URI="http://localhost:3000/api/connectors/nuvemshop/callback"
-NUVEMSHOP_API_BASE_URL="https://api.tiendanube.com/v1"
-```
+- Tokens OAuth, API keys, usuarios/senhas, developer tokens e webhook secrets ficam no Supabase Vault/KMS.
+- `ConnectorProviderConfig` guarda apenas campos publicos do app/API por workspace.
+- `ConnectorAccount` usa `credentialSecretId` e `refreshCredentialSecretId` para novas conexoes; os campos AES antigos continuam como fallback legado.
+- O state de todos os conectores e assinado com `AUTH_SECRET` ou `NEXTAUTH_SECRET`; em producao configure pelo menos um segredo forte.
+- Nao existem mais envs obrigatorias `META_*`, `GOOGLE_ADS_*`, `SHOPIFY_*` ou `NUVEMSHOP_*`.
 
 ## Dashboard core
 

@@ -4,9 +4,12 @@ import { NextResponse, type NextRequest } from "next/server";
 import { logAudit } from "@/lib/audit/log";
 import { getCurrentUserContext } from "@/lib/auth/current";
 import { MetaMarketingClient, tokenExpiresAt } from "@/lib/connectors/meta/client";
-import { getMetaConfigStatus } from "@/lib/connectors/meta/oauth";
 import { META_OAUTH_STATE_COOKIE } from "@/lib/connectors/meta/state";
 import { verifyConnectorOAuthState } from "@/lib/connectors/oauth-state";
+import {
+  buildMetaConfigFromProviderConfig,
+  getActiveProviderConfig,
+} from "@/lib/connectors/provider-config";
 import { createConnectorSelectionSession } from "@/lib/connectors/selection";
 
 export const runtime = "nodejs";
@@ -63,13 +66,18 @@ export async function GET(request: NextRequest) {
     return redirectToConnectors(request, { provider: "meta", connected: "demo" });
   }
 
-  const status = getMetaConfigStatus();
-  if (!status.configured) {
-    return redirectToConnectors(request, { provider: "meta", error: "missing-env" });
+  const providerConfig = await getActiveProviderConfig({
+    workspaceId: context.currentWorkspace.id,
+    provider: ConnectorProvider.META_ADS,
+  });
+  if (!providerConfig) {
+    return redirectToConnectors(request, { provider: "meta", error: "missing-provider-config" });
   }
 
   try {
-    const client = new MetaMarketingClient();
+    const client = new MetaMarketingClient({
+      config: await buildMetaConfigFromProviderConfig(providerConfig),
+    });
     const shortLivedToken = await client.exchangeCodeForShortLivedToken(code);
     const longLivedToken = await client.exchangeForLongLivedToken(shortLivedToken.access_token);
     const accounts = await client.listAdAccounts(longLivedToken.access_token);
@@ -111,7 +119,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(url);
   } catch (caught) {
     const message = caught instanceof Error ? caught.message : "unknown";
-    const errorCode = message.includes("TOKEN_ENCRYPTION_KEY") ? "missing-token-key" : "meta-api";
+    const errorCode = message.includes("Secret not found") ? "missing-provider-config" : "meta-api";
 
     return redirectToConnectors(request, { provider: "meta", error: errorCode });
   }

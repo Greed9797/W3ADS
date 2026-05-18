@@ -1,15 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-type EnvLike = Record<string, string | undefined>;
-
 export const SHOPIFY_DEFAULT_API_VERSION = "2026-04";
 export const SHOPIFY_DEFAULT_SCOPES = "read_orders,read_products,read_customers,read_analytics";
-
-const requiredShopifyEnv = [
-  "SHOPIFY_APP_API_KEY",
-  "SHOPIFY_APP_API_SECRET",
-  "SHOPIFY_REDIRECT_URI",
-] as const;
 
 export type ShopifyConfig = {
   apiVersion: string;
@@ -18,32 +10,6 @@ export type ShopifyConfig = {
   redirectUri: string;
   scopes: string;
 };
-
-export function getShopifyConfigStatus(env: EnvLike = process.env) {
-  const missing = requiredShopifyEnv.filter((key) => !env[key]);
-
-  return {
-    configured: missing.length === 0,
-    missing,
-    apiVersion: env.SHOPIFY_API_VERSION ?? SHOPIFY_DEFAULT_API_VERSION,
-  };
-}
-
-export function getShopifyConfig(env: EnvLike = process.env): ShopifyConfig {
-  const status = getShopifyConfigStatus(env);
-
-  if (!status.configured) {
-    throw new Error(`Missing Shopify env vars: ${status.missing.join(", ")}`);
-  }
-
-  return {
-    apiVersion: status.apiVersion,
-    apiKey: env.SHOPIFY_APP_API_KEY!,
-    apiSecret: env.SHOPIFY_APP_API_SECRET!,
-    redirectUri: env.SHOPIFY_REDIRECT_URI!,
-    scopes: env.SHOPIFY_SCOPES ?? SHOPIFY_DEFAULT_SCOPES,
-  };
-}
 
 export function normalizeShopDomain(value: string) {
   const withoutProtocol = value
@@ -64,16 +30,14 @@ export function normalizeShopDomain(value: string) {
 }
 
 export function buildShopifyOAuthUrl(
-  input: { shop: string; state: string },
-  env: EnvLike = process.env,
+  input: { shop: string; state: string; config: ShopifyConfig },
 ) {
-  const config = getShopifyConfig(env);
   const shop = normalizeShopDomain(input.shop);
   const url = new URL(`https://${shop}/admin/oauth/authorize`);
 
-  url.searchParams.set("client_id", config.apiKey);
-  url.searchParams.set("scope", config.scopes);
-  url.searchParams.set("redirect_uri", config.redirectUri);
+  url.searchParams.set("client_id", input.config.apiKey);
+  url.searchParams.set("scope", input.config.scopes);
+  url.searchParams.set("redirect_uri", input.config.redirectUri);
   url.searchParams.set("state", input.state);
 
   return url;

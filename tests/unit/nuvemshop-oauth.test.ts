@@ -1,28 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { NuvemshopClient } from "@/lib/connectors/nuvemshop/client";
-import {
-  buildNuvemshopOAuthUrl,
-  getNuvemshopConfigStatus,
-} from "@/lib/connectors/nuvemshop/oauth";
+import { buildNuvemshopOAuthUrl } from "@/lib/connectors/nuvemshop/oauth";
 
-const env = {
-  NUVEMSHOP_CLIENT_ID: "app-id",
-  NUVEMSHOP_CLIENT_SECRET: "app-secret",
-  NUVEMSHOP_REDIRECT_URI: "http://localhost:3000/api/connectors/nuvemshop/callback",
+const config = {
+  clientId: "app-id",
+  clientSecret: "app-secret",
+  redirectUri: "http://localhost:3000/api/connectors/nuvemshop/callback",
+  apiBaseUrl: "https://api.tiendanube.com/v1",
 };
 
 describe("Nuvemshop OAuth", () => {
-  it("reports required env vars", () => {
-    expect(getNuvemshopConfigStatus({}).missing).toEqual([
-      "NUVEMSHOP_CLIENT_ID",
-      "NUVEMSHOP_CLIENT_SECRET",
-      "NUVEMSHOP_REDIRECT_URI",
-    ]);
-  });
-
-  it("builds the install URL with state", () => {
-    const url = buildNuvemshopOAuthUrl({ state: "csrf-state" }, env);
+  it("builds the install URL with state from workspace provider config", () => {
+    const url = buildNuvemshopOAuthUrl({ state: "csrf-state", config });
 
     expect(url.toString()).toBe(
       "https://www.tiendanube.com/apps/app-id/authorize?state=csrf-state",
@@ -40,10 +30,10 @@ describe("Nuvemshop OAuth", () => {
     );
     const client = new NuvemshopClient({
       config: {
-        clientId: env.NUVEMSHOP_CLIENT_ID,
-        clientSecret: env.NUVEMSHOP_CLIENT_SECRET,
-        redirectUri: env.NUVEMSHOP_REDIRECT_URI,
-        apiBaseUrl: "https://api.tiendanube.com/v1",
+        clientId: config.clientId,
+        clientSecret: config.clientSecret,
+        redirectUri: config.redirectUri,
+        apiBaseUrl: config.apiBaseUrl,
       },
       fetchImpl: fetchMock as unknown as typeof fetch,
     });

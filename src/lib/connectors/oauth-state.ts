@@ -40,7 +40,7 @@ function base64UrlDecode(value: string) {
 }
 
 export function getConnectorOAuthStateSecret(env: Record<string, string | undefined> = process.env) {
-  const secret = env.AUTH_SECRET ?? env.NEXTAUTH_SECRET ?? env.TOKEN_ENCRYPTION_KEY;
+  const secret = env.AUTH_SECRET ?? env.NEXTAUTH_SECRET;
 
   if (!secret && env.NODE_ENV === "production") {
     throw new Error("AUTH_SECRET or NEXTAUTH_SECRET is required for connector OAuth state");

@@ -1,7 +1,11 @@
 import { createHash } from "node:crypto";
 import { ConnectorProvider, ConnectorStatus, SyncStatus } from "@prisma/client";
 
-import { decryptToken } from "@/lib/crypto/token-vault";
+import { connectorAccessTokenFromAccount } from "@/lib/connectors/credentials";
+import {
+  buildMetaConfigFromProviderConfig,
+  getActiveProviderConfig,
+} from "@/lib/connectors/provider-config";
 import { prisma } from "@/lib/db/prisma";
 
 import { MetaMarketingClient, type MetaCampaignInsight } from "./client";
@@ -91,13 +95,17 @@ export async function syncMetaDailyMetrics(input: {
       where: { id: input.connectorAccountId },
     });
 
-    const accessToken = decryptToken({
-      ciphertext: connector.accessTokenCiphertext,
-      iv: connector.tokenIv,
-      authTag: connector.tokenAuthTag,
-      keyVersion: connector.tokenKeyVersion,
+    const providerConfig = await getActiveProviderConfig({
+      workspaceId: connector.workspaceId,
+      provider: ConnectorProvider.META_ADS,
     });
-    const client = new MetaMarketingClient();
+    if (!providerConfig) {
+      throw new Error("Meta provider config is missing");
+    }
+    const accessToken = await connectorAccessTokenFromAccount(connector);
+    const client = new MetaMarketingClient({
+      config: await buildMetaConfigFromProviderConfig(providerConfig),
+    });
     const insights = await client.getCampaignInsights({
       accessToken,
       adAccountId: connector.externalAccountId,

@@ -18,7 +18,7 @@ import { logoutAction, switchWorkspaceAction } from "@/app/(app)/actions";
 
 type AppContext = Awaited<ReturnType<typeof getCurrentUserContext>>;
 
-const navItems = [
+const baseNavItems = [
   { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { label: "Dashboards", href: "/dashboards", icon: PanelsTopLeft },
   { label: "Conectores", href: "/connectors", icon: PlugZap },
@@ -29,6 +29,14 @@ const navItems = [
 ];
 
 export function Sidebar({ context }: { context: AppContext }) {
+  const navItems =
+    context.user.platformRole === "W3_ADMIN"
+      ? [
+          ...baseNavItems,
+          { label: "Config. conectores", href: "/connectors/settings", icon: Settings },
+        ]
+      : baseNavItems;
+
   return (
     <aside className="relative hidden border-r border-[var(--border-subtle)] bg-[var(--bg-surface)] lg:block">
       <div className="flex h-[72px] items-center border-b border-[var(--border-subtle)] px-5">

@@ -1,7 +1,7 @@
 import { callWithRetry } from "@/lib/connectors/retry";
 import type { ShopifyOrder } from "@/lib/connectors/shopify/client";
 
-import { getNuvemshopConfig, type NuvemshopConfig } from "./oauth";
+import type { NuvemshopConfig } from "./oauth";
 
 type FetchLike = typeof fetch;
 
@@ -100,8 +100,8 @@ export class NuvemshopClient {
   private readonly config: NuvemshopConfig;
   private readonly fetchImpl: FetchLike;
 
-  constructor(input: { config?: NuvemshopConfig; fetchImpl?: FetchLike } = {}) {
-    this.config = input.config ?? getNuvemshopConfig();
+  constructor(input: { config: NuvemshopConfig; fetchImpl?: FetchLike }) {
+    this.config = input.config;
     this.fetchImpl = input.fetchImpl ?? fetch;
   }
 

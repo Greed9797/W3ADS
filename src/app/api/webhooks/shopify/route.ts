@@ -2,9 +2,12 @@ import { ConnectorProvider, ConnectorStatus } from "@prisma/client";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { logAudit } from "@/lib/audit/log";
+import {
+  buildShopifyConfigFromProviderConfig,
+  getActiveProviderConfig,
+} from "@/lib/connectors/provider-config";
 import { normalizeShopifyWebhookOrder } from "@/lib/connectors/shopify/client";
 import {
-  getShopifyConfigStatus,
   normalizeShopDomain,
   verifyShopifyWebhookHmac,
 } from "@/lib/connectors/shopify/oauth";
@@ -74,19 +77,44 @@ export async function POST(request: NextRequest) {
   const hmac = request.headers.get("x-shopify-hmac-sha256");
   const topic = request.headers.get("x-shopify-topic");
   const shopHeader = request.headers.get("x-shopify-shop-domain");
-  const status = getShopifyConfigStatus();
 
-  if (!status.configured || !process.env.SHOPIFY_APP_API_SECRET) {
-    return NextResponse.json({ error: "Shopify webhook secret is not configured" }, { status: 503 });
+  if (!shopHeader) {
+    return NextResponse.json({ error: "Missing Shopify shop domain" }, { status: 400 });
+  }
+  const shop = normalizeShopDomain(shopHeader);
+  const candidateConnectors = await prisma.connectorAccount.findMany({
+    where: {
+      provider: ConnectorProvider.SHOPIFY,
+      externalAccountId: shop,
+      status: ConnectorStatus.ACTIVE,
+    },
+  });
+
+  if (candidateConnectors.length === 0) {
+    return NextResponse.json({ error: "Shopify connector is not configured" }, { status: 503 });
   }
 
-  if (!verifyShopifyWebhookHmac(rawBody, hmac, process.env.SHOPIFY_APP_API_SECRET)) {
+  const verifiedConnectors = [];
+  for (const connector of candidateConnectors) {
+    const providerConfig = await getActiveProviderConfig({
+      workspaceId: connector.workspaceId,
+      provider: ConnectorProvider.SHOPIFY,
+    });
+    if (!providerConfig) {
+      continue;
+    }
+
+    const config = await buildShopifyConfigFromProviderConfig(providerConfig);
+    if (verifyShopifyWebhookHmac(rawBody, hmac, config.apiSecret)) {
+      verifiedConnectors.push(connector);
+    }
+  }
+
+  if (verifiedConnectors.length === 0) {
     return NextResponse.json({ error: "Invalid Shopify webhook signature" }, { status: 401 });
   }
 
-  if (topic === "app/uninstalled" && shopHeader) {
-    const shop = normalizeShopDomain(shopHeader);
-
+  if (topic === "app/uninstalled") {
     await prisma.connectorAccount.updateMany({
       where: {
         provider: ConnectorProvider.SHOPIFY,
@@ -109,20 +137,12 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  if (topic && orderTopics.has(topic) && shopHeader) {
-    const shop = normalizeShopDomain(shopHeader);
+  if (topic && orderTopics.has(topic)) {
     const order = normalizeShopifyWebhookOrder(
       JSON.parse(rawBody) as Parameters<typeof normalizeShopifyWebhookOrder>[0],
     );
-    const connectors = await prisma.connectorAccount.findMany({
-      where: {
-        provider: ConnectorProvider.SHOPIFY,
-        externalAccountId: shop,
-        status: ConnectorStatus.ACTIVE,
-      },
-    });
 
-    for (const connector of connectors) {
+    for (const connector of verifiedConnectors) {
       const payload = mapShopifyOrderToEcommerceOrder({
         workspaceId: connector.workspaceId,
         connectorAccountId: connector.id,

@@ -2,7 +2,11 @@ import { createHash } from "node:crypto";
 import { ConnectorProvider, ConnectorStatus, SyncStatus } from "@prisma/client";
 import Decimal from "decimal.js";
 
-import { decryptToken } from "@/lib/crypto/token-vault";
+import { connectorAccessTokenFromAccount } from "@/lib/connectors/credentials";
+import {
+  buildShopifyConfigFromProviderConfig,
+  getActiveProviderConfig,
+} from "@/lib/connectors/provider-config";
 import { prisma } from "@/lib/db/prisma";
 
 import { ShopifyClient, type ShopifyOrder } from "./client";
@@ -96,13 +100,17 @@ export async function syncShopifyOrders(input: {
     const connector = await prisma.connectorAccount.findUniqueOrThrow({
       where: { id: input.connectorAccountId },
     });
-    const accessToken = decryptToken({
-      ciphertext: connector.accessTokenCiphertext,
-      iv: connector.tokenIv,
-      authTag: connector.tokenAuthTag,
-      keyVersion: connector.tokenKeyVersion,
+    const providerConfig = await getActiveProviderConfig({
+      workspaceId: connector.workspaceId,
+      provider: ConnectorProvider.SHOPIFY,
     });
-    const client = new ShopifyClient();
+    if (!providerConfig) {
+      throw new Error("Shopify provider config is missing");
+    }
+    const accessToken = await connectorAccessTokenFromAccount(connector);
+    const client = new ShopifyClient({
+      config: await buildShopifyConfigFromProviderConfig(providerConfig),
+    });
     const orders = await client.listOrders({
       shop: connector.externalAccountId,
       accessToken,

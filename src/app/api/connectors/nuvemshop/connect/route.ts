@@ -5,28 +5,41 @@ import { getCurrentUserContext } from "@/lib/auth/current";
 import { createConnectorOAuthState } from "@/lib/connectors/oauth-state";
 import {
   buildNuvemshopOAuthUrl,
-  getNuvemshopConfigStatus,
   NUVEMSHOP_OAUTH_STATE_COOKIE,
 } from "@/lib/connectors/nuvemshop/oauth";
+import {
+  buildNuvemshopConfigFromProviderConfig,
+  getActiveProviderConfig,
+} from "@/lib/connectors/provider-config";
 
 export const runtime = "nodejs";
 
 export async function GET(request: NextRequest) {
   const context = await getCurrentUserContext();
-  const status = getNuvemshopConfigStatus();
 
-  if (!status.configured) {
+  if (context.isDemoMode) {
     return NextResponse.redirect(
-      new URL("/connectors?provider=nuvemshop&error=missing-nuvemshop-env", request.nextUrl.origin),
+      new URL("/connectors?provider=nuvemshop&connected=demo", request.nextUrl.origin),
     );
   }
+
+  const providerConfig = await getActiveProviderConfig({
+    workspaceId: context.currentWorkspace.id,
+    provider: ConnectorProvider.NUVEMSHOP,
+  });
+  if (!providerConfig) {
+    return NextResponse.redirect(
+      new URL("/connectors?provider=nuvemshop&error=missing-provider-config", request.nextUrl.origin),
+    );
+  }
+  const config = await buildNuvemshopConfigFromProviderConfig(providerConfig);
 
   const state = createConnectorOAuthState({
     provider: ConnectorProvider.NUVEMSHOP,
     userId: context.user.id,
     workspaceId: context.currentWorkspace.id,
   });
-  const response = NextResponse.redirect(buildNuvemshopOAuthUrl({ state }));
+  const response = NextResponse.redirect(buildNuvemshopOAuthUrl({ state, config }));
   response.cookies.set(NUVEMSHOP_OAUTH_STATE_COOKIE, state, {
     httpOnly: true,
     sameSite: "lax",

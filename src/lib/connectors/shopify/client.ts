@@ -1,6 +1,6 @@
 import { callWithRetry } from "@/lib/connectors/retry";
 
-import { getShopifyConfig, normalizeShopDomain, type ShopifyConfig } from "./oauth";
+import { normalizeShopDomain, type ShopifyConfig } from "./oauth";
 
 type FetchLike = typeof fetch;
 
@@ -239,8 +239,8 @@ export class ShopifyClient {
   private readonly config: ShopifyConfig;
   private readonly fetchImpl: FetchLike;
 
-  constructor(input: { config?: ShopifyConfig; fetchImpl?: FetchLike } = {}) {
-    this.config = input.config ?? getShopifyConfig();
+  constructor(input: { config: ShopifyConfig; fetchImpl?: FetchLike }) {
+    this.config = input.config;
     this.fetchImpl = input.fetchImpl ?? fetch;
   }
 

@@ -9,15 +9,16 @@ datasource db {
 }
 
 model User {
-  id            String    @id @default(cuid())
-  email         String    @unique
+  id            String       @id @default(cuid())
+  email         String       @unique
   name          String?
   passwordHash  String?
   image         String?
+  platformRole  PlatformRole @default(USER)
   emailVerified DateTime?
   deletedAt     DateTime?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
 
   accounts            Account[]
   memberships         Membership[]
@@ -26,6 +27,11 @@ model User {
   passwordResetTokens PasswordResetToken[]
   sentInvites         WorkspaceInvite[]    @relation("WorkspaceInviteInviter")
   betaFeedbacks       BetaFeedback[]
+}
+
+enum PlatformRole {
+  USER
+  W3_ADMIN
 }
 
 model Account {
@@ -72,13 +78,14 @@ model Workspace {
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
 
-  memberships   Membership[]
-  connectors    ConnectorAccount[]
-  dashboards    Dashboard[]
-  dailyMetrics  DailyMetric[]
-  auditLogs     AuditLog[]
-  invites       WorkspaceInvite[]
-  betaFeedbacks BetaFeedback[]
+  memberships              Membership[]
+  connectors               ConnectorAccount[]
+  connectorProviderConfigs ConnectorProviderConfig[]
+  dashboards               Dashboard[]
+  dailyMetrics             DailyMetric[]
+  auditLogs                AuditLog[]
+  invites                  WorkspaceInvite[]
+  betaFeedbacks            BetaFeedback[]
 }
 
 enum WorkspacePlan {
@@ -124,43 +131,75 @@ enum MemberRole {
 }
 
 model ConnectorAccount {
-  id                     String            @id @default(cuid())
-  workspaceId            String
-  workspace              Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  provider               ConnectorProvider
-  externalAccountId      String
-  accountName            String
-  status                 ConnectorStatus   @default(ACTIVE)
-  accessTokenCiphertext  String
-  refreshTokenCiphertext String?
-  tokenIv                String
-  tokenAuthTag           String
-  tokenKeyVersion        String            @default("v1")
-  tokenExpiresAt         DateTime?
-  metadata               Json?
-  lastSyncedAt           DateTime?
-  lastSyncError          String?
-  createdAt              DateTime          @default(now())
-  updatedAt              DateTime          @updatedAt
+  id                        String            @id @default(cuid())
+  workspaceId               String
+  workspace                 Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  provider                  ConnectorProvider
+  externalAccountId         String
+  accountName               String
+  status                    ConnectorStatus   @default(ACTIVE)
+  accessTokenCiphertext     String
+  refreshTokenCiphertext    String?
+  tokenIv                   String
+  tokenAuthTag              String
+  tokenKeyVersion           String            @default("v1")
+  credentialSecretId        String?
+  refreshCredentialSecretId String?
+  tokenExpiresAt            DateTime?
+  metadata                  Json?
+  lastSyncedAt              DateTime?
+  lastSyncError             String?
+  createdAt                 DateTime          @default(now())
+  updatedAt                 DateTime          @updatedAt
 
   @@unique([workspaceId, provider, externalAccountId])
   @@index([workspaceId, provider])
 }
 
-model ConnectorSelectionSession {
-  id                  String            @id @default(cuid())
+model ConnectorProviderConfig {
+  id                  String                        @id @default(cuid())
   workspaceId         String
-  userId              String
+  workspace           Workspace                     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   provider            ConnectorProvider
-  status              String            @default("PENDING")
-  accounts            Json
+  status              ConnectorProviderConfigStatus @default(ACTIVE)
+  redirectUri         String?
+  scopes              String?
+  apiVersion          String?
+  baseUrl             String?
+  ordersPath          String?
+  displayName         String?
+  publicCredentials   Json?
+  secretRefs          Json?
+  lastValidatedAt     DateTime?
+  lastValidationError String?
+  createdAt           DateTime                      @default(now())
+  updatedAt           DateTime                      @updatedAt
+
+  @@unique([workspaceId, provider])
+  @@index([workspaceId, status])
+}
+
+enum ConnectorProviderConfigStatus {
+  ACTIVE
+  INACTIVE
+  ERROR
+}
+
+model ConnectorSelectionSession {
+  id                   String            @id @default(cuid())
+  workspaceId          String
+  userId               String
+  provider             ConnectorProvider
+  status               String            @default("PENDING")
+  accounts             Json
   credentialCiphertext String
-  credentialIv        String
-  credentialAuthTag   String
-  credentialKeyVersion String           @default("v1")
-  expiresAt           DateTime
-  consumedAt          DateTime?
-  createdAt           DateTime          @default(now())
+  credentialIv         String
+  credentialAuthTag    String
+  credentialKeyVersion String            @default("v1")
+  credentialSecretId   String?
+  expiresAt            DateTime
+  consumedAt           DateTime?
+  createdAt            DateTime          @default(now())
 
   @@index([workspaceId, userId, provider])
   @@index([expiresAt])

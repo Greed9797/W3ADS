@@ -6,13 +6,17 @@ import { logAudit } from "@/lib/audit/log";
 import { getCurrentUserContext } from "@/lib/auth/current";
 import { buildConnectorBackfillEvent } from "@/lib/connectors/backfill";
 import {
-  encryptConnectorCredentials,
   stableExternalAccountId,
+  vaultCredentialFields,
 } from "@/lib/connectors/credentials";
 import { ManualCommerceClient } from "@/lib/connectors/manual-commerce-client";
 import {
   normalizeManualProviderCredentials,
 } from "@/lib/connectors/manual-commerce";
+import {
+  getActiveProviderConfig,
+  publicManualCredentialsFromProviderConfig,
+} from "@/lib/connectors/provider-config";
 import { isManualCommerceProvider } from "@/lib/connectors/registry";
 import { prisma } from "@/lib/db/prisma";
 import { inngest } from "@/lib/jobs/inngest-client";
@@ -22,7 +26,7 @@ export const runtime = "nodejs";
 const manualConnectorSchema = z.object({
   provider: z.nativeEnum(ConnectorProvider),
   storeName: z.string().min(2),
-  baseUrl: z.string().min(3),
+  baseUrl: z.string().optional(),
   ordersPath: z.string().optional(),
   apiKey: z.string().optional(),
   apiSecret: z.string().optional(),
@@ -53,10 +57,25 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const normalized = normalizeManualProviderCredentials(parsed.data);
+    const providerConfig = await getActiveProviderConfig({
+      workspaceId: context.currentWorkspace.id,
+      provider: parsed.data.provider,
+    });
+    if (!providerConfig) {
+      return redirectToConnectors(request, {
+        provider: parsed.data.provider.toLowerCase(),
+        error: "missing-provider-config",
+      });
+    }
+    const configuredCredentials = await publicManualCredentialsFromProviderConfig(providerConfig);
+    const normalized = normalizeManualProviderCredentials({
+      ...configuredCredentials,
+      provider: parsed.data.provider,
+      storeName: parsed.data.storeName,
+    });
     const credentialPayload = {
       baseUrl: normalized.baseUrl,
-      ordersPath: parsed.data.ordersPath?.trim() || "/orders",
+      ordersPath: configuredCredentials.ordersPath,
       apiKey: normalized.apiKey,
       apiSecret: normalized.apiSecret,
       apiUser: normalized.apiUser,
@@ -68,11 +87,16 @@ export async function POST(request: NextRequest) {
       credentials: credentialPayload,
     }).healthCheck();
 
-    const encrypted = encryptConnectorCredentials(credentialPayload);
     const externalAccountId = stableExternalAccountId(
       normalized.provider,
       `${normalized.baseUrl}:${normalized.storeName}`,
     );
+    const credentialFields = await vaultCredentialFields({
+      workspaceId: context.currentWorkspace.id,
+      provider: normalized.provider,
+      externalAccountId,
+      credentials: credentialPayload,
+    });
     const connectorAccount = await prisma.connectorAccount.upsert({
       where: {
         workspaceId_provider_externalAccountId: {
@@ -84,14 +108,10 @@ export async function POST(request: NextRequest) {
       update: {
         accountName: normalized.storeName,
         status: ConnectorStatus.ACTIVE,
-        accessTokenCiphertext: encrypted.ciphertext,
-        refreshTokenCiphertext: null,
-        tokenIv: encrypted.iv,
-        tokenAuthTag: encrypted.authTag,
-        tokenKeyVersion: encrypted.keyVersion,
-        tokenExpiresAt: null,
+        ...credentialFields,
         metadata: {
           credentialMode: "manual",
+          providerConfigId: providerConfig.id,
         },
         lastSyncError: null,
       },
@@ -101,14 +121,10 @@ export async function POST(request: NextRequest) {
         externalAccountId,
         accountName: normalized.storeName,
         status: ConnectorStatus.ACTIVE,
-        accessTokenCiphertext: encrypted.ciphertext,
-        refreshTokenCiphertext: null,
-        tokenIv: encrypted.iv,
-        tokenAuthTag: encrypted.authTag,
-        tokenKeyVersion: encrypted.keyVersion,
-        tokenExpiresAt: null,
+        ...credentialFields,
         metadata: {
           credentialMode: "manual",
+          providerConfigId: providerConfig.id,
         },
       },
     });
@@ -140,9 +156,7 @@ export async function POST(request: NextRequest) {
     });
   } catch (caught) {
     const message = caught instanceof Error ? caught.message : "unknown";
-    const error = message.includes("TOKEN_ENCRYPTION_KEY")
-      ? "missing-token-key"
-      : "manual-credentials";
+    const error = message.includes("Secret not found") ? "missing-provider-config" : "manual-credentials";
 
     return redirectToConnectors(request, { provider: parsed.data.provider.toLowerCase(), error });
   }

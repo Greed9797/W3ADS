@@ -2,7 +2,7 @@ import Decimal from "decimal.js";
 
 import { callWithRetry } from "@/lib/connectors/retry";
 
-import { getGoogleAdsConfig, type GoogleAdsConfig } from "./oauth";
+import type { GoogleAdsConfig } from "./oauth";
 
 type FetchLike = typeof fetch;
 
@@ -198,8 +198,8 @@ export class GoogleAdsClient {
   private readonly config: GoogleAdsConfig;
   private readonly fetchImpl: FetchLike;
 
-  constructor(input: { config?: GoogleAdsConfig; fetchImpl?: FetchLike } = {}) {
-    this.config = input.config ?? getGoogleAdsConfig();
+  constructor(input: { config: GoogleAdsConfig; fetchImpl?: FetchLike }) {
+    this.config = input.config;
     this.fetchImpl = input.fetchImpl ?? fetch;
   }
 

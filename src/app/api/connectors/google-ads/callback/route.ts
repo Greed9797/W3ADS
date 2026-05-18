@@ -4,9 +4,12 @@ import { NextResponse, type NextRequest } from "next/server";
 import { logAudit } from "@/lib/audit/log";
 import { getCurrentUserContext } from "@/lib/auth/current";
 import { GoogleAdsClient } from "@/lib/connectors/google-ads/client";
-import { getGoogleAdsConfigStatus } from "@/lib/connectors/google-ads/oauth";
 import { GOOGLE_ADS_OAUTH_STATE_COOKIE } from "@/lib/connectors/google-ads/state";
 import { verifyConnectorOAuthState } from "@/lib/connectors/oauth-state";
+import {
+  buildGoogleAdsConfigFromProviderConfig,
+  getActiveProviderConfig,
+} from "@/lib/connectors/provider-config";
 import { createConnectorSelectionSession } from "@/lib/connectors/selection";
 
 export const runtime = "nodejs";
@@ -67,16 +70,21 @@ export async function GET(request: NextRequest) {
     return redirectToConnectors(request, { provider: "google-ads", connected: "demo" });
   }
 
-  const status = getGoogleAdsConfigStatus();
-  if (!status.configured) {
+  const providerConfig = await getActiveProviderConfig({
+    workspaceId: context.currentWorkspace.id,
+    provider: ConnectorProvider.GOOGLE_ADS,
+  });
+  if (!providerConfig) {
     return redirectToConnectors(request, {
       provider: "google-ads",
-      error: "missing-google-ads-env",
+      error: "missing-provider-config",
     });
   }
 
   try {
-    const client = new GoogleAdsClient();
+    const client = new GoogleAdsClient({
+      config: await buildGoogleAdsConfigFromProviderConfig(providerConfig),
+    });
     const token = await client.exchangeCodeForTokens(code);
     const customers = await client.listSelectableCustomers(token.access_token);
     const expiresAt = tokenExpiresAt(token.expires_in);
@@ -120,8 +128,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(url);
   } catch (caught) {
     const message = caught instanceof Error ? caught.message : "unknown";
-    const errorCode = message.includes("TOKEN_ENCRYPTION_KEY")
-      ? "missing-token-key"
+    const errorCode = message.includes("Secret not found")
+      ? "missing-provider-config"
       : "google-ads-api";
 
     return redirectToConnectors(request, { provider: "google-ads", error: errorCode });

@@ -4,12 +4,25 @@ Dominio inicial: `https://w3ads.vercel.app`.
 
 Este runbook fecha a ordem operacional para sair de demo/local e abrir producao publica com Supabase, Vault, auth real, jobs e conectores configuraveis no app.
 
-## 1. Supabase production
+## 1. Supabase production compartilhado
 
-1. Crie um projeto Supabase production.
-2. Habilite Vault/KMS no projeto.
-3. Copie `DATABASE_URL`, `DIRECT_URL`, `SUPABASE_URL`, `SUPABASE_ANON_KEY` e `SUPABASE_SERVICE_ROLE_KEY`.
-4. Aplique migrations:
+Projeto Supabase: `tuzoczzohirqddrcpbtc`.
+
+Este projeto ja compartilha `auth.users`, storage, edge functions e os schemas `pulmao` e `saas`.
+O W3ADS deve usar schema isolado `w3ads`, nunca `public`, para nao colidir com os apps existentes.
+
+1. Confirme que o schema `w3ads` nao existe com objetos conflitantes.
+2. Rode o bootstrap seguro:
+
+```sql
+-- arquivo local
+supabase/bootstrap/w3ads-shared-project.sql
+```
+
+3. Configure `DATABASE_URL` e `DIRECT_URL` com `?schema=w3ads`.
+4. Habilite Vault/KMS no projeto se ainda nao estiver ativo.
+5. Copie `SUPABASE_URL`, `SUPABASE_ANON_KEY` e `SUPABASE_SERVICE_ROLE_KEY`.
+6. Aplique migrations:
 
 ```bash
 npx prisma migrate deploy
@@ -24,13 +37,19 @@ select to_regclass('vault.secrets');
 
 O resultado esperado e `vault.secrets`. Se vier `null`, os conectores nao podem salvar segredos.
 
+Depois de qualquer DDL, execute:
+
+```sql
+NOTIFY pgrst, 'reload schema';
+```
+
 ## 2. Vercel envs obrigatorias
 
 Adicionar em Production no projeto Vercel:
 
 ```bash
-DATABASE_URL=
-DIRECT_URL=
+DATABASE_URL=postgresql://.../postgres?schema=w3ads
+DIRECT_URL=postgresql://.../postgres?schema=w3ads
 SUPABASE_URL=
 SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_ROLE_KEY=

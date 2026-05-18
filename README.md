@@ -42,6 +42,7 @@ O dominio inicial de producao e `https://w3ads.vercel.app`. O passo a passo oper
 Para producao real, configure no Vercel apenas envs de infraestrutura:
 
 - Banco/Supabase: `DATABASE_URL`, `DIRECT_URL`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`.
+  No Supabase compartilhado `tuzoczzohirqddrcpbtc`, use `?schema=w3ads` nas URLs do Postgres.
 - Auth: `AUTH_SECRET` ou `NEXTAUTH_SECRET`, `NEXTAUTH_URL=https://w3ads.vercel.app`, `AUTH_TRUST_HOST=true`, `AUTH_DISABLED=false`.
 - Login Google: `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`.
 - Email: `RESEND_API_KEY`, `RESEND_FROM_EMAIL`.
@@ -51,6 +52,8 @@ Para producao real, configure no Vercel apenas envs de infraestrutura:
 Credenciais de conectores nao voltam para `.env`: Meta, Google Ads, Shopify, Nuvemshop, Tray, WBuy, iSet e Magazord sao configurados em `/connectors/settings` por um `W3_ADMIN` e gravados no Supabase Vault/KMS.
 
 O build falha de proposito em production se `AUTH_DISABLED=true` ou se as envs criticas de auth/banco estiverem ausentes.
+
+Antes do primeiro deploy com banco real, rode `supabase/bootstrap/w3ads-shared-project.sql` no projeto Supabase compartilhado. Isso cria o schema isolado `w3ads`, ajusta grants/search path sem tocar nos schemas `pulmao` e `saas`, habilita Vault e recarrega o cache do PostgREST.
 
 ## Auth e tenancy
 

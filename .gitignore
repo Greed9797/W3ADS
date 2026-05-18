@@ -7,5 +7,6 @@ coverage/
 node_modules/
 playwright-report/
 test-results/
+supabase/.temp/
 *.tsbuildinfo
 .vercel

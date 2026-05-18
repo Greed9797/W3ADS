@@ -1,6 +1,17 @@
 import { describe, expect, it } from "vitest";
 
-import { assertCanManageMembers, canManageMembers } from "@/lib/auth/permissions";
+import {
+  assertCanManageConnectors,
+  assertCanManageMembers,
+  canChangeMemberRole,
+  canCreateWorkspace,
+  canManageConnectors,
+  canManageMembers,
+  canManageWorkspaceSettings,
+  canRemoveMember,
+  getWorkspaceRoleDefinition,
+  getWorkspaceRoleOptions,
+} from "@/lib/auth/permissions";
 import { createWorkspaceSlug } from "@/lib/auth/workspace";
 
 describe("workspace helpers", () => {
@@ -22,5 +33,104 @@ describe("workspace helpers", () => {
 
   it("throws when a viewer tries to manage members", () => {
     expect(() => assertCanManageMembers("VIEWER")).toThrow("Sem permissao");
+  });
+
+  it("keeps the Adstart workspace role contract explicit", () => {
+    expect(getWorkspaceRoleDefinition("OWNER")).toMatchObject({
+      label: "Owner",
+      description: "Controle total do workspace, membros, conectores e ajustes.",
+    });
+    expect(getWorkspaceRoleOptions().map((role) => role.role)).toEqual(["OWNER", "ADMIN", "VIEWER"]);
+  });
+
+  it("keeps connector data owned by workspace admins, not viewers", () => {
+    expect(canManageConnectors("OWNER")).toBe(true);
+    expect(canManageConnectors("ADMIN")).toBe(true);
+    expect(canManageConnectors("VIEWER")).toBe(false);
+    expect(() => assertCanManageConnectors("VIEWER")).toThrow("Sem permissao");
+  });
+
+  it("allows any authenticated account to create a new workspace as owner", () => {
+    expect(canCreateWorkspace()).toBe(true);
+  });
+
+  it("limits workspace settings to owners", () => {
+    expect(canManageWorkspaceSettings("OWNER")).toBe(true);
+    expect(canManageWorkspaceSettings("ADMIN")).toBe(false);
+    expect(canManageWorkspaceSettings("VIEWER")).toBe(false);
+  });
+
+  it("prevents unsafe member role changes", () => {
+    expect(
+      canChangeMemberRole({
+        actorRole: "OWNER",
+        actorMembershipId: "owner-1",
+        targetMembershipId: "admin-1",
+        targetCurrentRole: "ADMIN",
+        targetNextRole: "VIEWER",
+      }),
+    ).toBe(true);
+    expect(
+      canChangeMemberRole({
+        actorRole: "ADMIN",
+        actorMembershipId: "admin-1",
+        targetMembershipId: "viewer-1",
+        targetCurrentRole: "VIEWER",
+        targetNextRole: "ADMIN",
+      }),
+    ).toBe(true);
+    expect(
+      canChangeMemberRole({
+        actorRole: "ADMIN",
+        actorMembershipId: "admin-1",
+        targetMembershipId: "owner-1",
+        targetCurrentRole: "OWNER",
+        targetNextRole: "VIEWER",
+      }),
+    ).toBe(false);
+    expect(
+      canChangeMemberRole({
+        actorRole: "OWNER",
+        actorMembershipId: "owner-1",
+        targetMembershipId: "owner-1",
+        targetCurrentRole: "OWNER",
+        targetNextRole: "ADMIN",
+      }),
+    ).toBe(false);
+  });
+
+  it("prevents removing owners or the current user from a workspace", () => {
+    expect(
+      canRemoveMember({
+        actorRole: "OWNER",
+        actorMembershipId: "owner-1",
+        targetMembershipId: "viewer-1",
+        targetRole: "VIEWER",
+      }),
+    ).toBe(true);
+    expect(
+      canRemoveMember({
+        actorRole: "ADMIN",
+        actorMembershipId: "admin-1",
+        targetMembershipId: "viewer-1",
+        targetRole: "VIEWER",
+      }),
+    ).toBe(true);
+    expect(
+      canRemoveMember({
+        actorRole: "OWNER",
+        actorMembershipId: "owner-1",
+        targetMembershipId: "owner-2",
+        targetRole: "OWNER",
+      }),
+    ).toBe(false);
+    expect(
+      canRemoveMember({
+        actorRole: "ADMIN",
+        actorMembershipId: "admin-1",
+        targetMembershipId: "admin-1",
+        targetRole: "ADMIN",
+      }),
+    ).toBe(false);
   });
 });

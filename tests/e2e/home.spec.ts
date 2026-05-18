@@ -67,6 +67,22 @@ test("accepts cookie consent banner", async ({ page }) => {
   await expect(consentButton).toBeHidden();
 });
 
+test("toggles between Grupo W3 dark and light themes", async ({ page }) => {
+  await page.goto("/dashboard");
+
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await page.getByRole("button", { name: "Usar tema claro" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await expect(page.getByRole("button", { name: "Usar tema claro" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await page.getByRole("button", { name: "Usar tema escuro" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+});
+
 test("submits beta feedback in demo mode", async ({ page }) => {
   await page.goto("/feedback");
 

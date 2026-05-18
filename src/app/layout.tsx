@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Fraunces, Geist, JetBrains_Mono } from "next/font/google";
 
 import { CookieBanner } from "@/components/compliance/cookie-banner";
+import { ThemeScript } from "@/components/theme/theme-script";
 
 import "./globals.css";
 
@@ -34,7 +35,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="pt-BR">
+    <html lang="pt-BR" data-theme="dark" suppressHydrationWarning>
+      <head>
+        <ThemeScript />
+      </head>
       <body className={`${fraunces.variable} ${geist.variable} ${jetBrainsMono.variable}`}>
         {children}
         <CookieBanner />

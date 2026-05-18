@@ -8,7 +8,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const context = await getCurrentUserContext();
 
   return (
-    <main className="min-h-screen bg-[var(--bg-canvas)] text-[var(--text-primary)]">
+    <main className="w3-app-shell min-h-screen bg-[var(--bg-canvas)] text-[var(--text-primary)]">
       <div className="grid min-h-screen lg:grid-cols-[240px_1fr]">
         <Sidebar context={context} />
         <section className="min-w-0">

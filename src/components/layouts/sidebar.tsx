@@ -8,9 +8,9 @@ import {
   Settings,
   UsersRound,
 } from "lucide-react";
-import Image from "next/image";
 import Link from "next/link";
 
+import { W3Logo } from "@/components/brand/w3-logo";
 import { Button } from "@/components/ui/button";
 import type { getCurrentUserContext } from "@/lib/auth/current";
 
@@ -32,7 +32,7 @@ export function Sidebar({ context }: { context: AppContext }) {
   return (
     <aside className="relative hidden border-r border-[var(--border-subtle)] bg-[var(--bg-surface)] lg:block">
       <div className="flex h-[72px] items-center border-b border-[var(--border-subtle)] px-5">
-        <Image src="/logo-w3.svg" alt="Adstart W3" width={140} height={32} priority />
+        <W3Logo />
       </div>
       <div className="border-b border-[var(--border-subtle)] p-5">
         <p className="text-caption text-[var(--text-tertiary)]">Workspace</p>

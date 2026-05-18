@@ -1,14 +1,11 @@
-import Image from "next/image";
-import Link from "next/link";
+import { W3Logo } from "@/components/brand/w3-logo";
 
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
   return (
-    <main className="min-h-screen bg-[var(--bg-canvas)] text-[var(--text-primary)]">
+    <main className="w3-app-shell min-h-screen bg-[var(--bg-canvas)] text-[var(--text-primary)]">
       <div className="mx-auto grid min-h-screen w-full max-w-6xl items-center gap-10 px-4 py-10 lg:grid-cols-[1fr_440px]">
         <section className="hidden lg:block">
-          <Link href="/" aria-label="Adstart W3">
-            <Image src="/logo-w3.svg" alt="Adstart W3" width={180} height={42} priority />
-          </Link>
+          <W3Logo />
           <h1 className="mt-10 max-w-xl font-display text-[3rem] font-normal leading-[0.98] tracking-[-0.03em]">
             Dados de e-commerce e midia paga em uma unica operacao.
           </h1>

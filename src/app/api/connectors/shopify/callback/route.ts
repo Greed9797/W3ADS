@@ -3,6 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { logAudit } from "@/lib/audit/log";
 import { getCurrentUserContext } from "@/lib/auth/current";
+import { canManageConnectors } from "@/lib/auth/permissions";
 import { buildConnectorBackfillEvent } from "@/lib/connectors/backfill";
 import { vaultCredentialFields } from "@/lib/connectors/credentials";
 import { verifyConnectorOAuthState } from "@/lib/connectors/oauth-state";
@@ -57,6 +58,12 @@ export async function GET(request: NextRequest) {
 
   const shop = normalizeShopDomain(shopParam);
   const context = await getCurrentUserContext();
+  if (context.isDemoMode) {
+    return redirectToConnectors(request, { provider: "shopify", connected: "demo" });
+  }
+  if (!canManageConnectors(context.currentMembership.role)) {
+    return redirectToConnectors(request, { provider: "shopify", error: "forbidden" });
+  }
   const providerConfig = await getActiveProviderConfig({
     workspaceId: context.currentWorkspace.id,
     provider: ConnectorProvider.SHOPIFY,
@@ -79,10 +86,6 @@ export async function GET(request: NextRequest) {
 
   if (!verifiedState.valid) {
     return redirectToConnectors(request, { provider: "shopify", error: "invalid-state" });
-  }
-
-  if (context.isDemoMode) {
-    return redirectToConnectors(request, { provider: "shopify", connected: "demo" });
   }
 
   try {

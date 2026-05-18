@@ -6,6 +6,7 @@ import { EventTracker } from "@/components/observability/event-tracker";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getCurrentUserContext } from "@/lib/auth/current";
+import { canManageConnectors } from "@/lib/auth/permissions";
 import { canManageProviderConfigs } from "@/lib/auth/platform-permissions";
 import { listPublicProviderConfigs } from "@/lib/connectors/provider-config";
 import {
@@ -114,6 +115,7 @@ function connectorMessage(error: string | undefined, connected: string | undefin
     "invalid-manual-connector": "Revise os dados da loja e tente novamente.",
     "manual-credentials":
       "Nao conseguimos validar essas credenciais. Confira a URL, caminho de pedidos e chaves da API.",
+    forbidden: "Seu papel atual permite visualizar conectores, mas nao vincular ou alterar contas.",
   };
 
   return {
@@ -129,6 +131,7 @@ export default async function ConnectorsPage({ searchParams }: ConnectorsPagePro
   const connectedProvider = firstParam(params.connected);
   const message = connectorMessage(firstParam(params.error), firstParam(params.connected));
   const canConfigureProviders = canManageProviderConfigs(context.user);
+  const canConnectAccounts = canManageConnectors(context.currentMembership.role);
   const connectorCounts = new Map<ConnectorProvider, number>();
   const providerConfigs = new Set<ConnectorProvider>();
   if (!context.isDemoMode) {
@@ -177,6 +180,22 @@ export default async function ConnectorsPage({ searchParams }: ConnectorsPagePro
     );
   }
 
+  function readOnlyAction() {
+    return (
+      <Button disabled size="sm" variant="secondary">
+        <Cable size={16} aria-hidden="true" />
+        Somente leitura
+      </Button>
+    );
+  }
+
+  function connectorAction(provider: ConnectorProvider, action: ReactNode) {
+    if (!providerConfigs.has(provider)) return missingConfigAction(provider);
+    if (!canConnectAccounts) return readOnlyAction();
+
+    return action;
+  }
+
   function statusLabel(provider: ConnectorProvider, count: number, unit: string) {
     if (count > 0) return `${count} ${unit}(s) ativa(s)`;
     if (providerConfigs.has(provider)) return "Pronto para conectar";
@@ -200,15 +219,14 @@ export default async function ConnectorsPage({ searchParams }: ConnectorsPagePro
       statusLabel:
         statusLabel(ConnectorProvider.META_ADS, metaAccounts, "conta"),
       statusTone: statusTone(ConnectorProvider.META_ADS, metaAccounts),
-      action: providerConfigs.has(ConnectorProvider.META_ADS) ? (
+      action: connectorAction(
+        ConnectorProvider.META_ADS,
         <Button asChild size="sm">
           <a href="/api/connectors/meta/connect">
             <Cable size={16} aria-hidden="true" />
             Conectar Meta
           </a>
-        </Button>
-      ) : (
-        missingConfigAction(ConnectorProvider.META_ADS)
+        </Button>,
       ),
     },
     {
@@ -219,15 +237,14 @@ export default async function ConnectorsPage({ searchParams }: ConnectorsPagePro
       statusLabel:
         statusLabel(ConnectorProvider.GOOGLE_ADS, googleAdsAccounts, "conta"),
       statusTone: statusTone(ConnectorProvider.GOOGLE_ADS, googleAdsAccounts),
-      action: providerConfigs.has(ConnectorProvider.GOOGLE_ADS) ? (
+      action: connectorAction(
+        ConnectorProvider.GOOGLE_ADS,
         <Button asChild size="sm">
           <a href="/api/connectors/google-ads/connect">
             <Cable size={16} aria-hidden="true" />
             Conectar Google
           </a>
-        </Button>
-      ) : (
-        missingConfigAction(ConnectorProvider.GOOGLE_ADS)
+        </Button>,
       ),
     },
     {
@@ -238,7 +255,8 @@ export default async function ConnectorsPage({ searchParams }: ConnectorsPagePro
       statusLabel:
         statusLabel(ConnectorProvider.SHOPIFY, shopifyAccounts, "loja"),
       statusTone: statusTone(ConnectorProvider.SHOPIFY, shopifyAccounts),
-      action: providerConfigs.has(ConnectorProvider.SHOPIFY) ? (
+      action: connectorAction(
+        ConnectorProvider.SHOPIFY,
         <form action="/api/connectors/shopify/connect" className="flex flex-col gap-2">
           <label className="text-caption text-[var(--text-tertiary)]" htmlFor="shopify-shop">
             Loja
@@ -254,9 +272,7 @@ export default async function ConnectorsPage({ searchParams }: ConnectorsPagePro
             <Cable size={16} aria-hidden="true" />
             Conectar Shopify
           </Button>
-        </form>
-      ) : (
-        missingConfigAction(ConnectorProvider.SHOPIFY)
+        </form>,
       ),
     },
     {
@@ -267,15 +283,14 @@ export default async function ConnectorsPage({ searchParams }: ConnectorsPagePro
       statusLabel:
         statusLabel(ConnectorProvider.NUVEMSHOP, nuvemshopAccounts, "loja"),
       statusTone: statusTone(ConnectorProvider.NUVEMSHOP, nuvemshopAccounts),
-      action: providerConfigs.has(ConnectorProvider.NUVEMSHOP) ? (
+      action: connectorAction(
+        ConnectorProvider.NUVEMSHOP,
         <Button asChild size="sm">
           <a href="/api/connectors/nuvemshop/connect">
             <Cable size={16} aria-hidden="true" />
             Conectar Nuvemshop
           </a>
-        </Button>
-      ) : (
-        missingConfigAction(ConnectorProvider.NUVEMSHOP)
+        </Button>,
       ),
     },
     ...manualCommerceProviders.map((provider) => {
@@ -289,7 +304,8 @@ export default async function ConnectorsPage({ searchParams }: ConnectorsPagePro
           : "Use a configuração W3 do workspace para validar e vincular a loja.",
         statusLabel: statusLabel(provider, count, "loja"),
         statusTone: statusTone(provider, count),
-        action: providerConfigs.has(provider) ? (
+        action: connectorAction(
+          provider,
           <form action="/api/connectors/manual" className="grid gap-2" method="post">
             <input name="provider" type="hidden" value={provider} />
             <label className="text-caption text-[var(--text-tertiary)]" htmlFor={`${provider}-name`}>
@@ -306,9 +322,7 @@ export default async function ConnectorsPage({ searchParams }: ConnectorsPagePro
               <Cable size={16} aria-hidden="true" />
               Validar e vincular
             </Button>
-          </form>
-        ) : (
-          missingConfigAction(provider)
+          </form>,
         ),
       };
     }),

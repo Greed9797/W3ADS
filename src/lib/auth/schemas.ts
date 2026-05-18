@@ -44,8 +44,29 @@ export const workspaceInviteSchema = z.object({
   role: z.enum(["ADMIN", "VIEWER"]),
 });
 
+export const workspaceCreateSchema = z.object({
+  name: z.string().trim().min(2, "Informe o nome do workspace.").max(120),
+});
+
+export const workspaceSettingsSchema = z.object({
+  name: z.string().trim().min(2, "Informe o nome do workspace.").max(120),
+});
+
+export const workspaceMemberRoleSchema = z.object({
+  membershipId: z.string().min(1),
+  role: z.enum(["ADMIN", "VIEWER"]),
+});
+
+export const workspaceMemberRemoveSchema = z.object({
+  membershipId: z.string().min(1),
+});
+
 export type LoginInput = z.infer<typeof loginSchema>;
 export type SignUpInput = z.infer<typeof signUpSchema>;
 export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
 export type WorkspaceInviteInput = z.infer<typeof workspaceInviteSchema>;
+export type WorkspaceCreateInput = z.infer<typeof workspaceCreateSchema>;
+export type WorkspaceSettingsInput = z.infer<typeof workspaceSettingsSchema>;
+export type WorkspaceMemberRoleInput = z.infer<typeof workspaceMemberRoleSchema>;
+export type WorkspaceMemberRemoveInput = z.infer<typeof workspaceMemberRemoveSchema>;

@@ -3,6 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { logAudit } from "@/lib/audit/log";
 import { getCurrentUserContext } from "@/lib/auth/current";
+import { canManageConnectors } from "@/lib/auth/permissions";
 import { MetaMarketingClient, tokenExpiresAt } from "@/lib/connectors/meta/client";
 import { META_OAUTH_STATE_COOKIE } from "@/lib/connectors/meta/state";
 import { verifyConnectorOAuthState } from "@/lib/connectors/oauth-state";
@@ -64,6 +65,9 @@ export async function GET(request: NextRequest) {
 
   if (context.isDemoMode) {
     return redirectToConnectors(request, { provider: "meta", connected: "demo" });
+  }
+  if (!canManageConnectors(context.currentMembership.role)) {
+    return redirectToConnectors(request, { provider: "meta", error: "forbidden" });
   }
 
   const providerConfig = await getActiveProviderConfig({

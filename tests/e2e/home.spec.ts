@@ -5,7 +5,7 @@ test("opens the dashboard without login while auth is disabled", async ({ page }
 
   await expect(page).toHaveURL(/\/dashboard/);
   await expect(page.getByRole("heading", { name: "Central de crescimento W3" })).toBeVisible();
-  await expect(page.getByText("Workspace Demo / OWNER")).toBeVisible();
+  await expect(page.getByText("Workspace Demo / Owner")).toBeVisible();
   await expect(page.getByText("Performance Geral")).toBeVisible();
   await expect(page.getByText("Faturamento × Investimento")).toBeVisible();
   await expect(page.getByText("Top 10 campanhas por ROAS")).toBeVisible();
@@ -37,6 +37,20 @@ test("renders connector provider settings in demo mode", async ({ page }) => {
   await expect(page.getByLabel("Meta App ID")).toBeVisible();
   await expect(page.getByLabel("Meta App Secret")).toBeVisible();
   await expect(page.getByRole("button", { name: "Salvar configuração" })).toBeVisible();
+});
+
+test("renders account, workspace and role flow in demo mode", async ({ page }) => {
+  await page.goto("/workspace/settings");
+
+  await expect(page.getByRole("heading", { name: "Modelo Adstart de acesso" })).toBeVisible();
+  await expect(page.getByText("conectores, tokens e métricas ficam sempre vinculados")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Workspaces da sua conta" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Criar como Owner" })).toBeVisible();
+
+  await page.goto("/workspace/members");
+  await expect(page.getByRole("heading", { name: "Modelo de acesso" })).toBeVisible();
+  await expect(page.getByText("Controle total do workspace").first()).toBeVisible();
+  await expect(page.getByText("Consulta dashboards e status dos conectores").first()).toBeVisible();
 });
 
 test("creates a custom dashboard in demo mode", async ({ page }) => {

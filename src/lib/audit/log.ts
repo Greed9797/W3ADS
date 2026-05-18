@@ -25,8 +25,12 @@ export type AuditAction =
   | "lgpd.delete_account.request"
   | "feedback.submit"
   | "observability.client_error"
+  | "workspace.create"
   | "workspace.member.invite"
-  | "workspace.switch";
+  | "workspace.member.remove"
+  | "workspace.member.role_update"
+  | "workspace.switch"
+  | "workspace.update";
 
 type LogAuditInput = {
   action: AuditAction;

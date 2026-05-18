@@ -13,6 +13,7 @@ import Link from "next/link";
 import { W3Logo } from "@/components/brand/w3-logo";
 import { Button } from "@/components/ui/button";
 import type { getCurrentUserContext } from "@/lib/auth/current";
+import { getWorkspaceRoleDefinition } from "@/lib/auth/permissions";
 
 import { logoutAction, switchWorkspaceAction } from "@/app/(app)/actions";
 
@@ -25,7 +26,7 @@ const baseNavItems = [
   { label: "Membros", href: "/workspace/members", icon: UsersRound },
   { label: "Perfil", href: "/profile", icon: UserCircle },
   { label: "Feedback", href: "/feedback", icon: MessageSquareText },
-  { label: "Ajustes", href: "/workspace/settings", icon: Settings },
+  { label: "Conta e workspaces", href: "/workspace/settings", icon: Settings },
 ];
 
 export function Sidebar({ context }: { context: AppContext }) {
@@ -52,7 +53,7 @@ export function Sidebar({ context }: { context: AppContext }) {
           >
             {context.memberships.map((membership) => (
               <option key={membership.workspaceId} value={membership.workspaceId}>
-                {membership.workspace.name}
+                {membership.workspace.name} · {getWorkspaceRoleDefinition(membership.role).label}
               </option>
             ))}
           </select>

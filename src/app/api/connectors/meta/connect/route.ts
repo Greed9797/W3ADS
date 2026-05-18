@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { ConnectorProvider } from "@prisma/client";
 
 import { getCurrentUserContext } from "@/lib/auth/current";
+import { canManageConnectors } from "@/lib/auth/permissions";
 import { createConnectorOAuthState } from "@/lib/connectors/oauth-state";
 import { buildMetaOAuthUrl } from "@/lib/connectors/meta/oauth";
 import { META_OAUTH_STATE_COOKIE } from "@/lib/connectors/meta/state";
@@ -27,6 +28,9 @@ export async function GET(request: NextRequest) {
 
   if (context.isDemoMode) {
     return redirectToConnectors(request, { provider: "meta", connected: "demo" });
+  }
+  if (!canManageConnectors(context.currentMembership.role)) {
+    return redirectToConnectors(request, { provider: "meta", error: "forbidden" });
   }
 
   const providerConfig = await getActiveProviderConfig({

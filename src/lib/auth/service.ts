@@ -10,6 +10,7 @@ import type {
   ForgotPasswordInput,
   ResetPasswordInput,
   SignUpInput,
+  WorkspaceCreateInput,
   WorkspaceInviteInput,
 } from "./schemas";
 import { createWorkspaceSlug } from "./workspace";
@@ -65,6 +66,61 @@ async function createUniqueWorkspaceSlug(workspaceName: string) {
   }
 
   return candidate;
+}
+
+function defaultDashboardCreateInput(ownerId: string) {
+  return {
+    ownerId,
+    name: "Performance Geral",
+    isDefault: true,
+    layout: { columns: 12, rows: [] },
+    widgets: {
+      items: ["revenue", "ad_spend", "blended_roas", "orders"],
+    },
+  };
+}
+
+export async function createWorkspaceForUser(input: {
+  userId: string;
+  values: WorkspaceCreateInput;
+}) {
+  const slug = await createUniqueWorkspaceSlug(input.values.name);
+
+  return prisma.$transaction(async (tx) => {
+    const workspace = await tx.workspace.create({
+      data: {
+        name: input.values.name,
+        slug,
+        dashboards: {
+          create: defaultDashboardCreateInput(input.userId),
+        },
+        memberships: {
+          create: {
+            userId: input.userId,
+            role: "OWNER",
+          },
+        },
+      },
+      include: {
+        memberships: true,
+      },
+    });
+
+    await tx.auditLog.create({
+      data: {
+        action: "workspace.create",
+        userId: input.userId,
+        workspaceId: workspace.id,
+        resourceType: "workspace",
+        resourceId: workspace.id,
+        metadata: {
+          workspaceSlug: slug,
+        },
+      },
+    });
+
+    return workspace;
+  });
 }
 
 export async function registerUserWithWorkspace(input: SignUpInput) {
@@ -154,15 +210,7 @@ export async function registerUserWithWorkspace(input: SignUpInput) {
                 name: input.workspaceName,
                 slug: workspaceSlug ?? createWorkspaceSlug(input.workspaceName),
                 dashboards: {
-                  create: {
-                    ownerId: "pending",
-                    name: "Performance Geral",
-                    isDefault: true,
-                    layout: { columns: 12, rows: [] },
-                    widgets: {
-                      items: ["revenue", "ad_spend", "blended_roas", "orders"],
-                    },
-                  },
+                  create: defaultDashboardCreateInput("pending"),
                 },
               },
             },

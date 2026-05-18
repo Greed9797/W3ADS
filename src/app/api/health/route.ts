@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+import { isAuthDisabled } from "@/lib/auth/mode";
+
 export const runtime = "nodejs";
 
 export async function GET() {
@@ -7,6 +9,6 @@ export async function GET() {
     ok: true,
     service: "adstart-w3",
     timestamp: new Date().toISOString(),
-    authDisabled: process.env.AUTH_DISABLED !== "false",
+    authDisabled: isAuthDisabled(),
   });
 }

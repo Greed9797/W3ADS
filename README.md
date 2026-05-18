@@ -72,7 +72,7 @@ Para testar conexao real depois de criar Supabase/Auth:
 3. Acesse `/platform/bootstrap` para promover o primeiro usuario a `W3_ADMIN`.
 4. Acesse `/connectors/settings` e cadastre as credenciais dos provedores no app.
 
-Com `AUTH_DISABLED="true"`, a tela `/connectors` continua funcionando para demo e mostra os atalhos de configuracao no app.
+Com `AUTH_DISABLED="true"`, a tela `/connectors` continua funcionando para demo e mostra os atalhos de configuracao no app. Em producao, deixe `AUTH_DISABLED` vazio ou `false`; o app nao desliga auth por padrao quando `NODE_ENV=production`.
 
 ## Conectores Google Ads e Shopify
 

@@ -147,10 +147,34 @@ model ConnectorAccount {
   @@index([workspaceId, provider])
 }
 
+model ConnectorSelectionSession {
+  id                  String            @id @default(cuid())
+  workspaceId         String
+  userId              String
+  provider            ConnectorProvider
+  status              String            @default("PENDING")
+  accounts            Json
+  credentialCiphertext String
+  credentialIv        String
+  credentialAuthTag   String
+  credentialKeyVersion String           @default("v1")
+  expiresAt           DateTime
+  consumedAt          DateTime?
+  createdAt           DateTime          @default(now())
+
+  @@index([workspaceId, userId, provider])
+  @@index([expiresAt])
+}
+
 enum ConnectorProvider {
   META_ADS
   GOOGLE_ADS
   SHOPIFY
+  NUVEMSHOP
+  ISET
+  TRAY
+  WBUY
+  MAGAZORD
   GA4
   SEARCH_CONSOLE
   TIKTOK_ADS

@@ -39,6 +39,23 @@ type GoogleAdsSearchResponse = {
   nextPageToken?: string;
 };
 
+type GoogleAdsCustomerClientRow = {
+  customerClient?: {
+    id?: string | number;
+    clientCustomer?: string;
+    descriptiveName?: string;
+    currencyCode?: string;
+    timeZone?: string;
+    manager?: boolean;
+    level?: string | number;
+  };
+};
+
+type GoogleAdsCustomerClientResponse = {
+  results?: GoogleAdsCustomerClientRow[];
+  nextPageToken?: string;
+};
+
 export type GoogleAdsCampaignMetric = {
   campaignId: string | null;
   campaignName: string | null;
@@ -48,6 +65,18 @@ export type GoogleAdsCampaignMetric = {
   conversions: string | null;
   conversionsValue: string | null;
   date: string;
+};
+
+export type GoogleAdsSelectableCustomer = {
+  id: string;
+  name: string;
+  resourceName: string;
+  currencyCode?: string;
+  timeZone?: string;
+  isManager: boolean;
+  level: number;
+  loginCustomerId: string;
+  rootCustomerId: string;
 };
 
 export const GOOGLE_ADS_CAMPAIGN_METRICS_QUERY = `
@@ -62,6 +91,19 @@ SELECT
   segments.date
 FROM campaign
 WHERE segments.date BETWEEN '{since}' AND '{until}'
+`;
+
+export const GOOGLE_ADS_CUSTOMER_CLIENT_QUERY = `
+SELECT
+  customer_client.client_customer,
+  customer_client.level,
+  customer_client.manager,
+  customer_client.descriptive_name,
+  customer_client.currency_code,
+  customer_client.time_zone,
+  customer_client.id
+FROM customer_client
+WHERE customer_client.level <= 1
 `;
 
 export class GoogleAdsApiError extends Error {
@@ -117,6 +159,41 @@ export function normalizeGoogleAdsMetricRow(row: GoogleAdsMetricRow): GoogleAdsC
   };
 }
 
+export function normalizeGoogleAdsCustomerClientRow(
+  row: GoogleAdsCustomerClientRow,
+  context: { rootCustomerId: string; loginCustomerId: string },
+): GoogleAdsSelectableCustomer {
+  const customerClient = row.customerClient ?? {};
+  const id = asString(customerClient.id) ?? customerClient.clientCustomer?.replace("customers/", "");
+  if (!id) {
+    throw new Error("Google Ads customer_client row is missing id");
+  }
+
+  return {
+    id,
+    name: customerClient.descriptiveName ?? `Google Ads ${id}`,
+    resourceName: customerClient.clientCustomer ?? `customers/${id}`,
+    currencyCode: customerClient.currencyCode,
+    timeZone: customerClient.timeZone,
+    isManager: Boolean(customerClient.manager),
+    level: Number(customerClient.level ?? 0),
+    loginCustomerId: context.loginCustomerId,
+    rootCustomerId: context.rootCustomerId,
+  };
+}
+
+export function selectGoogleAdsAdvertiserAccounts(accounts: GoogleAdsSelectableCustomer[]) {
+  const unique = new Map<string, GoogleAdsSelectableCustomer>();
+
+  for (const account of accounts) {
+    if (!account.isManager && !unique.has(account.id)) {
+      unique.set(account.id, account);
+    }
+  }
+
+  return Array.from(unique.values());
+}
+
 export class GoogleAdsClient {
   private readonly config: GoogleAdsConfig;
   private readonly fetchImpl: FetchLike;
@@ -126,15 +203,19 @@ export class GoogleAdsClient {
     this.fetchImpl = input.fetchImpl ?? fetch;
   }
 
-  private googleAdsHeaders(accessToken: string, options: { includeLoginCustomerId?: boolean } = {}) {
+  private googleAdsHeaders(
+    accessToken: string,
+    options: { includeLoginCustomerId?: boolean; loginCustomerId?: string } = {},
+  ) {
     const headers: Record<string, string> = {
       Authorization: `Bearer ${accessToken}`,
       "developer-token": this.config.developerToken,
       "Content-Type": "application/json",
     };
+    const loginCustomerId = options.loginCustomerId ?? this.config.loginCustomerId;
 
-    if (options.includeLoginCustomerId !== false && this.config.loginCustomerId) {
-      headers["login-customer-id"] = this.config.loginCustomerId;
+    if (options.includeLoginCustomerId !== false && loginCustomerId) {
+      headers["login-customer-id"] = loginCustomerId;
     }
 
     return headers;
@@ -190,11 +271,77 @@ export class GoogleAdsClient {
     }));
   }
 
+  async searchCustomerClients(input: {
+    accessToken: string;
+    rootCustomerId: string;
+    loginCustomerId?: string;
+  }) {
+    const accounts: GoogleAdsSelectableCustomer[] = [];
+    let pageToken: string | undefined;
+    const url = `https://googleads.googleapis.com/${this.config.apiVersion}/customers/${input.rootCustomerId}/googleAds:search`;
+    const loginCustomerId = input.loginCustomerId ?? input.rootCustomerId;
+
+    do {
+      const response = await callWithRetry(() =>
+        fetchJson<GoogleAdsCustomerClientResponse>(url, this.fetchImpl, {
+          method: "POST",
+          headers: this.googleAdsHeaders(input.accessToken, { loginCustomerId }),
+          body: JSON.stringify({
+            query: GOOGLE_ADS_CUSTOMER_CLIENT_QUERY,
+            pageToken,
+            pageSize: 1000,
+          }),
+        }),
+      );
+
+      accounts.push(
+        ...(response.results ?? []).map((row) =>
+          normalizeGoogleAdsCustomerClientRow(row, {
+            rootCustomerId: input.rootCustomerId,
+            loginCustomerId,
+          }),
+        ),
+      );
+      pageToken = response.nextPageToken;
+    } while (pageToken);
+
+    return accounts;
+  }
+
+  async listSelectableCustomers(accessToken: string) {
+    const accessibleCustomers = await this.listAccessibleCustomers(accessToken);
+    const expanded: GoogleAdsSelectableCustomer[] = [];
+
+    for (const customer of accessibleCustomers) {
+      try {
+        const hierarchy = await this.searchCustomerClients({
+          accessToken,
+          rootCustomerId: customer.customerId,
+          loginCustomerId: customer.customerId,
+        });
+        expanded.push(...hierarchy);
+      } catch {
+        expanded.push({
+          id: customer.customerId,
+          name: customer.displayName,
+          resourceName: customer.resourceName,
+          isManager: false,
+          level: 0,
+          loginCustomerId: customer.customerId,
+          rootCustomerId: customer.customerId,
+        });
+      }
+    }
+
+    return selectGoogleAdsAdvertiserAccounts(expanded);
+  }
+
   async searchCampaignMetrics(input: {
     accessToken: string;
     customerId: string;
     since: string;
     until: string;
+    loginCustomerId?: string;
   }) {
     const metrics: GoogleAdsCampaignMetric[] = [];
     let pageToken: string | undefined;
@@ -208,7 +355,9 @@ export class GoogleAdsClient {
       const response = await callWithRetry(() =>
         fetchJson<GoogleAdsSearchResponse>(url, this.fetchImpl, {
           method: "POST",
-          headers: this.googleAdsHeaders(input.accessToken),
+          headers: this.googleAdsHeaders(input.accessToken, {
+            loginCustomerId: input.loginCustomerId,
+          }),
           body: JSON.stringify({
             query,
             pageToken,

@@ -3,11 +3,14 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { logAudit } from "@/lib/audit/log";
 import { getCurrentUserContext } from "@/lib/auth/current";
+import { buildConnectorBackfillEvent } from "@/lib/connectors/backfill";
 import { GoogleAdsClient } from "@/lib/connectors/google-ads/client";
 import { getGoogleAdsConfigStatus } from "@/lib/connectors/google-ads/oauth";
 import { GOOGLE_ADS_OAUTH_STATE_COOKIE } from "@/lib/connectors/google-ads/state";
+import { verifyConnectorOAuthState } from "@/lib/connectors/oauth-state";
 import { encryptToken, encryptTokenEnvelope } from "@/lib/crypto/token-vault";
 import { prisma } from "@/lib/db/prisma";
+import { inngest } from "@/lib/jobs/inngest-client";
 
 export const runtime = "nodejs";
 
@@ -37,8 +40,19 @@ function tokenExpiresAt(expiresInSeconds: number | undefined) {
 export async function GET(request: NextRequest) {
   const state = request.nextUrl.searchParams.get("state");
   const storedState = request.cookies.get(GOOGLE_ADS_OAUTH_STATE_COOKIE)?.value;
+  const context = await getCurrentUserContext();
 
   if (!state || !storedState || state !== storedState) {
+    return redirectToConnectors(request, { provider: "google-ads", error: "invalid-state" });
+  }
+
+  const verifiedState = verifyConnectorOAuthState(state, {
+    expectedProvider: "GOOGLE_ADS",
+    expectedUserId: context.user.id,
+    expectedWorkspaceId: context.currentWorkspace.id,
+  });
+
+  if (!verifiedState.valid) {
     return redirectToConnectors(request, { provider: "google-ads", error: "invalid-state" });
   }
 
@@ -52,7 +66,6 @@ export async function GET(request: NextRequest) {
     return redirectToConnectors(request, { provider: "google-ads", error: "missing-code" });
   }
 
-  const context = await getCurrentUserContext();
   if (context.isDemoMode) {
     return redirectToConnectors(request, { provider: "google-ads", connected: "demo" });
   }
@@ -70,6 +83,7 @@ export async function GET(request: NextRequest) {
     const token = await client.exchangeCodeForTokens(code);
     const customers = await client.listAccessibleCustomers(token.access_token);
     const expiresAt = tokenExpiresAt(token.expires_in);
+    const connectorAccountIds: string[] = [];
 
     await prisma.$transaction(async (tx) => {
       for (const customer of customers) {
@@ -78,7 +92,7 @@ export async function GET(request: NextRequest) {
           ? encryptTokenEnvelope(token.refresh_token)
           : undefined;
 
-        await tx.connectorAccount.upsert({
+        const connectorAccount = await tx.connectorAccount.upsert({
           where: {
             workspaceId_provider_externalAccountId: {
               workspaceId: context.currentWorkspace.id,
@@ -117,8 +131,22 @@ export async function GET(request: NextRequest) {
             },
           },
         });
+        connectorAccountIds.push(connectorAccount.id);
       }
     });
+
+    if (process.env.INNGEST_EVENT_KEY) {
+      await Promise.all(
+        connectorAccountIds.map((connectorAccountId) =>
+          inngest.send(
+            buildConnectorBackfillEvent({
+              provider: ConnectorProvider.GOOGLE_ADS,
+              connectorAccountId,
+            }),
+          ),
+        ),
+      );
+    }
 
     await logAudit({
       action: "connector.google_ads.connect",
@@ -128,6 +156,7 @@ export async function GET(request: NextRequest) {
       metadata: {
         provider: "GOOGLE_ADS",
         accounts: customers.length,
+        backfillQueued: Boolean(process.env.INNGEST_EVENT_KEY),
       },
     });
 

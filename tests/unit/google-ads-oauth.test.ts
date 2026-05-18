@@ -5,6 +5,7 @@ import {
   buildGoogleAdsOAuthUrl,
   getGoogleAdsConfigStatus,
 } from "@/lib/connectors/google-ads/oauth";
+import { GoogleAdsApiError } from "@/lib/connectors/google-ads/client";
 
 const googleAdsEnv = {
   GOOGLE_ADS_API_VERSION: "v24",
@@ -35,5 +36,13 @@ describe("Google Ads OAuth helpers", () => {
     expect(url.searchParams.get("access_type")).toBe("offline");
     expect(url.searchParams.get("prompt")).toBe("consent");
     expect(url.searchParams.get("state")).toBe("csrf-state");
+  });
+
+  it("keeps response headers on API errors so retry can honor Retry-After", () => {
+    const headers = new Headers({ "retry-after": "3" });
+    const error = new GoogleAdsApiError(429, "quota", headers);
+
+    expect(error.response.status).toBe(429);
+    expect(error.response.headers.get("retry-after")).toBe("3");
   });
 });

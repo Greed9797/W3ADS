@@ -3,11 +3,14 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { logAudit } from "@/lib/audit/log";
 import { getCurrentUserContext } from "@/lib/auth/current";
+import { buildConnectorBackfillEvent } from "@/lib/connectors/backfill";
 import { MetaMarketingClient, tokenExpiresAt } from "@/lib/connectors/meta/client";
 import { getMetaConfigStatus } from "@/lib/connectors/meta/oauth";
 import { META_OAUTH_STATE_COOKIE } from "@/lib/connectors/meta/state";
+import { verifyConnectorOAuthState } from "@/lib/connectors/oauth-state";
 import { encryptToken } from "@/lib/crypto/token-vault";
 import { prisma } from "@/lib/db/prisma";
+import { inngest } from "@/lib/jobs/inngest-client";
 
 export const runtime = "nodejs";
 
@@ -33,8 +36,19 @@ function redirectToConnectors(request: NextRequest, params: Record<string, strin
 export async function GET(request: NextRequest) {
   const state = request.nextUrl.searchParams.get("state");
   const storedState = request.cookies.get(META_OAUTH_STATE_COOKIE)?.value;
+  const context = await getCurrentUserContext();
 
   if (!state || !storedState || state !== storedState) {
+    return redirectToConnectors(request, { provider: "meta", error: "invalid-state" });
+  }
+
+  const verifiedState = verifyConnectorOAuthState(state, {
+    expectedProvider: "META_ADS",
+    expectedUserId: context.user.id,
+    expectedWorkspaceId: context.currentWorkspace.id,
+  });
+
+  if (!verifiedState.valid) {
     return redirectToConnectors(request, { provider: "meta", error: "invalid-state" });
   }
 
@@ -48,7 +62,6 @@ export async function GET(request: NextRequest) {
     return redirectToConnectors(request, { provider: "meta", error: "missing-code" });
   }
 
-  const context = await getCurrentUserContext();
   if (context.isDemoMode) {
     return redirectToConnectors(request, { provider: "meta", connected: "demo" });
   }
@@ -64,12 +77,13 @@ export async function GET(request: NextRequest) {
     const longLivedToken = await client.exchangeForLongLivedToken(shortLivedToken.access_token);
     const accounts = await client.listAdAccounts(longLivedToken.access_token);
     const expiresAt = tokenExpiresAt(longLivedToken.expires_in);
+    const connectorAccountIds: string[] = [];
 
     await prisma.$transaction(async (tx) => {
       for (const account of accounts) {
         const encryptedToken = encryptToken(longLivedToken.access_token);
 
-        await tx.connectorAccount.upsert({
+        const connectorAccount = await tx.connectorAccount.upsert({
           where: {
             workspaceId_provider_externalAccountId: {
               workspaceId: context.currentWorkspace.id,
@@ -112,8 +126,22 @@ export async function GET(request: NextRequest) {
             },
           },
         });
+        connectorAccountIds.push(connectorAccount.id);
       }
     });
+
+    if (process.env.INNGEST_EVENT_KEY) {
+      await Promise.all(
+        connectorAccountIds.map((connectorAccountId) =>
+          inngest.send(
+            buildConnectorBackfillEvent({
+              provider: ConnectorProvider.META_ADS,
+              connectorAccountId,
+            }),
+          ),
+        ),
+      );
+    }
 
     await logAudit({
       action: "connector.meta.connect",
@@ -123,6 +151,7 @@ export async function GET(request: NextRequest) {
       metadata: {
         provider: "META_ADS",
         accounts: accounts.length,
+        backfillQueued: Boolean(process.env.INNGEST_EVENT_KEY),
       },
     });
 

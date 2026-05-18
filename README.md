@@ -60,9 +60,10 @@ Enquanto Supabase nao existir, as telas publicas (`/login`, `/sign-up`, `/forgot
 A Fase 2 ja tem a base local do OAuth da Meta sem exigir Supabase real:
 
 - `/api/connectors/meta/connect` gera `state` CSRF em cookie httpOnly e redireciona para o Facebook.
-- `/api/connectors/meta/callback` valida `state`, protege modo demo e, com auth/banco ativos, salva `ConnectorAccount` com token AES-256-GCM.
+- `/api/connectors/meta/callback` valida `state` assinado e amarrado ao usuario/workspace, protege modo demo e, com auth/banco ativos, salva `ConnectorAccount` com token AES-256-GCM.
 - `src/lib/connectors/retry.ts` aplica retry exponencial com jitter e respeita `Retry-After`.
-- `src/lib/connectors/meta/client.ts` troca `code` por token, troca para long-lived token e lista ad accounts.
+- `src/lib/connectors/meta/client.ts` troca `code` por token via POST, troca para long-lived token, lista ad accounts com `Authorization` header e pausa quando o header de uso da Meta passa do limite definido.
+- Quando `INNGEST_EVENT_KEY` estiver configurada, cada conta conectada dispara backfill automatico de 90 dias.
 
 Para testar conexao real depois de criar Supabase/Auth, configure:
 
@@ -81,9 +82,10 @@ Com `AUTH_DISABLED="true"`, a tela `/connectors` continua funcionando para demo 
 
 As bases das Fases 3 e 4 tambem estao preparadas sem chamar providers em ambiente sem credenciais:
 
-- Google Ads usa OAuth offline, `customers:listAccessibleCustomers`, GAQL via REST e job Inngest `connector.google_ads.backfill`.
-- Shopify usa OAuth com validacao HMAC, GraphQL Orders, webhook assinado em `/api/webhooks/shopify` e job `connector.shopify.backfill`.
+- Google Ads usa OAuth offline, `customers:listAccessibleCustomers`, GAQL via REST, refresh automatico do access token e job Inngest `connector.google_ads.backfill`.
+- Shopify usa OAuth com validacao HMAC, GraphQL Orders, registro dos webhooks `orders/create`, `orders/updated`, `orders/paid` e `app/uninstalled`, webhook assinado em `/api/webhooks/shopify` e job `connector.shopify.backfill`.
 - Tokens de acesso ficam criptografados com `TOKEN_ENCRYPTION_KEY`; refresh token do Google fica salvo como envelope criptografado.
+- O state de todos os conectores e assinado com `AUTH_SECRET`, `NEXTAUTH_SECRET` ou `TOKEN_ENCRYPTION_KEY`; em producao configure pelo menos um segredo forte.
 
 Variaveis adicionais:
 

@@ -1,7 +1,12 @@
 import { createHash } from "node:crypto";
 import { ConnectorProvider, ConnectorStatus, SyncStatus } from "@prisma/client";
 
-import { decryptToken } from "@/lib/crypto/token-vault";
+import {
+  decryptToken,
+  decryptTokenEnvelope,
+  encryptToken,
+  encryptTokenEnvelope,
+} from "@/lib/crypto/token-vault";
 import { prisma } from "@/lib/db/prisma";
 
 import { GoogleAdsClient, type GoogleAdsCampaignMetric } from "./client";
@@ -10,6 +15,20 @@ export type GoogleAdsSyncRange = {
   since: string;
   until: string;
 };
+
+const tokenRefreshSkewMs = 5 * 60 * 1000;
+
+function tokenExpiresAt(expiresInSeconds: number | undefined) {
+  return expiresInSeconds ? new Date(Date.now() + expiresInSeconds * 1000) : null;
+}
+
+export function googleAdsTokenNeedsRefresh(
+  expiresAt: Date | null,
+  now = new Date(),
+  skewMs = tokenRefreshSkewMs,
+) {
+  return Boolean(expiresAt && expiresAt.getTime() <= now.getTime() + skewMs);
+}
 
 function asDateOnly(value: string) {
   return new Date(`${value}T00:00:00.000Z`);
@@ -90,13 +109,50 @@ export async function syncGoogleAdsDailyMetrics(input: {
     const connector = await prisma.connectorAccount.findUniqueOrThrow({
       where: { id: input.connectorAccountId },
     });
-    const accessToken = decryptToken({
+    let accessToken = decryptToken({
       ciphertext: connector.accessTokenCiphertext,
       iv: connector.tokenIv,
       authTag: connector.tokenAuthTag,
       keyVersion: connector.tokenKeyVersion,
     });
     const client = new GoogleAdsClient();
+
+    if (googleAdsTokenNeedsRefresh(connector.tokenExpiresAt)) {
+      if (!connector.refreshTokenCiphertext) {
+        await prisma.connectorAccount.update({
+          where: { id: connector.id },
+          data: {
+            status: ConnectorStatus.TOKEN_EXPIRED,
+            lastSyncError: "Google Ads refresh token is missing",
+          },
+        });
+        throw new Error("Google Ads refresh token is missing");
+      }
+
+      const refreshToken = decryptTokenEnvelope(connector.refreshTokenCiphertext);
+      const refreshed = await client.refreshAccessToken(refreshToken);
+      const encryptedAccessToken = encryptToken(refreshed.access_token);
+      const encryptedRefreshToken = refreshed.refresh_token
+        ? encryptTokenEnvelope(refreshed.refresh_token)
+        : connector.refreshTokenCiphertext;
+
+      accessToken = refreshed.access_token;
+
+      await prisma.connectorAccount.update({
+        where: { id: connector.id },
+        data: {
+          accessTokenCiphertext: encryptedAccessToken.ciphertext,
+          refreshTokenCiphertext: encryptedRefreshToken,
+          tokenIv: encryptedAccessToken.iv,
+          tokenAuthTag: encryptedAccessToken.authTag,
+          tokenKeyVersion: encryptedAccessToken.keyVersion,
+          tokenExpiresAt: tokenExpiresAt(refreshed.expires_in),
+          status: ConnectorStatus.ACTIVE,
+          lastSyncError: null,
+        },
+      });
+    }
+
     const metrics = await client.searchCampaignMetrics({
       accessToken,
       customerId: connector.externalAccountId,
@@ -138,11 +194,12 @@ export async function syncGoogleAdsDailyMetrics(input: {
     return { rowsUpserted: metrics.length };
   } catch (caught) {
     const message = caught instanceof Error ? caught.message : "Unknown Google Ads sync error";
+    const status = message.includes("refresh token") ? ConnectorStatus.TOKEN_EXPIRED : ConnectorStatus.ERROR;
 
     await prisma.connectorAccount.update({
       where: { id: input.connectorAccountId },
       data: {
-        status: ConnectorStatus.ERROR,
+        status,
         lastSyncError: message,
       },
     });

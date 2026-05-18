@@ -6,7 +6,7 @@ import {
   getGoogleAdsConfigStatus,
 } from "@/lib/connectors/google-ads/oauth";
 import { GOOGLE_ADS_OAUTH_STATE_COOKIE } from "@/lib/connectors/google-ads/state";
-import { createSecureToken } from "@/lib/utils/tokens";
+import { createConnectorOAuthState } from "@/lib/connectors/oauth-state";
 
 export const runtime = "nodejs";
 
@@ -21,7 +21,7 @@ function redirectToConnectors(request: NextRequest, params: Record<string, strin
 }
 
 export async function GET(request: NextRequest) {
-  await getCurrentUserContext();
+  const context = await getCurrentUserContext();
 
   const status = getGoogleAdsConfigStatus();
   if (!status.configured) {
@@ -31,7 +31,11 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  const state = createSecureToken(16);
+  const state = createConnectorOAuthState({
+    provider: "GOOGLE_ADS",
+    userId: context.user.id,
+    workspaceId: context.currentWorkspace.id,
+  });
   const response = NextResponse.redirect(buildGoogleAdsOAuthUrl({ state }));
 
   response.cookies.set(GOOGLE_ADS_OAUTH_STATE_COOKIE, state, {

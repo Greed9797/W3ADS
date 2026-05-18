@@ -67,12 +67,17 @@ WHERE segments.date BETWEEN '{since}' AND '{until}'
 export class GoogleAdsApiError extends Error {
   status: number;
   body: string;
+  response: {
+    status: number;
+    headers: Headers;
+  };
 
-  constructor(status: number, body: string) {
+  constructor(status: number, body: string, headers = new Headers()) {
     super(`Google Ads API request failed with status ${status}`);
     this.name = "GoogleAdsApiError";
     this.status = status;
     this.body = body;
+    this.response = { status, headers };
   }
 }
 
@@ -81,7 +86,7 @@ async function fetchJson<T>(url: URL | string, fetchImpl: FetchLike, init?: Requ
   const body = await response.text();
 
   if (!response.ok) {
-    throw new GoogleAdsApiError(response.status, body);
+    throw new GoogleAdsApiError(response.status, body, response.headers);
   }
 
   return JSON.parse(body) as T;
@@ -121,14 +126,14 @@ export class GoogleAdsClient {
     this.fetchImpl = input.fetchImpl ?? fetch;
   }
 
-  private googleAdsHeaders(accessToken: string) {
+  private googleAdsHeaders(accessToken: string, options: { includeLoginCustomerId?: boolean } = {}) {
     const headers: Record<string, string> = {
       Authorization: `Bearer ${accessToken}`,
       "developer-token": this.config.developerToken,
       "Content-Type": "application/json",
     };
 
-    if (this.config.loginCustomerId) {
+    if (options.includeLoginCustomerId !== false && this.config.loginCustomerId) {
       headers["login-customer-id"] = this.config.loginCustomerId;
     }
 
@@ -174,7 +179,7 @@ export class GoogleAdsClient {
     const url = `https://googleads.googleapis.com/${this.config.apiVersion}/customers:listAccessibleCustomers`;
     const response = await callWithRetry(() =>
       fetchJson<AccessibleCustomersResponse>(url, this.fetchImpl, {
-        headers: this.googleAdsHeaders(accessToken),
+        headers: this.googleAdsHeaders(accessToken, { includeLoginCustomerId: false }),
       }),
     );
 

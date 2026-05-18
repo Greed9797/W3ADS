@@ -1,9 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { getCurrentUserContext } from "@/lib/auth/current";
+import { createConnectorOAuthState } from "@/lib/connectors/oauth-state";
 import { buildMetaOAuthUrl, getMetaConfigStatus } from "@/lib/connectors/meta/oauth";
 import { META_OAUTH_STATE_COOKIE } from "@/lib/connectors/meta/state";
-import { createSecureToken } from "@/lib/utils/tokens";
 
 export const runtime = "nodejs";
 
@@ -18,14 +18,18 @@ function redirectToConnectors(request: NextRequest, params: Record<string, strin
 }
 
 export async function GET(request: NextRequest) {
-  await getCurrentUserContext();
+  const context = await getCurrentUserContext();
 
   const status = getMetaConfigStatus();
   if (!status.configured) {
     return redirectToConnectors(request, { provider: "meta", error: "missing-env" });
   }
 
-  const state = createSecureToken(16);
+  const state = createConnectorOAuthState({
+    provider: "META_ADS",
+    userId: context.user.id,
+    workspaceId: context.currentWorkspace.id,
+  });
   const response = NextResponse.redirect(buildMetaOAuthUrl({ state }));
 
   response.cookies.set(META_OAUTH_STATE_COOKIE, state, {

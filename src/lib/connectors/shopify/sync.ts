@@ -16,7 +16,7 @@ function asDateOnly(value: string) {
   return new Date(`${value.slice(0, 10)}T00:00:00.000Z`);
 }
 
-function dailyDedupeHash(input: {
+export function dailyDedupeHash(input: {
   workspaceId: string;
   connectorAccountId: string;
   date: string;
@@ -24,6 +24,37 @@ function dailyDedupeHash(input: {
   return createHash("sha256")
     .update([input.workspaceId, input.connectorAccountId, input.date, ConnectorProvider.SHOPIFY].join(":"))
     .digest("hex");
+}
+
+export function mapShopifyOrdersToDailyMetricSummaries(input: {
+  workspaceId: string;
+  connectorAccountId: string;
+  orders: ShopifyOrder[];
+}) {
+  const byDay = new Map<string, { revenue: Decimal; orders: number }>();
+
+  for (const order of input.orders) {
+    const day = order.placedAt.slice(0, 10);
+    const current = byDay.get(day) ?? { revenue: new Decimal(0), orders: 0 };
+    current.revenue = current.revenue.plus(order.orderTotal);
+    current.orders += 1;
+    byDay.set(day, current);
+  }
+
+  return Array.from(byDay.entries()).map(([day, summary]) => ({
+    workspaceId: input.workspaceId,
+    connectorAccountId: input.connectorAccountId,
+    date: asDateOnly(day),
+    day,
+    source: ConnectorProvider.SHOPIFY,
+    revenue: summary.revenue.toFixed(2),
+    orders: BigInt(summary.orders),
+    dedupeHash: dailyDedupeHash({
+      workspaceId: input.workspaceId,
+      connectorAccountId: input.connectorAccountId,
+      date: day,
+    }),
+  }));
 }
 
 export function mapShopifyOrderToEcommerceOrder(input: {
@@ -98,36 +129,26 @@ export async function syncShopifyOrders(input: {
       });
     }
 
-    const byDay = new Map<string, { revenue: Decimal; orders: number }>();
-    for (const order of orders) {
-      const day = order.placedAt.slice(0, 10);
-      const current = byDay.get(day) ?? { revenue: new Decimal(0), orders: 0 };
-      current.revenue = current.revenue.plus(order.orderTotal);
-      current.orders += 1;
-      byDay.set(day, current);
-    }
-
-    for (const [day, summary] of byDay) {
-      const dedupeHash = dailyDedupeHash({
-        workspaceId: connector.workspaceId,
-        connectorAccountId: connector.id,
-        date: day,
-      });
-
+    const summaries = mapShopifyOrdersToDailyMetricSummaries({
+      workspaceId: connector.workspaceId,
+      connectorAccountId: connector.id,
+      orders,
+    });
+    for (const summary of summaries) {
       await prisma.dailyMetric.upsert({
-        where: { dedupeHash },
+        where: { dedupeHash: summary.dedupeHash },
         update: {
-          revenue: summary.revenue.toFixed(2),
-          orders: BigInt(summary.orders),
+          revenue: summary.revenue,
+          orders: summary.orders,
         },
         create: {
           workspaceId: connector.workspaceId,
           connectorAccountId: connector.id,
-          date: asDateOnly(day),
+          date: summary.date,
           source: ConnectorProvider.SHOPIFY,
-          revenue: summary.revenue.toFixed(2),
-          orders: BigInt(summary.orders),
-          dedupeHash,
+          revenue: summary.revenue,
+          orders: summary.orders,
+          dedupeHash: summary.dedupeHash,
         },
       });
     }

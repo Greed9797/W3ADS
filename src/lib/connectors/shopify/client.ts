@@ -38,6 +38,32 @@ type ShopifyOrderNode = {
   referringSite?: string | null;
 };
 
+type ShopifyWebhookOrderPayload = {
+  id?: number | string;
+  admin_graphql_api_id?: string;
+  name?: string;
+  created_at?: string;
+  processed_at?: string;
+  financial_status?: string;
+  total_price?: string;
+  currency?: string;
+  email?: string | null;
+  contact_email?: string | null;
+  customer?: {
+    email?: string | null;
+  } | null;
+  line_items?: Array<{
+    quantity?: number;
+  }>;
+  note_attributes?: Array<{
+    name?: string;
+    key?: string;
+    value?: string;
+  }>;
+  landing_site?: string | null;
+  referring_site?: string | null;
+};
+
 type ShopifyOrdersResponse = {
   data?: {
     orders?: {
@@ -68,6 +94,13 @@ export type ShopifyOrder = {
   utmCampaign?: string | null;
 };
 
+export const SHOPIFY_WEBHOOK_TOPICS = [
+  "orders/create",
+  "orders/updated",
+  "orders/paid",
+  "app/uninstalled",
+] as const;
+
 const SHOPIFY_ORDERS_QUERY = `
 query Orders($cursor: String, $query: String) {
   orders(first: 250, after: $cursor, query: $query, sortKey: CREATED_AT) {
@@ -94,12 +127,17 @@ query Orders($cursor: String, $query: String) {
 export class ShopifyApiError extends Error {
   status: number;
   body: string;
+  response: {
+    status: number;
+    headers: Headers;
+  };
 
-  constructor(status: number, body: string) {
+  constructor(status: number, body: string, headers = new Headers()) {
     super(`Shopify API request failed with status ${status}`);
     this.name = "ShopifyApiError";
     this.status = status;
     this.body = body;
+    this.response = { status, headers };
   }
 }
 
@@ -108,10 +146,35 @@ async function fetchJson<T>(url: URL | string, fetchImpl: FetchLike, init?: Requ
   const body = await response.text();
 
   if (!response.ok) {
-    throw new ShopifyApiError(response.status, body);
+    throw new ShopifyApiError(response.status, body, response.headers);
   }
 
   return JSON.parse(body) as T;
+}
+
+function parseUtmFromValue(value: string | null | undefined) {
+  if (!value) {
+    return {};
+  }
+
+  try {
+    const url = new URL(value, "https://shop.myshopify.com");
+
+    return {
+      utmSource: url.searchParams.get("utm_source"),
+      utmMedium: url.searchParams.get("utm_medium"),
+      utmCampaign: url.searchParams.get("utm_campaign"),
+    };
+  } catch {
+    return {};
+  }
+}
+
+function customAttributeValue(
+  attributes: ShopifyWebhookOrderPayload["note_attributes"],
+  key: string,
+) {
+  return attributes?.find((attribute) => (attribute.key ?? attribute.name) === key)?.value ?? null;
 }
 
 export function normalizeShopifyOrder(node: ShopifyOrderNode): ShopifyOrder {
@@ -134,6 +197,42 @@ export function normalizeShopifyOrder(node: ShopifyOrderNode): ShopifyOrder {
     utmMedium: customAttributes.get("utm_medium") ?? null,
     utmCampaign: customAttributes.get("utm_campaign") ?? null,
   };
+}
+
+export function normalizeShopifyWebhookOrder(payload: ShopifyWebhookOrderPayload): ShopifyOrder {
+  const utmFromLandingSite = parseUtmFromValue(payload.landing_site);
+  const id = payload.admin_graphql_api_id ?? `gid://shopify/Order/${payload.id ?? ""}`;
+
+  return {
+    externalOrderId: id,
+    orderNumber: payload.name ?? null,
+    orderTotal: payload.total_price ?? "0",
+    orderCurrency: payload.currency ?? "BRL",
+    customerEmail: payload.email ?? payload.contact_email ?? payload.customer?.email ?? null,
+    itemsCount:
+      payload.line_items?.reduce((sum, lineItem) => sum + (lineItem.quantity ?? 0), 0) ?? 0,
+    status: payload.financial_status?.toUpperCase() ?? "UNKNOWN",
+    placedAt: payload.processed_at ?? payload.created_at ?? new Date().toISOString(),
+    utmSource:
+      customAttributeValue(payload.note_attributes, "utm_source") ?? utmFromLandingSite.utmSource,
+    utmMedium:
+      customAttributeValue(payload.note_attributes, "utm_medium") ?? utmFromLandingSite.utmMedium,
+    utmCampaign:
+      customAttributeValue(payload.note_attributes, "utm_campaign") ??
+      utmFromLandingSite.utmCampaign,
+  };
+}
+
+export function buildShopifyWebhookAddress(input: { redirectUri: string }) {
+  return new URL("/api/webhooks/shopify", input.redirectUri).toString();
+}
+
+function shouldIgnoreWebhookCreateError(error: unknown) {
+  return (
+    error instanceof ShopifyApiError &&
+    error.status === 422 &&
+    /already|taken|address/i.test(error.body)
+  );
 }
 
 export class ShopifyClient {
@@ -199,5 +298,39 @@ export class ShopifyClient {
     }
 
     return orders;
+  }
+
+  async ensureWebhookSubscriptions(input: { shop: string; accessToken: string }) {
+    const shop = normalizeShopDomain(input.shop);
+    const address = buildShopifyWebhookAddress({ redirectUri: this.config.redirectUri });
+
+    for (const topic of SHOPIFY_WEBHOOK_TOPICS) {
+      try {
+        await callWithRetry(() =>
+          fetchJson<unknown>(
+            `https://${shop}/admin/api/${this.config.apiVersion}/webhooks.json`,
+            this.fetchImpl,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-Shopify-Access-Token": input.accessToken,
+              },
+              body: JSON.stringify({
+                webhook: {
+                  topic,
+                  address,
+                  format: "json",
+                },
+              }),
+            },
+          ),
+        );
+      } catch (error) {
+        if (!shouldIgnoreWebhookCreateError(error)) {
+          throw error;
+        }
+      }
+    }
   }
 }

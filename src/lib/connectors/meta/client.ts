@@ -76,21 +76,35 @@ const purchaseActionTypes = [
 export class MetaApiError extends Error {
   status: number;
   body: string;
+  response: {
+    status: number;
+    headers: Headers;
+  };
 
-  constructor(status: number, body: string) {
+  constructor(status: number, body: string, headers = new Headers()) {
     super(`Meta API request failed with status ${status}`);
     this.name = "MetaApiError";
     this.status = status;
     this.body = body;
+    this.response = { status, headers };
   }
 }
 
-async function fetchJson<T>(url: URL | string, fetchImpl: FetchLike): Promise<T> {
-  const response = await fetchImpl(url);
+async function fetchJson<T>(url: URL | string, fetchImpl: FetchLike, init?: RequestInit): Promise<T> {
+  const response = await fetchImpl(url, init);
   const body = await response.text();
 
   if (!response.ok) {
-    throw new MetaApiError(response.status, body);
+    throw new MetaApiError(response.status, body, response.headers);
+  }
+
+  const retryAfter = parseMetaBusinessUsageRetryAfter(
+    response.headers.get("x-business-use-case-usage"),
+  );
+  if (retryAfter) {
+    const headers = new Headers(response.headers);
+    headers.set("retry-after", retryAfter);
+    throw new MetaApiError(429, "Meta business usage above the connector threshold", headers);
   }
 
   return JSON.parse(body) as T;
@@ -106,23 +120,45 @@ export class MetaMarketingClient {
   }
 
   async exchangeCodeForShortLivedToken(code: string) {
-    const url = new URL(`https://graph.facebook.com/${this.config.apiVersion}/oauth/access_token`);
-    url.searchParams.set("client_id", this.config.appId);
-    url.searchParams.set("client_secret", this.config.appSecret);
-    url.searchParams.set("redirect_uri", this.config.redirectUri);
-    url.searchParams.set("code", code);
+    const body = new URLSearchParams({
+      client_id: this.config.appId,
+      client_secret: this.config.appSecret,
+      redirect_uri: this.config.redirectUri,
+      code,
+    });
 
-    return callWithRetry(() => fetchJson<MetaTokenResponse>(url, this.fetchImpl));
+    return callWithRetry(() =>
+      fetchJson<MetaTokenResponse>(
+        `https://graph.facebook.com/${this.config.apiVersion}/oauth/access_token`,
+        this.fetchImpl,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body,
+        },
+      ),
+    );
   }
 
   async exchangeForLongLivedToken(accessToken: string) {
-    const url = new URL(`https://graph.facebook.com/${this.config.apiVersion}/oauth/access_token`);
-    url.searchParams.set("grant_type", "fb_exchange_token");
-    url.searchParams.set("client_id", this.config.appId);
-    url.searchParams.set("client_secret", this.config.appSecret);
-    url.searchParams.set("fb_exchange_token", accessToken);
+    const body = new URLSearchParams({
+      grant_type: "fb_exchange_token",
+      client_id: this.config.appId,
+      client_secret: this.config.appSecret,
+      fb_exchange_token: accessToken,
+    });
 
-    return callWithRetry(() => fetchJson<MetaTokenResponse>(url, this.fetchImpl));
+    return callWithRetry(() =>
+      fetchJson<MetaTokenResponse>(
+        `https://graph.facebook.com/${this.config.apiVersion}/oauth/access_token`,
+        this.fetchImpl,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body,
+        },
+      ),
+    );
   }
 
   async listAdAccounts(accessToken: string) {
@@ -130,14 +166,17 @@ export class MetaMarketingClient {
     let nextUrl: string | undefined;
 
     const firstUrl = new URL(`https://graph.facebook.com/${this.config.apiVersion}/me/adaccounts`);
-    firstUrl.searchParams.set("access_token", accessToken);
     firstUrl.searchParams.set("fields", "id,name,account_id,currency,timezone_name");
     firstUrl.searchParams.set("limit", "100");
     nextUrl = firstUrl.toString();
 
     while (nextUrl) {
       const page = await callWithRetry(() =>
-        fetchJson<MetaAdAccountResponse>(nextUrl as string, this.fetchImpl),
+        fetchJson<MetaAdAccountResponse>(nextUrl as string, this.fetchImpl, {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+        }),
       );
 
       for (const account of page.data ?? []) {
@@ -171,7 +210,6 @@ export class MetaMarketingClient {
     const firstUrl = new URL(
       `https://graph.facebook.com/${this.config.apiVersion}/${accountPath}/insights`,
     );
-    firstUrl.searchParams.set("access_token", input.accessToken);
     firstUrl.searchParams.set("level", "campaign");
     firstUrl.searchParams.set(
       "fields",
@@ -191,13 +229,18 @@ export class MetaMarketingClient {
       "time_range",
       JSON.stringify({ since: input.since, until: input.until }),
     );
+    firstUrl.searchParams.set("action_attribution_windows", JSON.stringify(["7d_click", "1d_view"]));
     firstUrl.searchParams.set("time_increment", "1");
     firstUrl.searchParams.set("limit", "500");
     nextUrl = firstUrl.toString();
 
     while (nextUrl) {
       const page = await callWithRetry(() =>
-        fetchJson<MetaInsightsResponse>(nextUrl as string, this.fetchImpl),
+        fetchJson<MetaInsightsResponse>(nextUrl as string, this.fetchImpl, {
+          headers: {
+            Authorization: `Bearer ${input.accessToken}`,
+          },
+        }),
       );
 
       insights.push(...(page.data ?? []).map(normalizeMetaInsight));
@@ -205,6 +248,40 @@ export class MetaMarketingClient {
     }
 
     return insights;
+  }
+}
+
+function findHighUsage(value: unknown): boolean {
+  if (typeof value === "number") {
+    return value > 75;
+  }
+
+  if (Array.isArray(value)) {
+    return value.some(findHighUsage);
+  }
+
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  return Object.entries(value).some(([key, nested]) => {
+    if (["call_count", "total_cputime", "total_time"].includes(key)) {
+      return findHighUsage(nested);
+    }
+
+    return findHighUsage(nested);
+  });
+}
+
+export function parseMetaBusinessUsageRetryAfter(header: string | null) {
+  if (!header) {
+    return null;
+  }
+
+  try {
+    return findHighUsage(JSON.parse(header)) ? "3600" : null;
+  } catch {
+    return null;
   }
 }
 

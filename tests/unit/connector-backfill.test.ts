@@ -1,0 +1,53 @@
+import { ConnectorProvider } from "@prisma/client";
+import { describe, expect, it } from "vitest";
+
+import {
+  buildBackfillRange,
+  buildConnectorBackfillEvent,
+} from "@/lib/connectors/backfill";
+
+describe("connector backfill helpers", () => {
+  it("builds a 90 day inclusive backfill window ending today", () => {
+    const range = buildBackfillRange(new Date("2026-05-18T12:00:00.000Z"));
+
+    expect(range).toEqual({
+      since: "2026-02-17",
+      until: "2026-05-18",
+    });
+  });
+
+  it("maps connector providers to Inngest event names", () => {
+    expect(
+      buildConnectorBackfillEvent({
+        provider: ConnectorProvider.META_ADS,
+        connectorAccountId: "connector-1",
+        now: new Date("2026-05-18T12:00:00.000Z"),
+      }),
+    ).toEqual({
+      name: "connector.meta.backfill",
+      data: {
+        connectorAccountId: "connector-1",
+        range: {
+          since: "2026-02-17",
+          until: "2026-05-18",
+        },
+      },
+    });
+
+    expect(
+      buildConnectorBackfillEvent({
+        provider: ConnectorProvider.GOOGLE_ADS,
+        connectorAccountId: "connector-2",
+        now: new Date("2026-05-18T12:00:00.000Z"),
+      }).name,
+    ).toBe("connector.google_ads.backfill");
+
+    expect(
+      buildConnectorBackfillEvent({
+        provider: ConnectorProvider.SHOPIFY,
+        connectorAccountId: "connector-3",
+        now: new Date("2026-05-18T12:00:00.000Z"),
+      }).name,
+    ).toBe("connector.shopify.backfill");
+  });
+});

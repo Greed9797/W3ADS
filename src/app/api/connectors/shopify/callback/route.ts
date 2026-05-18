@@ -3,6 +3,8 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { logAudit } from "@/lib/audit/log";
 import { getCurrentUserContext } from "@/lib/auth/current";
+import { buildConnectorBackfillEvent } from "@/lib/connectors/backfill";
+import { verifyConnectorOAuthState } from "@/lib/connectors/oauth-state";
 import { ShopifyClient } from "@/lib/connectors/shopify/client";
 import {
   getShopifyConfig,
@@ -13,6 +15,7 @@ import {
 import { SHOPIFY_OAUTH_STATE_COOKIE } from "@/lib/connectors/shopify/state";
 import { encryptToken } from "@/lib/crypto/token-vault";
 import { prisma } from "@/lib/db/prisma";
+import { inngest } from "@/lib/jobs/inngest-client";
 
 export const runtime = "nodejs";
 
@@ -60,18 +63,29 @@ export async function GET(request: NextRequest) {
     return redirectToConnectors(request, { provider: "shopify", error: "missing-code" });
   }
 
+  const shop = normalizeShopDomain(shopParam);
   const context = await getCurrentUserContext();
+  const verifiedState = verifyConnectorOAuthState(state, {
+    expectedProvider: "SHOPIFY",
+    expectedUserId: context.user.id,
+    expectedWorkspaceId: context.currentWorkspace.id,
+    expectedShop: shop,
+  });
+
+  if (!verifiedState.valid) {
+    return redirectToConnectors(request, { provider: "shopify", error: "invalid-state" });
+  }
+
   if (context.isDemoMode) {
     return redirectToConnectors(request, { provider: "shopify", connected: "demo" });
   }
 
   try {
-    const shop = normalizeShopDomain(shopParam);
     const client = new ShopifyClient();
     const token = await client.exchangeCodeForAccessToken({ shop, code });
     const encryptedToken = encryptToken(token.access_token);
 
-    await prisma.connectorAccount.upsert({
+    const connectorAccount = await prisma.connectorAccount.upsert({
       where: {
         workspaceId_provider_externalAccountId: {
           workspaceId: context.currentWorkspace.id,
@@ -113,6 +127,20 @@ export async function GET(request: NextRequest) {
       },
     });
 
+    await client.ensureWebhookSubscriptions({
+      shop,
+      accessToken: token.access_token,
+    });
+
+    if (process.env.INNGEST_EVENT_KEY) {
+      await inngest.send(
+        buildConnectorBackfillEvent({
+          provider: ConnectorProvider.SHOPIFY,
+          connectorAccountId: connectorAccount.id,
+        }),
+      );
+    }
+
     await logAudit({
       action: "connector.shopify.connect",
       userId: context.user.id,
@@ -121,6 +149,7 @@ export async function GET(request: NextRequest) {
       resourceId: shop,
       metadata: {
         provider: "SHOPIFY",
+        backfillQueued: Boolean(process.env.INNGEST_EVENT_KEY),
       },
     });
 

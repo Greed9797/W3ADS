@@ -7,7 +7,7 @@ import {
   normalizeShopDomain,
 } from "@/lib/connectors/shopify/oauth";
 import { SHOPIFY_OAUTH_STATE_COOKIE } from "@/lib/connectors/shopify/state";
-import { createSecureToken } from "@/lib/utils/tokens";
+import { createConnectorOAuthState } from "@/lib/connectors/oauth-state";
 
 export const runtime = "nodejs";
 
@@ -22,7 +22,7 @@ function redirectToConnectors(request: NextRequest, params: Record<string, strin
 }
 
 export async function GET(request: NextRequest) {
-  await getCurrentUserContext();
+  const context = await getCurrentUserContext();
 
   const status = getShopifyConfigStatus();
   if (!status.configured) {
@@ -41,7 +41,12 @@ export async function GET(request: NextRequest) {
     return redirectToConnectors(request, { provider: "shopify", error: "invalid-shop" });
   }
 
-  const state = createSecureToken(16);
+  const state = createConnectorOAuthState({
+    provider: "SHOPIFY",
+    userId: context.user.id,
+    workspaceId: context.currentWorkspace.id,
+    shop,
+  });
   const response = NextResponse.redirect(buildShopifyOAuthUrl({ shop, state }));
 
   response.cookies.set(SHOPIFY_OAUTH_STATE_COOKIE, state, {

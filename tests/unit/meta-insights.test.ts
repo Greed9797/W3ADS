@@ -1,7 +1,11 @@
 import { ConnectorProvider } from "@prisma/client";
 import { describe, expect, it } from "vitest";
 
-import { normalizeMetaInsight } from "@/lib/connectors/meta/client";
+import {
+  MetaApiError,
+  normalizeMetaInsight,
+  parseMetaBusinessUsageRetryAfter,
+} from "@/lib/connectors/meta/client";
 import { mapMetaInsightToDailyMetric } from "@/lib/connectors/meta/sync";
 
 describe("Meta insights normalization", () => {
@@ -53,5 +57,21 @@ describe("Meta insights normalization", () => {
     expect(metric.impressions).toBe(BigInt(1000));
     expect(metric.clicks).toBe(BigInt(120));
     expect(metric.dedupeHash).toHaveLength(64);
+  });
+
+  it("turns high Meta business usage into a retry-after pause", () => {
+    expect(parseMetaBusinessUsageRetryAfter('{"ads_management":[{"call_count":80}]}')).toBe(
+      "3600",
+    );
+    expect(parseMetaBusinessUsageRetryAfter('{"ads_management":[{"call_count":40}]}')).toBeNull();
+    expect(parseMetaBusinessUsageRetryAfter("not-json")).toBeNull();
+  });
+
+  it("keeps response headers on API errors so retry can honor Retry-After", () => {
+    const headers = new Headers({ "retry-after": "2" });
+    const error = new MetaApiError(429, "rate limit", headers);
+
+    expect(error.response.status).toBe(429);
+    expect(error.response.headers.get("retry-after")).toBe("2");
   });
 });

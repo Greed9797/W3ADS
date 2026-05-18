@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { withSentryConfig } from "@sentry/nextjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -45,4 +46,21 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+const sentryConfig =
+  process.env.SENTRY_AUTH_TOKEN && process.env.SENTRY_ORG && process.env.SENTRY_PROJECT
+    ? {
+        org: process.env.SENTRY_ORG,
+        project: process.env.SENTRY_PROJECT,
+        authToken: process.env.SENTRY_AUTH_TOKEN,
+        silent: !process.env.CI,
+      }
+    : {
+        silent: true,
+      };
+
+const shouldWrapSentry =
+  Boolean(process.env.SENTRY_DSN) ||
+  Boolean(process.env.NEXT_PUBLIC_SENTRY_DSN) ||
+  Boolean(process.env.SENTRY_AUTH_TOKEN);
+
+export default shouldWrapSentry ? withSentryConfig(nextConfig, sentryConfig) : nextConfig;

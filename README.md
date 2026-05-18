@@ -34,18 +34,23 @@ npm run build
 npm run e2e
 ```
 
-## Ambientes externos
+## Producao publica
 
-A Fase 1 deixa Supabase como contrato local, sem aplicar nada remotamente. Para concluir conexao real de Supabase e Vercel, configure:
+O dominio inicial de producao e `https://w3ads.vercel.app`. O passo a passo operacional fica em
+`docs/production-runbook.md`.
 
-- `DATABASE_URL` e `DIRECT_URL` de um PostgreSQL/Supabase.
-- `NEXTAUTH_SECRET` ou `AUTH_SECRET` com `openssl rand -base64 32`.
-- Variaveis Auth.js e OAuth.
-- `RESEND_API_KEY` quando quiser envio real de reset de senha e convites.
-- Variaveis de providers Meta, Google Ads e Shopify nas fases correspondentes.
-- Projeto Vercel apontando para este repositorio.
+Para producao real, configure no Vercel apenas envs de infraestrutura:
 
-Enquanto Supabase nao existir, as telas publicas (`/login`, `/sign-up`, `/forgot-password`) renderizam normalmente. A criacao real de conta e o dashboard autenticado precisam do banco configurado.
+- Banco/Supabase: `DATABASE_URL`, `DIRECT_URL`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`.
+- Auth: `AUTH_SECRET` ou `NEXTAUTH_SECRET`, `NEXTAUTH_URL=https://w3ads.vercel.app`, `AUTH_TRUST_HOST=true`, `AUTH_DISABLED=false`.
+- Login Google: `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`.
+- Email: `RESEND_API_KEY`, `RESEND_FROM_EMAIL`.
+- Redis/jobs: `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`, `INNGEST_EVENT_KEY`, `INNGEST_SIGNING_KEY`.
+- Observabilidade: `SENTRY_DSN`, `NEXT_PUBLIC_SENTRY_DSN`, `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, `SENTRY_PROJECT`, `POSTHOG_API_KEY`, `NEXT_PUBLIC_POSTHOG_KEY`.
+
+Credenciais de conectores nao voltam para `.env`: Meta, Google Ads, Shopify, Nuvemshop, Tray, WBuy, iSet e Magazord sao configurados em `/connectors/settings` por um `W3_ADMIN` e gravados no Supabase Vault/KMS.
+
+O build falha de proposito em production se `AUTH_DISABLED=true` ou se as envs criticas de auth/banco estiverem ausentes.
 
 ## Auth e tenancy
 
@@ -88,6 +93,30 @@ As bases das Fases 3 e 4 tambem estao preparadas sem chamar providers em ambient
 - O state de todos os conectores e assinado com `AUTH_SECRET` ou `NEXTAUTH_SECRET`; em producao configure pelo menos um segredo forte.
 - Nao existem mais envs obrigatorias `META_*`, `GOOGLE_ADS_*`, `SHOPIFY_*` ou `NUVEMSHOP_*`.
 
+## Jobs e operacao
+
+- `sync-active-connectors-daily` roda no Inngest as `09:00 UTC` (`06:00 BRT`).
+- Ads fazem incremental dos ultimos 7 dias.
+- E-commerces fazem incremental dos ultimos 3 dias.
+- `SyncJob` registra `workspaceId`, `provider`, `syncType`, `cursor`, status, contadores e erro.
+- `/api/health` valida modo de auth, banco, Vault, Inngest e Redis sem expor segredos.
+- Rate limit via Upstash protege auth, callbacks de conector, webhooks e conectores manuais.
+
+## CI e gates
+
+O workflow `.github/workflows/ci.yml` roda em PR/push:
+
+```bash
+npm run typecheck
+npm run lint
+npm test
+npm run build
+npm run e2e
+npm audit --audit-level=high
+```
+
+O deploy para production deve acontecer somente depois desses gates e das envs reais no Vercel.
+
 ## Dashboard core
 
 A rota `/dashboard` usa `src/lib/metrics/aggregator.ts` para calcular:
@@ -118,10 +147,11 @@ A rota `/dashboards` lista paineis do workspace e `/dashboards/new` cria dashboa
 - `/profile/data-export` gera JSON baixavel e registra solicitacao em audit log quando o banco esta ativo.
 - `/profile/delete-account` exige confirmacao exata por email; em banco real marca `User.deletedAt` e encerra sessoes.
 - Cookie banner e onboarding de 3 passos rodam no client sem dependencia externa.
-- `/api/health` retorna status basico do app.
+- `/api/health` retorna health granular de auth, DB, Vault, Inngest e Redis.
 - `/feedback` coleta problemas, duvidas e sugestoes do beta; em demo salva apenas cookie,
   com banco ativo persiste em `BetaFeedback` e grava audit log.
 - `NEXT_PUBLIC_POSTHOG_KEY` habilita envio opcional para a Capture API do PostHog.
+- `SENTRY_DSN` e `NEXT_PUBLIC_SENTRY_DSN` ativam o SDK oficial `@sentry/nextjs` para front, back e edge.
 - Erros capturados no client sao enviados para `/api/observability/client-error`; em demo a rota
   responde sem tocar no banco, com Supabase ativo grava `AuditLog`.
 - `NEXT_PUBLIC_POSTHOG_KEY` habilita dispatch local de eventos seguros, sem PII.

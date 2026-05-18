@@ -1,9 +1,11 @@
 import { syncEcommerceOrders, type EcommerceSyncRange } from "@/lib/connectors/ecommerce-sync";
+import type { ConnectorSyncType } from "@/lib/connectors/backfill";
 import { inngest } from "@/lib/jobs/inngest-client";
 
 type SyncEcommerceBackfillEvent = {
   connectorAccountId: string;
   range: EcommerceSyncRange;
+  syncType?: ConnectorSyncType;
 };
 
 export const syncEcommerceBackfill = inngest.createFunction(
@@ -19,6 +21,7 @@ export const syncEcommerceBackfill = inngest.createFunction(
       syncEcommerceOrders({
         connectorAccountId: data.connectorAccountId,
         range: data.range,
+        syncType: data.syncType,
       }),
     );
   },

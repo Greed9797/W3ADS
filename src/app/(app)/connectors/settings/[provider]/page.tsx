@@ -131,6 +131,21 @@ function ProviderSpecificFields({
     );
   }
 
+  if (provider === ConnectorProvider.GA4) {
+    return (
+      <>
+        <Field name="clientId" label="Google OAuth Client ID" defaultValue={publicCredential(config, "clientId")} required />
+        <SecretField name="clientSecret" label="Google OAuth Client Secret" configured={hasSecret(config, "clientSecret")} />
+        <Field name="redirectUri" label="Redirect URI" defaultValue={config?.redirectUri} required />
+        <Field
+          name="scopes"
+          label="Scopes"
+          defaultValue={config?.scopes ?? "https://www.googleapis.com/auth/analytics.readonly"}
+        />
+      </>
+    );
+  }
+
   if (provider === ConnectorProvider.SHOPIFY) {
     return (
       <>
@@ -182,7 +197,7 @@ export default async function ConnectorProviderSettingsPage({
   if (!canManageProviderConfigs(context.user)) {
     const existingAdmins = context.isDemoMode
       ? 0
-      : await prisma.user.count({ where: { platformRole: "W3_ADMIN" } });
+      : await prisma.user.count({ where: { platformRole: { in: ["ADMIN_MASTER", "W3_ADMIN"] } } });
     if (existingAdmins === 0) {
       redirect("/platform/bootstrap");
     }

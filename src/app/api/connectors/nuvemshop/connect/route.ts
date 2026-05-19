@@ -2,7 +2,7 @@ import { ConnectorProvider } from "@prisma/client";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { getCurrentUserContext } from "@/lib/auth/current";
-import { canManageConnectors } from "@/lib/auth/permissions";
+import { canOperateWorkspaceConnectors } from "@/lib/auth/platform-permissions";
 import { createConnectorOAuthState } from "@/lib/connectors/oauth-state";
 import {
   buildNuvemshopOAuthUrl,
@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
       new URL("/connectors?provider=nuvemshop&connected=demo", request.nextUrl.origin),
     );
   }
-  if (!canManageConnectors(context.currentMembership.role)) {
+  if (!canOperateWorkspaceConnectors(context.user, context.currentMembership.role)) {
     return NextResponse.redirect(
       new URL("/connectors?provider=nuvemshop&error=forbidden", request.nextUrl.origin),
     );

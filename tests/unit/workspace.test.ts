@@ -29,6 +29,7 @@ describe("workspace helpers", () => {
     expect(canManageMembers("OWNER")).toBe(true);
     expect(canManageMembers("ADMIN")).toBe(true);
     expect(canManageMembers("VIEWER")).toBe(false);
+    expect(canManageMembers("CLIENT")).toBe(false);
   });
 
   it("throws when a viewer tries to manage members", () => {
@@ -40,13 +41,23 @@ describe("workspace helpers", () => {
       label: "Owner",
       description: "Controle total do workspace, membros, conectores e ajustes.",
     });
-    expect(getWorkspaceRoleOptions().map((role) => role.role)).toEqual(["OWNER", "ADMIN", "VIEWER"]);
+    expect(getWorkspaceRoleOptions().map((role) => role.role)).toEqual([
+      "OWNER",
+      "ADMIN",
+      "VIEWER",
+      "CLIENT",
+    ]);
+    expect(getWorkspaceRoleDefinition("CLIENT")).toMatchObject({
+      label: "Cliente",
+      description: "Acesso somente leitura ao workspace liberado.",
+    });
   });
 
   it("keeps connector data owned by workspace admins, not viewers", () => {
     expect(canManageConnectors("OWNER")).toBe(true);
     expect(canManageConnectors("ADMIN")).toBe(true);
     expect(canManageConnectors("VIEWER")).toBe(false);
+    expect(canManageConnectors("CLIENT")).toBe(false);
     expect(() => assertCanManageConnectors("VIEWER")).toThrow("Sem permissao");
   });
 
@@ -58,6 +69,7 @@ describe("workspace helpers", () => {
     expect(canManageWorkspaceSettings("OWNER")).toBe(true);
     expect(canManageWorkspaceSettings("ADMIN")).toBe(false);
     expect(canManageWorkspaceSettings("VIEWER")).toBe(false);
+    expect(canManageWorkspaceSettings("CLIENT")).toBe(false);
   });
 
   it("prevents unsafe member role changes", () => {

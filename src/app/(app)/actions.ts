@@ -20,6 +20,7 @@ import {
   workspaceSettingsSchema,
 } from "@/lib/auth/schemas";
 import { createWorkspaceForUser, createWorkspaceInvite } from "@/lib/auth/service";
+import { isInternalW3User, isTrafficManager } from "@/lib/auth/platform-permissions";
 import { prisma } from "@/lib/db/prisma";
 
 function getString(formData: FormData, key: string) {
@@ -38,8 +39,23 @@ export async function switchWorkspaceAction(formData: FormData) {
   const context = await getCurrentUserContext();
   const membership = context.memberships.find((item) => item.workspaceId === workspaceId);
 
-  if (!membership) {
+  if (!membership && !isInternalW3User(context.user)) {
     redirect("/dashboard");
+  }
+
+  if (context.currentMembership.role === "CLIENT") {
+    redirect("/dashboard");
+  }
+
+  if (!membership) {
+    const workspace = await prisma.workspace.findUnique({
+      where: { id: workspaceId },
+      select: { id: true },
+    });
+
+    if (!workspace) {
+      redirect("/dashboard");
+    }
   }
 
   const cookieStore = await cookies();
@@ -90,6 +106,10 @@ export async function inviteMemberAction(formData: FormData) {
 
 export async function createWorkspaceAction(formData: FormData) {
   const context = await getCurrentUserContext();
+  if (context.currentMembership.role === "CLIENT" || isTrafficManager(context.user)) {
+    redirect("/workspace/settings?error=forbidden");
+  }
+
   const parsed = workspaceCreateSchema.safeParse({
     name: getString(formData, "name"),
   });

@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { ConnectorProvider } from "@prisma/client";
 
 import { getCurrentUserContext } from "@/lib/auth/current";
-import { canManageConnectors } from "@/lib/auth/permissions";
+import { canOperateWorkspaceConnectors } from "@/lib/auth/platform-permissions";
 import { buildGoogleAdsOAuthUrl } from "@/lib/connectors/google-ads/oauth";
 import { GOOGLE_ADS_OAUTH_STATE_COOKIE } from "@/lib/connectors/google-ads/state";
 import { createConnectorOAuthState } from "@/lib/connectors/oauth-state";
@@ -29,7 +29,7 @@ export async function GET(request: NextRequest) {
   if (context.isDemoMode) {
     return redirectToConnectors(request, { provider: "google-ads", connected: "demo" });
   }
-  if (!canManageConnectors(context.currentMembership.role)) {
+  if (!canOperateWorkspaceConnectors(context.user, context.currentMembership.role)) {
     return redirectToConnectors(request, { provider: "google-ads", error: "forbidden" });
   }
 

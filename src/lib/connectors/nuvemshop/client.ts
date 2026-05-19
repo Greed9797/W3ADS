@@ -25,7 +25,19 @@ type NuvemshopOrderPayload = {
   created_at?: string;
   completed_at?: string | null;
   paid_at?: string | null;
-  products?: Array<{ quantity?: string | number }>;
+  products?: Array<{
+    name?: string | null;
+    product_name?: string | null;
+    sku?: string | null;
+    quantity?: string | number;
+    price?: string | number | null;
+    total?: string | number | null;
+  }>;
+  shipping_address?: {
+    province?: string | null;
+    province_code?: string | null;
+    state?: string | null;
+  } | null;
   utm_source?: string | null;
   utm_medium?: string | null;
   utm_campaign?: string | null;
@@ -106,7 +118,23 @@ function normalizeNuvemshopOrder(order: NuvemshopOrderPayload): ShopifyOrder {
 
         return sum + (Number.isFinite(quantity) ? quantity : 1);
       }, 0) ?? 0,
+    items:
+      order.products?.map((item, index) => {
+        const quantity = Number(item.quantity ?? 1);
+
+        return {
+          productName: item.name ?? item.product_name ?? `Produto ${index + 1}`,
+          sku: item.sku ?? null,
+          quantity: Number.isFinite(quantity) ? quantity : 1,
+          total: asString(item.total ?? item.price),
+        };
+      }) ?? [],
     status: order.payment_status ?? order.status ?? "UNKNOWN",
+    shippingState:
+      order.shipping_address?.province_code ??
+      order.shipping_address?.state ??
+      order.shipping_address?.province ??
+      null,
     placedAt: order.paid_at ?? order.completed_at ?? order.created_at ?? new Date().toISOString(),
     utmSource: order.utm_source ?? null,
     utmMedium: order.utm_medium ?? null,

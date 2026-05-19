@@ -13,30 +13,46 @@ import Link from "next/link";
 import { W3Logo } from "@/components/brand/w3-logo";
 import { Button } from "@/components/ui/button";
 import type { getCurrentUserContext } from "@/lib/auth/current";
-import { getWorkspaceRoleDefinition } from "@/lib/auth/permissions";
+import {
+  canManageMembers,
+  canManageWorkspaceSettings,
+  getWorkspaceRoleDefinition,
+} from "@/lib/auth/permissions";
+import {
+  canManagePlatformUsers,
+  canManageProviderConfigs,
+  canOperateWorkspaceConnectors,
+  canViewBrands,
+} from "@/lib/auth/platform-permissions";
 
 import { logoutAction, switchWorkspaceAction } from "@/app/(app)/actions";
 
 type AppContext = Awaited<ReturnType<typeof getCurrentUserContext>>;
 
-const baseNavItems = [
-  { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-  { label: "Dashboards", href: "/dashboards", icon: PanelsTopLeft },
-  { label: "Conectores", href: "/connectors", icon: PlugZap },
-  { label: "Membros", href: "/workspace/members", icon: UsersRound },
-  { label: "Perfil", href: "/profile", icon: UserCircle },
-  { label: "Feedback", href: "/feedback", icon: MessageSquareText },
-  { label: "Conta e workspaces", href: "/workspace/settings", icon: Settings },
-];
-
 export function Sidebar({ context }: { context: AppContext }) {
-  const navItems =
-    context.user.platformRole === "W3_ADMIN"
-      ? [
-          ...baseNavItems,
-          { label: "Config. conectores", href: "/connectors/settings", icon: Settings },
-        ]
-      : baseNavItems;
+  const navItems = [
+    { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+    ...(canViewBrands(context.user)
+      ? [{ label: "Marcas", href: "/dashboards", icon: PanelsTopLeft }]
+      : []),
+    ...(canManagePlatformUsers(context.user)
+      ? [{ label: "Usuários", href: "/platform/users", icon: UsersRound }]
+      : []),
+    ...(canOperateWorkspaceConnectors(context.user, context.currentMembership.role)
+      ? [{ label: "Conectores", href: "/connectors", icon: PlugZap }]
+      : []),
+    ...(canManageMembers(context.currentMembership.role)
+      ? [{ label: "Membros", href: "/workspace/members", icon: UsersRound }]
+      : []),
+    { label: "Perfil", href: "/profile", icon: UserCircle },
+    { label: "Feedback", href: "/feedback", icon: MessageSquareText },
+    ...(canManageWorkspaceSettings(context.currentMembership.role)
+      ? [{ label: "Conta e workspaces", href: "/workspace/settings", icon: Settings }]
+      : []),
+    ...(canManageProviderConfigs(context.user)
+      ? [{ label: "Config. conectores", href: "/connectors/settings", icon: Settings }]
+      : []),
+  ];
 
   return (
     <aside className="relative hidden border-r border-[var(--border-subtle)] bg-[var(--bg-surface)] lg:block">
@@ -45,22 +61,28 @@ export function Sidebar({ context }: { context: AppContext }) {
       </div>
       <div className="border-b border-[var(--border-subtle)] p-5">
         <p className="text-caption text-[var(--text-tertiary)]">Workspace</p>
-        <form action={switchWorkspaceAction} className="mt-2">
-          <select
-            className="h-10 w-full rounded-md border border-[var(--border-strong)] bg-[var(--bg-surface)] px-3 text-sm font-medium text-[var(--text-primary)] outline-none focus:border-[var(--w3-red)] focus:ring-[3px] focus:ring-[var(--w3-red-bg)]"
-            defaultValue={context.currentWorkspace.id}
-            name="workspaceId"
-          >
-            {context.memberships.map((membership) => (
-              <option key={membership.workspaceId} value={membership.workspaceId}>
-                {membership.workspace.name} · {getWorkspaceRoleDefinition(membership.role).label}
-              </option>
-            ))}
-          </select>
-          <Button className="mt-2 w-full" type="submit" variant="secondary" size="sm">
-            Trocar workspace
-          </Button>
-        </form>
+        {context.currentMembership.role === "CLIENT" ? (
+          <div className="mt-2 rounded-md border border-[var(--border-strong)] px-3 py-2 text-sm font-medium text-[var(--text-primary)]">
+            {context.currentWorkspace.name} · Cliente
+          </div>
+        ) : (
+          <form action={switchWorkspaceAction} className="mt-2">
+            <select
+              className="h-10 w-full rounded-md border border-[var(--border-strong)] bg-[var(--bg-surface)] px-3 text-sm font-medium text-[var(--text-primary)] outline-none focus:border-[var(--w3-red)] focus:ring-[3px] focus:ring-[var(--w3-red-bg)]"
+              defaultValue={context.currentWorkspace.id}
+              name="workspaceId"
+            >
+              {context.memberships.map((membership) => (
+                <option key={membership.workspaceId} value={membership.workspaceId}>
+                  {membership.workspace.name} · {getWorkspaceRoleDefinition(membership.role).label}
+                </option>
+              ))}
+            </select>
+            <Button className="mt-2 w-full" type="submit" variant="secondary" size="sm">
+              Trocar workspace
+            </Button>
+          </form>
+        )}
       </div>
       <nav className="space-y-8 p-5">
         <div className="space-y-2">

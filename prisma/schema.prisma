@@ -32,6 +32,9 @@ model User {
 enum PlatformRole {
   USER
   W3_ADMIN
+  ADMIN_MASTER
+  ADMIN_LIMITED
+  TRAFFIC_MANAGER
 }
 
 model Account {
@@ -128,6 +131,7 @@ enum MemberRole {
   OWNER
   ADMIN
   VIEWER
+  CLIENT
 }
 
 model ConnectorAccount {
@@ -267,14 +271,34 @@ model EcommerceOrder {
   orderCurrency      String            @default("BRL")
   itemsCount         Int
   status             String
+  shippingState      String?
   utmSource          String?
   utmMedium          String?
   utmCampaign        String?
   placedAt           DateTime
   createdAt          DateTime          @default(now())
+  items              EcommerceOrderItem[]
 
   @@unique([connectorAccountId, externalOrderId])
   @@index([workspaceId, placedAt])
+}
+
+model EcommerceOrderItem {
+  id                 String          @id @default(cuid())
+  workspaceId        String
+  connectorAccountId String
+  ecommerceOrderId   String
+  ecommerceOrder     EcommerceOrder  @relation(fields: [ecommerceOrderId], references: [id], onDelete: Cascade)
+  externalOrderId    String
+  productName        String
+  sku                String?
+  quantity           Int
+  total              Decimal?        @db.Decimal(14, 2)
+  placedAt           DateTime
+  createdAt          DateTime        @default(now())
+
+  @@index([workspaceId, placedAt])
+  @@index([connectorAccountId, externalOrderId])
 }
 
 model Dashboard {

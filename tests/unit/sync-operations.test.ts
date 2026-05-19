@@ -8,7 +8,7 @@ import {
 } from "@/lib/jobs/sync-operations";
 
 describe("sync operations", () => {
-  it("uses 7 day incremental windows for ads and 3 day windows for ecommerce", () => {
+  it("uses 7 day incremental windows for ads/analytics and 3 day windows for ecommerce", () => {
     const now = new Date("2026-05-18T12:00:00.000Z");
 
     expect(buildIncrementalSyncRange(ConnectorProvider.META_ADS, now)).toEqual({
@@ -16,6 +16,10 @@ describe("sync operations", () => {
       until: "2026-05-18",
     });
     expect(buildIncrementalSyncRange(ConnectorProvider.GOOGLE_ADS, now)).toEqual({
+      since: "2026-05-11",
+      until: "2026-05-18",
+    });
+    expect(buildIncrementalSyncRange(ConnectorProvider.GA4, now)).toEqual({
       since: "2026-05-11",
       until: "2026-05-18",
     });
@@ -45,6 +49,11 @@ describe("sync operations", () => {
             provider: ConnectorProvider.SHOPIFY,
             status: ConnectorStatus.ACTIVE,
           },
+          {
+            id: "ga4-1",
+            provider: ConnectorProvider.GA4,
+            status: ConnectorStatus.ACTIVE,
+          },
         ],
       }),
     ).toEqual([
@@ -61,6 +70,14 @@ describe("sync operations", () => {
         data: {
           connectorAccountId: "shopify-1",
           range: { since: "2026-05-15", until: "2026-05-18" },
+          syncType: "INCREMENTAL",
+        },
+      },
+      {
+        name: "connector.google_analytics.backfill",
+        data: {
+          connectorAccountId: "ga4-1",
+          range: { since: "2026-05-11", until: "2026-05-18" },
           syncType: "INCREMENTAL",
         },
       },

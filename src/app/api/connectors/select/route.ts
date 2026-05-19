@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { logAudit } from "@/lib/audit/log";
 import { getCurrentUserContext } from "@/lib/auth/current";
-import { canManageConnectors } from "@/lib/auth/permissions";
+import { canOperateWorkspaceConnectors } from "@/lib/auth/platform-permissions";
 import { buildConnectorBackfillEvent } from "@/lib/connectors/backfill";
 import {
   loadSelectionCredentials,
@@ -39,7 +39,7 @@ export async function POST(request: NextRequest) {
   if (context.isDemoMode) {
     return redirectToConnectors(request, { connected: "demo" });
   }
-  if (!canManageConnectors(context.currentMembership.role)) {
+  if (!canOperateWorkspaceConnectors(context.user, context.currentMembership.role)) {
     return redirectToConnectors(request, { error: "forbidden" });
   }
 

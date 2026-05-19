@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 
 import { getCurrentUserContext } from "@/lib/auth/current";
 import { assertCanEditDashboards } from "@/lib/auth/permissions";
+import { assertCanManagePlatformUsers } from "@/lib/auth/platform-permissions";
 import {
   createDemoDashboard,
   setDemoDefaultDashboard,
@@ -55,6 +56,7 @@ async function loadDashboardForEdit(id: string, workspaceId: string) {
 
 export async function createDashboardAction(formData: FormData) {
   const context = await getCurrentUserContext();
+  assertCanManagePlatformUsers(context.user);
   assertCanEditDashboards(context.currentMembership.role);
 
   const name = getString(formData, "name");
@@ -92,6 +94,7 @@ export async function createDashboardAction(formData: FormData) {
 
 export async function addWidgetAction(formData: FormData) {
   const context = await getCurrentUserContext();
+  assertCanManagePlatformUsers(context.user);
   assertCanEditDashboards(context.currentMembership.role);
 
   const dashboardId = getString(formData, "dashboardId");
@@ -120,6 +123,7 @@ export async function addWidgetAction(formData: FormData) {
 
 export async function removeWidgetAction(formData: FormData) {
   const context = await getCurrentUserContext();
+  assertCanManagePlatformUsers(context.user);
   assertCanEditDashboards(context.currentMembership.role);
 
   const dashboardId = getString(formData, "dashboardId");
@@ -148,6 +152,7 @@ export async function removeWidgetAction(formData: FormData) {
 
 export async function moveWidgetAction(formData: FormData) {
   const context = await getCurrentUserContext();
+  assertCanManagePlatformUsers(context.user);
   assertCanEditDashboards(context.currentMembership.role);
 
   const dashboardId = getString(formData, "dashboardId");
@@ -177,6 +182,7 @@ export async function moveWidgetAction(formData: FormData) {
 
 export async function setDefaultDashboardAction(formData: FormData) {
   const context = await getCurrentUserContext();
+  assertCanManagePlatformUsers(context.user);
   assertCanEditDashboards(context.currentMembership.role);
 
   if (context.isDemoMode) {
@@ -209,6 +215,7 @@ export async function setDefaultDashboardAction(formData: FormData) {
 
 export async function duplicateDefaultDashboardAction() {
   const context = await getCurrentUserContext();
+  assertCanManagePlatformUsers(context.user);
   assertCanEditDashboards(context.currentMembership.role);
 
   const widgetIds = ["revenue", "spend", "roas_blended", "orders", "revenue_spend_line", "top_campaigns", "funnel"];
@@ -245,6 +252,7 @@ export async function duplicateDefaultDashboardAction() {
 
 export async function ensureDefaultDashboardAction() {
   const context = await getCurrentUserContext();
+  assertCanManagePlatformUsers(context.user);
   assertCanEditDashboards(context.currentMembership.role);
 
   if (context.isDemoMode) {

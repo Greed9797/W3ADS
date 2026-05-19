@@ -88,11 +88,31 @@ export function mapEcommerceOrderToRecord(input: {
     orderCurrency: input.order.orderCurrency,
     itemsCount: input.order.itemsCount,
     status: input.order.status,
+    shippingState: input.order.shippingState,
     utmSource: input.order.utmSource,
     utmMedium: input.order.utmMedium,
     utmCampaign: input.order.utmCampaign,
     placedAt: new Date(input.order.placedAt),
   };
+}
+
+function mapEcommerceOrderItemsToRecords(input: {
+  workspaceId: string;
+  connectorAccountId: string;
+  ecommerceOrderId: string;
+  order: ShopifyOrder;
+}) {
+  return (input.order.items ?? []).map((item) => ({
+    workspaceId: input.workspaceId,
+    connectorAccountId: input.connectorAccountId,
+    ecommerceOrderId: input.ecommerceOrderId,
+    externalOrderId: input.order.externalOrderId,
+    productName: item.productName,
+    sku: item.sku,
+    quantity: item.quantity,
+    total: item.total,
+    placedAt: new Date(input.order.placedAt),
+  }));
 }
 
 async function persistEcommerceOrders(input: {
@@ -104,7 +124,7 @@ async function persistEcommerceOrders(input: {
   for (const order of input.orders) {
     const payload = mapEcommerceOrderToRecord({ ...input, order });
 
-    await prisma.ecommerceOrder.upsert({
+    const savedOrder = await prisma.ecommerceOrder.upsert({
       where: {
         connectorAccountId_externalOrderId: {
           connectorAccountId: input.connectorAccountId,
@@ -114,6 +134,25 @@ async function persistEcommerceOrders(input: {
       update: payload,
       create: payload,
     });
+    const itemPayloads = mapEcommerceOrderItemsToRecords({
+      workspaceId: input.workspaceId,
+      connectorAccountId: input.connectorAccountId,
+      ecommerceOrderId: savedOrder.id,
+      order,
+    });
+
+    await prisma.ecommerceOrderItem.deleteMany({
+      where: {
+        connectorAccountId: input.connectorAccountId,
+        externalOrderId: order.externalOrderId,
+      },
+    });
+
+    if (itemPayloads.length) {
+      await prisma.ecommerceOrderItem.createMany({
+        data: itemPayloads,
+      });
+    }
   }
 
   const summaries = mapEcommerceOrdersToDailyMetricSummaries(input);

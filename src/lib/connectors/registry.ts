@@ -1,7 +1,7 @@
 import { ConnectorProvider } from "@prisma/client";
 
 export type ConnectorConnectionMode = "oauth" | "manual";
-export type ConnectorCategory = "ads" | "commerce";
+export type ConnectorCategory = "ads" | "analytics" | "commerce";
 
 export type ConnectorProviderDefinition = {
   provider: ConnectorProvider;
@@ -36,6 +36,16 @@ export const CONNECTOR_PROVIDER_DEFINITIONS: Partial<
     supportsSelection: true,
     supportsOrders: false,
     supportsAdMetrics: true,
+  },
+  [ConnectorProvider.GA4]: {
+    provider: ConnectorProvider.GA4,
+    name: "Google Analytics",
+    category: "analytics",
+    connectionMode: "oauth",
+    accountUnitLabel: "Propriedade GA4",
+    supportsSelection: true,
+    supportsOrders: false,
+    supportsAdMetrics: false,
   },
   [ConnectorProvider.SHOPIFY]: {
     provider: ConnectorProvider.SHOPIFY,
@@ -103,6 +113,8 @@ export const selectableAdsProviders = [
   ConnectorProvider.META_ADS,
   ConnectorProvider.GOOGLE_ADS,
 ] as const;
+
+export const selectableAnalyticsProviders = [ConnectorProvider.GA4] as const;
 
 export const oauthCommerceProviders = [
   ConnectorProvider.SHOPIFY,

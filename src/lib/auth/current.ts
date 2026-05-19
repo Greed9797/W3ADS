@@ -6,6 +6,7 @@ import { prisma } from "@/lib/db/prisma";
 
 import { auth } from "./auth";
 import { isAuthDisabled } from "./mode";
+import { isAdminLimited, isAdminMaster, isTrafficManager } from "./platform-permissions";
 
 type CurrentWorkspace = {
   id: string;
@@ -64,7 +65,7 @@ function getDemoUserContext(): CurrentUserContext {
       email: "demo@adstartw3.local",
       name: "Equipe W3",
       image: null,
-      platformRole: "W3_ADMIN",
+      platformRole: "ADMIN_MASTER",
     },
     memberships: [demoMembership],
     currentMembership: demoMembership,
@@ -103,17 +104,83 @@ export async function getCurrentUserContext(): Promise<CurrentUserContext> {
     redirect("/login");
   }
 
-  const currentMembership =
+  let currentMembership =
     user.memberships.find((membership) => membership.workspaceId === selectedWorkspaceId) ??
     user.memberships[0];
+
+  const platformUser = { platformRole: user.platformRole };
+  const syntheticRole: MemberRole = isTrafficManager(platformUser) ? "VIEWER" : "OWNER";
+  const canUseSyntheticWorkspace =
+    isAdminMaster(platformUser) || isAdminLimited(platformUser) || isTrafficManager(platformUser);
+
+  if (!currentMembership && canUseSyntheticWorkspace && selectedWorkspaceId) {
+    const workspace = await prisma.workspace.findUnique({
+      where: { id: selectedWorkspaceId },
+    });
+
+    if (workspace) {
+      currentMembership = {
+        id: `platform-admin:${workspace.id}`,
+        userId: user.id,
+        workspaceId: workspace.id,
+        role: syntheticRole,
+        createdAt: new Date(0),
+        workspace,
+      };
+    }
+  }
+
+  if (
+    canUseSyntheticWorkspace &&
+    selectedWorkspaceId &&
+    currentMembership?.workspaceId !== selectedWorkspaceId
+  ) {
+    const workspace = await prisma.workspace.findUnique({
+      where: { id: selectedWorkspaceId },
+    });
+
+    if (workspace) {
+      currentMembership = {
+        id: `platform-admin:${workspace.id}`,
+        userId: user.id,
+        workspaceId: workspace.id,
+        role: syntheticRole,
+        createdAt: new Date(0),
+        workspace,
+      };
+    }
+  }
+
+  if (!currentMembership && canUseSyntheticWorkspace) {
+    const workspace = await prisma.workspace.findFirst({
+      orderBy: { createdAt: "asc" },
+    });
+
+    if (workspace) {
+      currentMembership = {
+        id: `platform-admin:${workspace.id}`,
+        userId: user.id,
+        workspaceId: workspace.id,
+        role: syntheticRole,
+        createdAt: new Date(0),
+        workspace,
+      };
+    }
+  }
 
   if (!currentMembership) {
     redirect("/sign-up");
   }
 
+  const memberships =
+    canUseSyntheticWorkspace &&
+    !user.memberships.some((membership) => membership.workspaceId === currentMembership.workspaceId)
+      ? [currentMembership, ...user.memberships]
+      : user.memberships;
+
   return {
     user,
-    memberships: user.memberships,
+    memberships,
     currentMembership,
     currentWorkspace: currentMembership.workspace,
     isDemoMode: false,

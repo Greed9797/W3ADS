@@ -78,11 +78,31 @@ export function mapShopifyOrderToEcommerceOrder(input: {
     orderCurrency: input.order.orderCurrency,
     itemsCount: input.order.itemsCount,
     status: input.order.status,
+    shippingState: input.order.shippingState,
     utmSource: input.order.utmSource,
     utmMedium: input.order.utmMedium,
     utmCampaign: input.order.utmCampaign,
     placedAt: new Date(input.order.placedAt),
   };
+}
+
+function mapShopifyOrderItemsToRecords(input: {
+  workspaceId: string;
+  connectorAccountId: string;
+  ecommerceOrderId: string;
+  order: ShopifyOrder;
+}) {
+  return (input.order.items ?? []).map((item) => ({
+    workspaceId: input.workspaceId,
+    connectorAccountId: input.connectorAccountId,
+    ecommerceOrderId: input.ecommerceOrderId,
+    externalOrderId: input.order.externalOrderId,
+    productName: item.productName,
+    sku: item.sku,
+    quantity: item.quantity,
+    total: item.total,
+    placedAt: new Date(input.order.placedAt),
+  }));
 }
 
 export async function syncShopifyOrders(input: {
@@ -127,7 +147,7 @@ export async function syncShopifyOrders(input: {
         order,
       });
 
-      await prisma.ecommerceOrder.upsert({
+      const savedOrder = await prisma.ecommerceOrder.upsert({
         where: {
           connectorAccountId_externalOrderId: {
             connectorAccountId: connector.id,
@@ -137,6 +157,25 @@ export async function syncShopifyOrders(input: {
         update: payload,
         create: payload,
       });
+      const itemPayloads = mapShopifyOrderItemsToRecords({
+        workspaceId: connector.workspaceId,
+        connectorAccountId: connector.id,
+        ecommerceOrderId: savedOrder.id,
+        order,
+      });
+
+      await prisma.ecommerceOrderItem.deleteMany({
+        where: {
+          connectorAccountId: connector.id,
+          externalOrderId: order.externalOrderId,
+        },
+      });
+
+      if (itemPayloads.length) {
+        await prisma.ecommerceOrderItem.createMany({
+          data: itemPayloads,
+        });
+      }
     }
 
     const summaries = mapShopifyOrdersToDailyMetricSummaries({

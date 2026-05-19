@@ -14,7 +14,7 @@ export async function bootstrapW3AdminAction() {
   }
 
   const existingAdmins = await prisma.user.count({
-    where: { platformRole: "W3_ADMIN" },
+    where: { platformRole: { in: ["ADMIN_MASTER", "W3_ADMIN"] } },
   });
 
   if (existingAdmins > 0) {
@@ -23,7 +23,7 @@ export async function bootstrapW3AdminAction() {
 
   await prisma.user.update({
     where: { id: context.user.id },
-    data: { platformRole: "W3_ADMIN" },
+    data: { platformRole: "ADMIN_MASTER" },
   });
 
   await logAudit({
@@ -32,7 +32,7 @@ export async function bootstrapW3AdminAction() {
     workspaceId: context.currentWorkspace.id,
     resourceType: "user",
     resourceId: context.user.id,
-    metadata: { bootstrap: "W3_ADMIN" },
+    metadata: { bootstrap: "ADMIN_MASTER" },
   });
 
   redirect("/connectors/settings?bootstrapped=1");

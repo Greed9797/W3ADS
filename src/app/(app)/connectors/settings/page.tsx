@@ -35,7 +35,7 @@ export default async function ConnectorSettingsPage({ searchParams }: SettingsPa
   if (!canManageProviderConfigs(context.user)) {
     const existingAdmins = context.isDemoMode
       ? 0
-      : await prisma.user.count({ where: { platformRole: "W3_ADMIN" } });
+      : await prisma.user.count({ where: { platformRole: { in: ["ADMIN_MASTER", "W3_ADMIN"] } } });
     if (existingAdmins === 0) {
       redirect("/platform/bootstrap");
     }

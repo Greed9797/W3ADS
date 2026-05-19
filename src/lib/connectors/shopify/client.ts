@@ -26,10 +26,21 @@ type ShopifyOrderNode = {
   lineItems?: {
     edges?: Array<{
       node?: {
+        title?: string | null;
+        sku?: string | null;
         quantity?: number;
+        discountedTotalSet?: {
+          shopMoney?: {
+            amount?: string;
+          };
+        };
       };
     }>;
   };
+  shippingAddress?: {
+    province?: string | null;
+    provinceCode?: string | null;
+  } | null;
   customAttributes?: Array<{
     key?: string;
     value?: string;
@@ -53,8 +64,16 @@ type ShopifyWebhookOrderPayload = {
     email?: string | null;
   } | null;
   line_items?: Array<{
+    title?: string | null;
+    sku?: string | null;
     quantity?: number;
+    price?: string;
+    total_discount?: string;
   }>;
+  shipping_address?: {
+    province?: string | null;
+    province_code?: string | null;
+  } | null;
   note_attributes?: Array<{
     name?: string;
     key?: string;
@@ -99,11 +118,20 @@ export type ShopifyOrder = {
   orderCurrency: string;
   customerEmail: string | null;
   itemsCount: number;
+  items?: ShopifyOrderItem[];
   status: string;
+  shippingState?: string | null;
   placedAt: string;
   utmSource?: string | null;
   utmMedium?: string | null;
   utmCampaign?: string | null;
+};
+
+export type ShopifyOrderItem = {
+  productName: string;
+  sku: string | null;
+  quantity: number;
+  total: string | null;
 };
 
 export const SHOPIFY_WEBHOOK_TOPICS = [
@@ -125,7 +153,17 @@ query Orders($cursor: String, $query: String) {
         displayFinancialStatus
         totalPriceSet { shopMoney { amount currencyCode } }
         customer { email }
-        lineItems(first: 50) { edges { node { quantity } } }
+        lineItems(first: 50) {
+          edges {
+            node {
+              title
+              sku
+              quantity
+              discountedTotalSet { shopMoney { amount } }
+            }
+          }
+        }
+        shippingAddress { province provinceCode }
         customAttributes { key value }
         landingSite
         referringSite
@@ -214,6 +252,16 @@ export function normalizeShopifyOrder(node: ShopifyOrderNode): ShopifyOrder {
   );
   const itemsCount =
     node.lineItems?.edges?.reduce((sum, edge) => sum + (edge.node?.quantity ?? 0), 0) ?? 0;
+  const items =
+    node.lineItems?.edges
+      ?.map((edge) => edge.node)
+      .filter((item): item is NonNullable<typeof item> => Boolean(item))
+      .map((item, index) => ({
+        productName: item.title ?? `Produto ${index + 1}`,
+        sku: item.sku ?? null,
+        quantity: item.quantity ?? 1,
+        total: item.discountedTotalSet?.shopMoney?.amount ?? null,
+      })) ?? [];
 
   return {
     externalOrderId: node.id,
@@ -222,7 +270,9 @@ export function normalizeShopifyOrder(node: ShopifyOrderNode): ShopifyOrder {
     orderCurrency: node.totalPriceSet?.shopMoney?.currencyCode ?? "BRL",
     customerEmail: node.customer?.email ?? null,
     itemsCount,
+    items,
     status: node.displayFinancialStatus ?? "UNKNOWN",
+    shippingState: node.shippingAddress?.provinceCode ?? node.shippingAddress?.province ?? null,
     placedAt: node.createdAt,
     utmSource: customAttributes.get("utm_source") ?? null,
     utmMedium: customAttributes.get("utm_medium") ?? null,
@@ -242,7 +292,16 @@ export function normalizeShopifyWebhookOrder(payload: ShopifyWebhookOrderPayload
     customerEmail: payload.email ?? payload.contact_email ?? payload.customer?.email ?? null,
     itemsCount:
       payload.line_items?.reduce((sum, lineItem) => sum + (lineItem.quantity ?? 0), 0) ?? 0,
+    items:
+      payload.line_items?.map((lineItem, index) => ({
+        productName: lineItem.title ?? `Produto ${index + 1}`,
+        sku: lineItem.sku ?? null,
+        quantity: lineItem.quantity ?? 1,
+        total: lineItem.price ?? null,
+      })) ?? [],
     status: payload.financial_status?.toUpperCase() ?? "UNKNOWN",
+    shippingState:
+      payload.shipping_address?.province_code ?? payload.shipping_address?.province ?? null,
     placedAt: payload.processed_at ?? payload.created_at ?? new Date().toISOString(),
     utmSource:
       customAttributeValue(payload.note_attributes, "utm_source") ?? utmFromLandingSite.utmSource,

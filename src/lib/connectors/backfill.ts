@@ -8,6 +8,7 @@ export type ConnectorBackfillRange = {
 export type ConnectorBackfillEventName =
   | "connector.meta.backfill"
   | "connector.google_ads.backfill"
+  | "connector.google_analytics.backfill"
   | "connector.shopify.backfill"
   | "connector.ecommerce.backfill";
 
@@ -61,6 +62,8 @@ function eventNameForProvider(provider: ConnectorProvider): ConnectorBackfillEve
       return "connector.meta.backfill";
     case ConnectorProvider.GOOGLE_ADS:
       return "connector.google_ads.backfill";
+    case ConnectorProvider.GA4:
+      return "connector.google_analytics.backfill";
     case ConnectorProvider.SHOPIFY:
       return "connector.shopify.backfill";
     case ConnectorProvider.NUVEMSHOP:

@@ -5,6 +5,7 @@ import {
   CONNECTOR_PROVIDER_DEFINITIONS,
   manualCommerceProviders,
   oauthCommerceProviders,
+  selectableAnalyticsProviders,
   selectableAdsProviders,
 } from "@/lib/connectors/registry";
 
@@ -13,6 +14,7 @@ describe("connector registry", () => {
     expect(Object.keys(CONNECTOR_PROVIDER_DEFINITIONS).sort()).toEqual(
       [
         ConnectorProvider.GOOGLE_ADS,
+        ConnectorProvider.GA4,
         ConnectorProvider.ISET,
         ConnectorProvider.MAGAZORD,
         ConnectorProvider.META_ADS,
@@ -29,6 +31,7 @@ describe("connector registry", () => {
       ConnectorProvider.META_ADS,
       ConnectorProvider.GOOGLE_ADS,
     ]);
+    expect(selectableAnalyticsProviders).toEqual([ConnectorProvider.GA4]);
     expect(oauthCommerceProviders).toEqual([
       ConnectorProvider.SHOPIFY,
       ConnectorProvider.NUVEMSHOP,

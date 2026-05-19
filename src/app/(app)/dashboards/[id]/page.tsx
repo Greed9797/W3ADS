@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getCurrentUserContext } from "@/lib/auth/current";
 import { canEditDashboards } from "@/lib/auth/permissions";
+import { canManagePlatformUsers, canViewBrands } from "@/lib/auth/platform-permissions";
 import { getDemoDashboard } from "@/lib/dashboards/demo-storage";
 import { demoDashboardId, parseDashboardWidgets } from "@/lib/dashboards/store";
 import { prisma } from "@/lib/db/prisma";
@@ -25,6 +26,11 @@ export default async function DashboardDetailPage({
   searchParams,
 }: DashboardDetailPageProps) {
   const context = await getCurrentUserContext();
+
+  if (!canViewBrands(context.user)) {
+    redirect("/dashboard");
+  }
+
   const { id } = await params;
   const query = await searchParams;
   const dashboard = context.isDemoMode
@@ -48,7 +54,7 @@ export default async function DashboardDetailPage({
         period,
       });
   const widgets = parseDashboardWidgets(dashboard.widgets);
-  const canEdit = canEditDashboards(context.currentMembership.role);
+  const canEdit = canManagePlatformUsers(context.user) && canEditDashboards(context.currentMembership.role);
   const canEditThisDashboard = canEdit && (!context.isDemoMode || dashboard.id !== demoDashboardId);
 
   return (

@@ -14,6 +14,7 @@ import {
 } from "@/lib/security/secret-store";
 
 import type { GoogleAdsConfig } from "./google-ads/oauth";
+import type { GoogleAnalyticsConfig } from "./google-analytics/oauth";
 import type { MetaConfig } from "./meta/oauth";
 import type { NuvemshopConfig } from "./nuvemshop/oauth";
 import { getConnectorDefinition, isManualCommerceProvider } from "./registry";
@@ -184,6 +185,15 @@ export function validateProviderConfigInput(input: ProviderConfigInput) {
     }
     if (!hasSecret("developerToken")) {
       return { success: false as const, error: "Informe o developer token do Google Ads." };
+    }
+  }
+
+  if (input.provider === ConnectorProvider.GA4) {
+    if (!hasPublic("clientId")) {
+      return { success: false as const, error: "Informe o client ID do Google Analytics." };
+    }
+    if (!hasSecret("clientSecret")) {
+      return { success: false as const, error: "Informe o client secret do Google Analytics." };
     }
   }
 
@@ -391,6 +401,17 @@ export async function buildGoogleAdsConfigFromProviderConfig(
     redirectUri: requiredConfigText(config, "redirectUri"),
     apiVersion: config.apiVersion?.trim() || "v24",
     loginCustomerId: config.publicCredentials?.loginCustomerId ?? undefined,
+  };
+}
+
+export async function buildGoogleAnalyticsConfigFromProviderConfig(
+  config: ProviderConfigLike,
+  store: SecretStore = getSecretStore(),
+): Promise<GoogleAnalyticsConfig> {
+  return {
+    clientId: requiredPublicKey(config, "clientId"),
+    clientSecret: await requiredSecret(config, store, "clientSecret"),
+    redirectUri: requiredConfigText(config, "redirectUri"),
   };
 }
 

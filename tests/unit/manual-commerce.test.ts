@@ -38,7 +38,8 @@ describe("manual ecommerce connectors", () => {
         moeda: "BRL",
         status: "pago",
         email: "cliente@example.com",
-        itens: [{ quantidade: 1 }, { quantity: 2 }],
+        estado: "SC",
+        itens: [{ nome: "Produto A", quantidade: 1 }, { name: "Produto B", quantity: 2 }],
         data: "2026-05-18T10:00:00.000Z",
       }),
     ).toEqual({
@@ -48,7 +49,22 @@ describe("manual ecommerce connectors", () => {
       orderCurrency: "BRL",
       customerEmail: "cliente@example.com",
       itemsCount: 3,
+      items: [
+        {
+          productName: "Produto A",
+          quantity: 1,
+          sku: null,
+          total: null,
+        },
+        {
+          productName: "Produto B",
+          quantity: 2,
+          sku: null,
+          total: null,
+        },
+      ],
       status: "pago",
+      shippingState: "SC",
       placedAt: "2026-05-18T10:00:00.000Z",
       utmSource: null,
       utmMedium: null,

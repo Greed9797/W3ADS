@@ -23,6 +23,8 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
   const errorMessage =
     error === "google-not-configured"
       ? "Google OAuth ainda nao esta configurado neste ambiente."
+      : error === "signup-closed"
+        ? "Cadastro público fechado. Peça acesso para um Admin Master W3."
       : "Não conseguimos entrar com esses dados. Confira as informacoes e tente novamente.";
 
   return (

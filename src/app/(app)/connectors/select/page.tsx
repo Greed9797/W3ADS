@@ -81,8 +81,10 @@ export default async function ConnectorSelectPage({ searchParams }: ConnectorSel
         <p className="text-caption text-[var(--text-tertiary)]">Selecionar conta</p>
         <h2 className="mt-2 text-2xl font-semibold tracking-[-0.02em]">{definition.name}</h2>
         <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--text-secondary)]">
-          Vincule somente a {definition.accountUnitLabel.toLowerCase()} do cliente. BMs e MCCs
-          servem apenas como origem de permissao.
+          Vincule somente a {definition.accountUnitLabel.toLowerCase()} do cliente.
+          {definition.provider === "GA4"
+            ? " Contas do Analytics servem apenas como origem de permissao."
+            : " BMs e MCCs servem apenas como origem de permissao."}
         </p>
       </div>
 

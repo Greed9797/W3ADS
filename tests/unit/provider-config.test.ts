@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildGoogleAdsConfigFromProviderConfig,
+  buildGoogleAnalyticsConfigFromProviderConfig,
   buildMetaConfigFromProviderConfig,
   buildShopifyConfigFromProviderConfig,
   publicProviderConfig,
@@ -52,6 +53,10 @@ describe("connector provider config", () => {
     const developerTokenId = await secrets.createSecret({
       name: "google-developer",
       value: "developer-token",
+    });
+    const analyticsClientSecretId = await secrets.createSecret({
+      name: "analytics-client",
+      value: "analytics-client-secret",
     });
     const shopifySecretId = await secrets.createSecret({
       name: "shopify",
@@ -113,6 +118,24 @@ describe("connector provider config", () => {
       apiSecret: "shopify-secret",
       scopes: "read_orders",
     });
+
+    expect(
+      await buildGoogleAnalyticsConfigFromProviderConfig(
+        {
+          provider: ConnectorProvider.GA4,
+          redirectUri: "https://app.w3ads.com.br/api/connectors/google-analytics/callback",
+          publicCredentials: { clientId: "analytics-client-id" },
+          secretRefs: {
+            clientSecret: analyticsClientSecretId,
+          },
+        },
+        secrets,
+      ),
+    ).toEqual({
+      clientId: "analytics-client-id",
+      clientSecret: "analytics-client-secret",
+      redirectUri: "https://app.w3ads.com.br/api/connectors/google-analytics/callback",
+    });
   });
 
   it("requires Google Ads developer token before a config can be activated", () => {
@@ -127,5 +150,18 @@ describe("connector provider config", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("developer token");
+  });
+
+  it("requires Google Analytics OAuth credentials before activation", () => {
+    const result = validateProviderConfigInput({
+      provider: ConnectorProvider.GA4,
+      status: "ACTIVE",
+      redirectUri: "https://app.w3ads.com.br/api/connectors/google-analytics/callback",
+      publicCredentials: { clientId: "client-id" },
+      secrets: {},
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("client secret");
   });
 });

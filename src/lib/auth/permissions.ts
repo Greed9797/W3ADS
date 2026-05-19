@@ -5,7 +5,8 @@ export type WorkspaceRoleCapability =
   | "edit_dashboard"
   | "manage_connectors"
   | "manage_members"
-  | "manage_workspace_settings";
+  | "manage_workspace_settings"
+  | "client_read_only";
 
 type WorkspaceRoleDefinition = {
   role: MemberRole;
@@ -39,6 +40,12 @@ const workspaceRoleDefinitions: Record<MemberRole, WorkspaceRoleDefinition> = {
     description: "Consulta dashboards e status dos conectores em modo somente leitura.",
     capabilities: ["view_dashboard"],
   },
+  CLIENT: {
+    role: "CLIENT",
+    label: "Cliente",
+    description: "Acesso somente leitura ao workspace liberado.",
+    capabilities: ["view_dashboard", "client_read_only"],
+  },
 };
 
 type MemberRoleChangeInput = {
@@ -65,6 +72,7 @@ export function getWorkspaceRoleOptions() {
     workspaceRoleDefinitions.OWNER,
     workspaceRoleDefinitions.ADMIN,
     workspaceRoleDefinitions.VIEWER,
+    workspaceRoleDefinitions.CLIENT,
   ];
 }
 
@@ -117,7 +125,7 @@ export function canCreateWorkspace() {
 }
 
 export function canAssignInviteRole(role: MemberRole) {
-  return role === "ADMIN" || role === "VIEWER";
+  return role === "ADMIN" || role === "VIEWER" || role === "CLIENT";
 }
 
 export function canChangeMemberRole(input: MemberRoleChangeInput) {

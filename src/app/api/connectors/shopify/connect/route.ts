@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { ConnectorProvider } from "@prisma/client";
 
 import { getCurrentUserContext } from "@/lib/auth/current";
-import { canManageConnectors } from "@/lib/auth/permissions";
+import { canOperateWorkspaceConnectors } from "@/lib/auth/platform-permissions";
 import {
   buildShopifyOAuthUrl,
   normalizeShopDomain,
@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
   if (context.isDemoMode) {
     return redirectToConnectors(request, { provider: "shopify", connected: "demo" });
   }
-  if (!canManageConnectors(context.currentMembership.role)) {
+  if (!canOperateWorkspaceConnectors(context.user, context.currentMembership.role)) {
     return redirectToConnectors(request, { provider: "shopify", error: "forbidden" });
   }
 

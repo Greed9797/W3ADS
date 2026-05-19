@@ -44,6 +44,14 @@ describe("connector backfill helpers", () => {
 
     expect(
       buildConnectorBackfillEvent({
+        provider: ConnectorProvider.GA4,
+        connectorAccountId: "connector-ga4",
+        now: new Date("2026-05-18T12:00:00.000Z"),
+      }).name,
+    ).toBe("connector.google_analytics.backfill");
+
+    expect(
+      buildConnectorBackfillEvent({
         provider: ConnectorProvider.SHOPIFY,
         connectorAccountId: "connector-3",
         now: new Date("2026-05-18T12:00:00.000Z"),

@@ -6,8 +6,10 @@ import { EventTracker } from "@/components/observability/event-tracker";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getCurrentUserContext } from "@/lib/auth/current";
-import { canManageConnectors } from "@/lib/auth/permissions";
-import { canManageProviderConfigs } from "@/lib/auth/platform-permissions";
+import {
+  canManageProviderConfigs,
+  canOperateWorkspaceConnectors,
+} from "@/lib/auth/platform-permissions";
 import { listPublicProviderConfigs } from "@/lib/connectors/provider-config";
 import {
   getConnectorDefinition,
@@ -58,6 +60,14 @@ function connectorMessage(error: string | undefined, connected: string | undefin
     };
   }
 
+  if (connected === "google-analytics") {
+    return {
+      tone: "success" as const,
+      title: "Google Analytics conectado.",
+      body: "As propriedades GA4 selecionadas foram salvas e prontas para sincronizar sessões.",
+    };
+  }
+
   if (connected === "shopify") {
     return {
       tone: "success" as const,
@@ -102,6 +112,8 @@ function connectorMessage(error: string | undefined, connected: string | undefin
     "meta-api": "Nao conseguimos concluir a conexao com a Meta agora. Tente novamente em alguns minutos.",
     "google-ads-api":
       "Nao conseguimos concluir a conexao com o Google Ads agora. Confira o developer token e tente novamente.",
+    "google-analytics-api":
+      "Nao conseguimos concluir a conexao com o Google Analytics agora. Confira o OAuth e tente novamente.",
     "invalid-hmac": "A assinatura retornada pela Shopify nao passou na validacao HMAC.",
     "invalid-shop": "Informe uma loja Shopify valida, como loja.myshopify.com.",
     "provider-denied": "A autorizacao foi cancelada no provedor.",
@@ -131,7 +143,10 @@ export default async function ConnectorsPage({ searchParams }: ConnectorsPagePro
   const connectedProvider = firstParam(params.connected);
   const message = connectorMessage(firstParam(params.error), firstParam(params.connected));
   const canConfigureProviders = canManageProviderConfigs(context.user);
-  const canConnectAccounts = canManageConnectors(context.currentMembership.role);
+  const canConnectAccounts = canOperateWorkspaceConnectors(
+    context.user,
+    context.currentMembership.role,
+  );
   const connectorCounts = new Map<ConnectorProvider, number>();
   const providerConfigs = new Set<ConnectorProvider>();
   if (!context.isDemoMode) {
@@ -157,6 +172,7 @@ export default async function ConnectorsPage({ searchParams }: ConnectorsPagePro
 
   const metaAccounts = connectorCounts.get(ConnectorProvider.META_ADS) ?? 0;
   const googleAdsAccounts = connectorCounts.get(ConnectorProvider.GOOGLE_ADS) ?? 0;
+  const googleAnalyticsProperties = connectorCounts.get(ConnectorProvider.GA4) ?? 0;
   const shopifyAccounts = connectorCounts.get(ConnectorProvider.SHOPIFY) ?? 0;
   const nuvemshopAccounts = connectorCounts.get(ConnectorProvider.NUVEMSHOP) ?? 0;
 
@@ -243,6 +259,24 @@ export default async function ConnectorsPage({ searchParams }: ConnectorsPagePro
           <a href="/api/connectors/google-ads/connect">
             <Cable size={16} aria-hidden="true" />
             Conectar Google
+          </a>
+        </Button>,
+      ),
+    },
+    {
+      name: "Google Analytics",
+      description: context.isDemoMode
+        ? "Configure OAuth pelo CRUD interno antes de conectar propriedades GA4."
+        : "Conecte o Google Analytics e vincule as propriedades GA4 dos clientes para puxar sessões.",
+      statusLabel:
+        statusLabel(ConnectorProvider.GA4, googleAnalyticsProperties, "propriedade"),
+      statusTone: statusTone(ConnectorProvider.GA4, googleAnalyticsProperties),
+      action: connectorAction(
+        ConnectorProvider.GA4,
+        <Button asChild size="sm">
+          <a href="/api/connectors/google-analytics/connect">
+            <Cable size={16} aria-hidden="true" />
+            Conectar Analytics
           </a>
         </Button>,
       ),

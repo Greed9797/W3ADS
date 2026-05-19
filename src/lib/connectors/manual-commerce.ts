@@ -70,6 +70,32 @@ function sumItemsCount(value: unknown) {
   }, 0);
 }
 
+function normalizeItems(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((item, index) => {
+    if (!item || typeof item !== "object") {
+      return [];
+    }
+
+    const record = item as Record<string, unknown>;
+    const quantity = Number(record.quantidade ?? record.quantity ?? record.qtd ?? 1);
+
+    return [
+      {
+        productName:
+          firstString(record.nome, record.name, record.product_name, record.title) ??
+          `Produto ${index + 1}`,
+        sku: firstString(record.sku, record.codigo_sku, record.reference),
+        quantity: Number.isFinite(quantity) ? quantity : 1,
+        total: firstString(record.total, record.valor_total, record.price, record.preco),
+      },
+    ];
+  });
+}
+
 export function normalizeManualCommerceOrder(payload: ManualCommerceOrderPayload): ShopifyOrder {
   const externalOrderId = firstString(
     payload.id,
@@ -98,7 +124,16 @@ export function normalizeManualCommerceOrder(payload: ManualCommerceOrderPayload
     orderCurrency: firstString(payload.moeda, payload.currency, payload.orderCurrency) ?? "BRL",
     customerEmail: firstString(payload.email, payload.customer_email, payload.cliente_email),
     itemsCount: sumItemsCount(payload.itens ?? payload.items ?? payload.line_items),
+    items: normalizeItems(payload.itens ?? payload.items ?? payload.line_items),
     status: firstString(payload.status, payload.situacao, payload.payment_status) ?? "UNKNOWN",
+    shippingState: firstString(
+      payload.uf,
+      payload.estado,
+      payload.state,
+      payload.shipping_state,
+      (payload.shipping_address as Record<string, unknown> | undefined)?.province_code,
+      (payload.shipping_address as Record<string, unknown> | undefined)?.state,
+    ),
     placedAt,
     utmSource: firstString(payload.utm_source),
     utmMedium: firstString(payload.utm_medium),

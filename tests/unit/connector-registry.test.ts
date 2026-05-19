@@ -15,6 +15,7 @@ describe("connector registry", () => {
       [
         ConnectorProvider.GOOGLE_ADS,
         ConnectorProvider.GA4,
+        ConnectorProvider.GOOGLE_SHEETS,
         ConnectorProvider.ISET,
         ConnectorProvider.MAGAZORD,
         ConnectorProvider.META_ADS,
@@ -41,6 +42,7 @@ describe("connector registry", () => {
       ConnectorProvider.TRAY,
       ConnectorProvider.WBUY,
       ConnectorProvider.MAGAZORD,
+      ConnectorProvider.GOOGLE_SHEETS,
     ]);
   });
 });

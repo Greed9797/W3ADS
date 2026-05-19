@@ -71,4 +71,24 @@ describe("manual ecommerce connectors", () => {
       utmCampaign: null,
     });
   });
+
+  it("maps WhatsApp Google Sheets rows into approved orders", () => {
+    expect(
+      normalizeManualCommerceOrder({
+        pedido: "WA-42",
+        valor: "R$ 1.234,56",
+        status: "aprovado",
+        estado: "PR",
+        origem: "whatsapp",
+        data: "2026-05-18T10:00:00.000Z",
+      }),
+    ).toMatchObject({
+      externalOrderId: "WA-42",
+      orderNumber: "WA-42",
+      orderTotal: "1234.56",
+      status: "aprovado",
+      shippingState: "PR",
+      utmSource: "whatsapp",
+    });
+  });
 });

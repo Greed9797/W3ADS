@@ -6,12 +6,10 @@ import {
   ReceiptText,
   ShoppingCart,
   TrendingUp,
-  Users,
 } from "lucide-react";
 
 import { DashboardDonut } from "@/components/dashboards/dashboard-donut";
 import { DashboardFilterBar } from "@/components/dashboards/dashboard-filter-bar";
-import { OperationalFunnel } from "@/components/dashboards/operational-funnel";
 import { OperationalKpiCard } from "@/components/dashboards/operational-kpi-card";
 import {
   ConnectorRankingTable,
@@ -26,8 +24,8 @@ import { getDemoDashboardSnapshot } from "@/lib/metrics/demo";
 import { getDashboardFilters } from "@/lib/metrics/period";
 import {
   formatCurrencyBR,
+  formatIntegerBR,
   formatPercentBR,
-  formatRoasBR,
 } from "@/lib/utils/format-br";
 
 type DashboardPageProps = {
@@ -128,11 +126,11 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
         />
         <OperationalKpiCard
           accent="var(--w3-red)"
-          icon={<TrendingUp aria-hidden className="size-4" />}
-          kpi={snapshot.kpis.roas}
-          label="ROAS Global"
-          previousValue={formatRoasBR(snapshot.kpis.roas.previousValue)}
-          value={formatRoasBR(snapshot.kpis.roas.value)}
+          icon={<PackageCheck aria-hidden className="size-4" />}
+          kpi={snapshot.kpis.approvedOrders}
+          label="Pedidos aprovados"
+          previousValue={formatIntegerBR(snapshot.kpis.approvedOrders.previousValue)}
+          value={formatIntegerBR(snapshot.kpis.approvedOrders.value)}
         />
       </section>
 
@@ -166,48 +164,43 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
         />
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-        <div className="grid gap-4">
-          <OperationalFunnel funnel={snapshot.funnel} />
-        </div>
+      <section className="grid gap-4 xl:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>Total de vendas por Estado</CardTitle>
+            <ReceiptText aria-hidden className="size-4 text-[var(--w3-red)]" />
+          </CardHeader>
+          <CardContent>
+            <DashboardDonut
+              centerLabel="Vendas"
+              centerValue={
+                snapshot.stateSales.length
+                  ? formatCurrencyBR(
+                      snapshot.stateSales.reduce((sum, item) => sum + item.value, 0),
+                    )
+                  : "—"
+              }
+              data={snapshot.stateSales}
+            />
+          </CardContent>
+        </Card>
 
-        <div className="grid gap-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Total de vendas por Estado</CardTitle>
-              <ReceiptText aria-hidden className="size-4 text-[var(--w3-red)]" />
-            </CardHeader>
-            <CardContent>
-              <DashboardDonut
-                centerLabel="Vendas"
-                centerValue={
-                  snapshot.stateSales.length
-                    ? formatCurrencyBR(
-                        snapshot.stateSales.reduce((sum, item) => sum + item.value, 0),
-                      )
-                    : "—"
-                }
-                data={snapshot.stateSales}
-              />
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Sessões por Origem/Mídia da sessão</CardTitle>
-              <Users aria-hidden className="size-4 text-[var(--w3-gold)]" />
-            </CardHeader>
-            <CardContent>
-              <DashboardDonut
-                centerLabel="Receita"
-                centerValue={formatCurrencyBR(
-                  snapshot.originMedia.reduce((sum, item) => sum + item.value, 0),
-                )}
-                data={snapshot.originMedia}
-              />
-            </CardContent>
-          </Card>
-        </div>
+        <Card>
+          <CardHeader>
+            <CardTitle>Total de pedidos por Estado</CardTitle>
+            <PackageCheck aria-hidden className="size-4 text-[var(--w3-gold)]" />
+          </CardHeader>
+          <CardContent>
+            <DashboardDonut
+              centerLabel="Pedidos"
+              centerValue={formatIntegerBR(
+                snapshot.stateOrders.reduce((sum, item) => sum + item.value, 0),
+              )}
+              data={snapshot.stateOrders}
+              valueKind="integer"
+            />
+          </CardContent>
+        </Card>
       </section>
 
       <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">

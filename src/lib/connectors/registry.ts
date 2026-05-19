@@ -107,6 +107,16 @@ export const CONNECTOR_PROVIDER_DEFINITIONS: Partial<
     supportsOrders: true,
     supportsAdMetrics: false,
   },
+  [ConnectorProvider.GOOGLE_SHEETS]: {
+    provider: ConnectorProvider.GOOGLE_SHEETS,
+    name: "Google Sheets / WhatsApp",
+    category: "commerce",
+    connectionMode: "manual",
+    accountUnitLabel: "Planilha",
+    supportsSelection: false,
+    supportsOrders: true,
+    supportsAdMetrics: false,
+  },
 };
 
 export const selectableAdsProviders = [
@@ -126,6 +136,7 @@ export const manualCommerceProviders = [
   ConnectorProvider.TRAY,
   ConnectorProvider.WBUY,
   ConnectorProvider.MAGAZORD,
+  ConnectorProvider.GOOGLE_SHEETS,
 ] as const;
 
 export function getConnectorDefinition(provider: ConnectorProvider) {

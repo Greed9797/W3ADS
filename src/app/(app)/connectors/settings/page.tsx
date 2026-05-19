@@ -20,6 +20,8 @@ const configurableProviders = [
   ConnectorProvider.TRAY,
   ConnectorProvider.WBUY,
   ConnectorProvider.MAGAZORD,
+  ConnectorProvider.GOOGLE_SHEETS,
+  ConnectorProvider.GA4,
 ] as const;
 
 type SettingsPageProps = {

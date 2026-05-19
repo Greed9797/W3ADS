@@ -217,7 +217,16 @@ export function validateProviderConfigInput(input: ProviderConfigInput) {
 
   if (isManualCommerceProvider(input.provider)) {
     if (input.provider !== ConnectorProvider.WBUY && !hasText(input.baseUrl)) {
-      return { success: false as const, error: "Informe a URL da API da loja." };
+      return {
+        success: false as const,
+        error:
+          input.provider === ConnectorProvider.GOOGLE_SHEETS
+            ? "Informe a URL da planilha Google."
+            : "Informe a URL da API da loja.",
+      };
+    }
+    if (input.provider === ConnectorProvider.GOOGLE_SHEETS) {
+      return { success: true as const };
     }
     if (
       !hasSecret("apiKey") &&
@@ -461,12 +470,14 @@ export async function publicManualCredentialsFromProviderConfig(
         : requiredConfigText(config, "baseUrl"),
     ordersPath:
       config.ordersPath?.trim() ||
-      (config.provider === ConnectorProvider.WBUY
-        ? "/order"
-        : config.provider === ConnectorProvider.ISET ||
-            config.provider === ConnectorProvider.MAGAZORD
-          ? "/pedidos"
-          : "/orders"),
+      (config.provider === ConnectorProvider.GOOGLE_SHEETS
+        ? ""
+        : config.provider === ConnectorProvider.WBUY
+          ? "/order"
+          : config.provider === ConnectorProvider.ISET ||
+              config.provider === ConnectorProvider.MAGAZORD
+            ? "/pedidos"
+            : "/orders"),
   };
 }
 

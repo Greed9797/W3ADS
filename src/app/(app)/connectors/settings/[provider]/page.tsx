@@ -174,6 +174,26 @@ function ProviderSpecificFields({
   }
 
   if (isManualCommerceProvider(provider)) {
+    if (provider === ConnectorProvider.GOOGLE_SHEETS) {
+      return (
+        <>
+          <Field
+            name="baseUrl"
+            label="URL da planilha Google"
+            defaultValue={config?.baseUrl}
+            placeholder="https://docs.google.com/spreadsheets/d/.../edit?gid=..."
+            required
+          />
+          <Field
+            name="ordersPath"
+            label="GID da aba"
+            defaultValue={config?.ordersPath}
+            placeholder="Opcional se a URL ja tiver gid"
+          />
+        </>
+      );
+    }
+
     return (
       <>
         <Field name="baseUrl" label="URL base da API" defaultValue={config?.baseUrl} required />

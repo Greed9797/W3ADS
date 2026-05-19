@@ -84,11 +84,17 @@ function connectorMessage(error: string | undefined, connected: string | undefin
     };
   }
 
-  if (connected && ["iset", "tray", "wbuy", "magazord"].includes(connected)) {
+  if (
+    connected &&
+    ["iset", "tray", "wbuy", "magazord", "google_sheets"].includes(connected)
+  ) {
     return {
       tone: "success" as const,
-      title: "Loja conectada.",
-      body: "Validamos as credenciais antes de salvar e a sincronizacao de pedidos ja pode rodar.",
+      title: connected === "google_sheets" ? "Planilha conectada." : "Loja conectada.",
+      body:
+        connected === "google_sheets"
+          ? "A planilha foi validada em tempo real e entrara na soma de pedidos aprovados do WhatsApp."
+          : "Validamos as credenciais antes de salvar e a sincronizacao de pedidos ja pode rodar.",
     };
   }
 

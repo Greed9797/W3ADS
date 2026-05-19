@@ -89,4 +89,37 @@ describe("documented ecommerce API clients", () => {
       "X-Api-Token": "token",
     });
   });
+
+  it("reads Google Sheets as real-time CSV orders", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          "pedido,valor,status,estado,data\nWA-1,\"R$ 1.234,56\",pago,SC,2026-05-18T10:00:00.000Z\n",
+        ),
+    );
+    const client = new ManualCommerceClient({
+      provider: ConnectorProvider.GOOGLE_SHEETS,
+      credentials: {
+        baseUrl:
+          "https://docs.google.com/spreadsheets/d/14h4veQ1W9Qfv5mHGyFqcwdBDLwIDUKlV/edit?gid=1004138552#gid=1004138552",
+      },
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+
+    const orders = await client.listOrders({ since: "2026-05-01", until: "2026-05-18" });
+
+    const [url] = fetchMock.mock.calls[0] as unknown as [URL, RequestInit];
+    expect(url.toString()).toBe(
+      "https://docs.google.com/spreadsheets/d/14h4veQ1W9Qfv5mHGyFqcwdBDLwIDUKlV/export?format=csv&gid=1004138552",
+    );
+    expect(orders).toEqual([
+      {
+        pedido: "WA-1",
+        valor: "R$ 1.234,56",
+        status: "pago",
+        estado: "SC",
+        data: "2026-05-18T10:00:00.000Z",
+      },
+    ]);
+  });
 });

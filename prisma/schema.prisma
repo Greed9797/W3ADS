@@ -218,6 +218,7 @@ enum ConnectorProvider {
   TRAY
   WBUY
   MAGAZORD
+  GOOGLE_SHEETS
   GA4
   SEARCH_CONSOLE
   TIKTOK_ADS

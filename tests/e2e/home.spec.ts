@@ -17,8 +17,8 @@ test("opens the dashboard without login while auth is disabled", async ({ page }
   await expect(page.getByText("Workspace Demo / Owner")).toBeVisible();
   await expect(page.getByText("Valor investido")).toBeVisible();
   await expect(page.getByText("Custo de mídia")).toBeVisible();
-  await expect(page.getByText("ROAS Global")).toBeVisible();
-  await expect(page.getByText("Funil")).toBeVisible();
+  await expect(page.getByText("Pedidos aprovados")).toBeVisible();
+  await expect(page.getByText("Total de pedidos por Estado")).toBeVisible();
   await expect(page.getByText("Top 10 campanhas por ROAS")).toBeVisible();
 });
 
@@ -36,7 +36,7 @@ test("renders connector cards in demo mode", async ({ page }) => {
 
   await expect(page.getByRole("heading", { name: "Fontes de dados" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Meta Ads" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Configurar no app" })).toHaveCount(9);
+  await expect(page.getByRole("link", { name: "Configurar no app" })).toHaveCount(10);
   await expect(page.getByRole("heading", { name: "Google Ads" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Google Analytics" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Shopify" })).toBeVisible();

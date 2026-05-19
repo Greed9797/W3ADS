@@ -6,6 +6,7 @@ import {
   calculateDeltaPercent,
   calculateRatioPercent,
   calculateRoas,
+  isApprovedOrderStatus,
 } from "@/lib/metrics/aggregator";
 import { getDashboardPeriod } from "@/lib/metrics/period";
 
@@ -17,9 +18,11 @@ describe("dashboard aggregator", () => {
     expect(calculateRatioPercent(25, 0)).toBe(0);
     expect(calculateDeltaPercent(150, 100)).toBe(50);
     expect(calculateDeltaPercent(0, 0)).toBe(0);
+    expect(isApprovedOrderStatus("pago")).toBe(true);
+    expect(isApprovedOrderStatus("cancelado")).toBe(false);
   });
 
-  it("builds KPI totals, line series, funnel and top campaigns", () => {
+  it("builds KPI totals, line series, approved orders, state breakdowns and top campaigns", () => {
     const period = getDashboardPeriod(
       { period: "7d" },
       new Date("2026-05-16T12:00:00.000Z"),
@@ -32,6 +35,7 @@ describe("dashboard aggregator", () => {
           platform: ConnectorProvider.SHOPIFY,
           orderTotal: "200.00",
           itemsCount: 2,
+          status: "pago",
           shippingState: "SP",
           utmSource: "google",
           utmMedium: "organic",
@@ -42,6 +46,7 @@ describe("dashboard aggregator", () => {
           platform: ConnectorProvider.NUVEMSHOP,
           orderTotal: "300.00",
           itemsCount: 1,
+          status: "aprovado",
           shippingState: "RJ",
           utmSource: "meta",
           utmMedium: "cpc",
@@ -52,6 +57,7 @@ describe("dashboard aggregator", () => {
           platform: ConnectorProvider.SHOPIFY,
           orderTotal: "100.00",
           itemsCount: 1,
+          status: "cancelado",
           shippingState: "SP",
           utmSource: "google",
           utmMedium: "organic",
@@ -140,6 +146,8 @@ describe("dashboard aggregator", () => {
     expect(snapshot.kpis.revenue.value).toBe(500);
     expect(snapshot.kpis.spend.value).toBe(150);
     expect(snapshot.kpis.orders.value).toBe(2);
+    expect(snapshot.kpis.approvedOrders.value).toBe(2);
+    expect(snapshot.kpis.approvedOrders.previousValue).toBe(0);
     expect(snapshot.kpis.roas.value).toBe(3.33);
     expect(snapshot.platformRoas.meta.value).toBe(4);
     expect(snapshot.platformRoas.google.value).toBe(6);
@@ -160,6 +168,7 @@ describe("dashboard aggregator", () => {
     expect(snapshot.topCampaigns[0]).toMatchObject({
       campaignId: "c2",
       campaignName: "Performance Max",
+      source: ConnectorProvider.GOOGLE_ADS,
       roas: 6,
     });
     expect(snapshot.lineSeries).toHaveLength(7);
@@ -186,6 +195,11 @@ describe("dashboard aggregator", () => {
       label: "RJ",
       value: 300,
       percent: 60,
+    });
+    expect(snapshot.stateOrders[0]).toMatchObject({
+      label: "SP",
+      value: 1,
+      percent: 50,
     });
     expect(snapshot.products[0]).toMatchObject({
       productName: "Produto B",

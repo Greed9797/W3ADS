@@ -12,6 +12,12 @@ export type DocEntry = {
   filePath: string;
 };
 
+export type ConnectorDocOption = {
+  label: string;
+  href: string;
+  type: "OAuth" | "Manual";
+};
+
 const CATEGORY_LABELS: Record<DocCategory, string> = {
   geral: "Visão geral",
   oauth: "Conectores OAuth",
@@ -26,6 +32,32 @@ const FILE_TITLE_OVERRIDES: Record<string, string> = {
   "concepts.md": "Conceitos fundamentais",
   "faq-troubleshooting.md": "Erros comuns e troubleshooting",
 };
+
+const CONNECTOR_LABELS: Record<string, string> = {
+  "oauth/meta-ads": "Meta Ads",
+  "oauth/google-ads": "Google Ads",
+  "oauth/google-analytics": "Google Analytics 4",
+  "oauth/shopify": "Shopify",
+  "oauth/nuvemshop": "Nuvemshop",
+  "manual/google-sheets": "Google Sheets / WhatsApp",
+  "manual/tray": "Tray",
+  "manual/wbuy": "WBuy",
+  "manual/iset": "iSet",
+  "manual/magazord": "Magazord",
+};
+
+const CONNECTOR_ORDER = [
+  "oauth/meta-ads",
+  "oauth/google-ads",
+  "oauth/google-analytics",
+  "oauth/shopify",
+  "oauth/nuvemshop",
+  "manual/google-sheets",
+  "manual/tray",
+  "manual/wbuy",
+  "manual/iset",
+  "manual/magazord",
+];
 
 function categoryFromRelativePath(relativePath: string): DocCategory {
   const segments = relativePath.split(path.sep);
@@ -143,4 +175,32 @@ export async function getDoc(slug: string[] | undefined) {
 export function docHref(slug: string[]) {
   if (slug.length === 0) return "/faq";
   return `/faq/${slug.join("/")}`;
+}
+
+export async function listConnectorDocOptions(): Promise<ConnectorDocOption[]> {
+  const entries = await collectMarkdownFiles();
+  const connectors = entries
+    .filter((entry) => entry.category === "oauth" || entry.category === "manual")
+    .map((entry) => {
+      const key = entry.slug.join("/");
+      return {
+        label: CONNECTOR_LABELS[key] ?? entry.title,
+        href: docHref(entry.slug),
+        type: entry.category === "oauth" ? ("OAuth" as const) : ("Manual" as const),
+        order: CONNECTOR_ORDER.indexOf(key),
+      };
+    });
+
+  return connectors
+    .sort((a, b) => {
+      const orderA = a.order === -1 ? Number.MAX_SAFE_INTEGER : a.order;
+      const orderB = b.order === -1 ? Number.MAX_SAFE_INTEGER : b.order;
+      if (orderA !== orderB) return orderA - orderB;
+      return a.label.localeCompare(b.label, "pt-BR");
+    })
+    .map((option) => ({
+      label: option.label,
+      href: option.href,
+      type: option.type,
+    }));
 }

@@ -1,8 +1,9 @@
 import Link from "next/link";
 
 import { W3Logo } from "@/components/brand/w3-logo";
+import { FaqConnectorMenu } from "@/components/docs/faq-connector-menu";
 import { Button } from "@/components/ui/button";
-import { docHref, listDocs } from "@/lib/docs/loader";
+import { docHref, listConnectorDocOptions, listDocs } from "@/lib/docs/loader";
 
 export const metadata = {
   title: "FAQ & Documentação — W3ADS",
@@ -15,15 +16,16 @@ export default async function FaqLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const groups = await listDocs();
+  const [groups, connectorOptions] = await Promise.all([
+    listDocs(),
+    listConnectorDocOptions(),
+  ]);
 
   return (
     <div className="min-h-screen bg-[var(--bg-base)]">
       <header className="sticky top-0 z-20 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)]/95 backdrop-blur">
         <div className="mx-auto flex h-[64px] max-w-6xl items-center justify-between px-5">
-          <Link href="/faq" aria-label="Início do FAQ">
-            <W3Logo />
-          </Link>
+          <W3Logo />
           <Button asChild size="sm" variant="secondary">
             <Link href="/login">Acessar o app</Link>
           </Button>
@@ -61,7 +63,10 @@ export default async function FaqLayout({
           </nav>
         </aside>
 
-        <main className="min-w-0">{children}</main>
+        <main className="min-w-0">
+          <FaqConnectorMenu options={connectorOptions} />
+          {children}
+        </main>
       </div>
     </div>
   );

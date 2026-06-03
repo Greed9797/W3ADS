@@ -34,18 +34,26 @@ npm run build
 npm run e2e
 ```
 
-## Ambientes externos
+## Producao publica
 
-A Fase 1 deixa Supabase como contrato local, sem aplicar nada remotamente. Para concluir conexao real de Supabase e Vercel, configure:
+O dominio inicial de producao e `https://w3ads.vercel.app`. O passo a passo operacional fica em
+`docs/production-runbook.md`.
 
-- `DATABASE_URL` e `DIRECT_URL` de um PostgreSQL/Supabase.
-- `NEXTAUTH_SECRET` ou `AUTH_SECRET` com `openssl rand -base64 32`.
-- Variaveis Auth.js e OAuth.
-- `RESEND_API_KEY` quando quiser envio real de reset de senha e convites.
-- Variaveis de providers Meta, Google Ads e Shopify nas fases correspondentes.
-- Projeto Vercel apontando para este repositorio.
+Para producao real, configure no Vercel apenas envs de infraestrutura:
 
-Enquanto Supabase nao existir, as telas publicas (`/login`, `/sign-up`, `/forgot-password`) renderizam normalmente. A criacao real de conta e o dashboard autenticado precisam do banco configurado.
+- Banco/Supabase: `DATABASE_URL`, `DIRECT_URL`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`.
+  No Supabase compartilhado `tuzoczzohirqddrcpbtc`, use `?schema=w3ads` nas URLs do Postgres.
+- Auth: `AUTH_SECRET` ou `NEXTAUTH_SECRET`, `NEXTAUTH_URL=https://w3ads.vercel.app`, `AUTH_TRUST_HOST=true`, `AUTH_DISABLED=false`.
+- Login Google: `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`.
+- Email: `RESEND_API_KEY`, `RESEND_FROM_EMAIL`.
+- Redis/jobs: `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`, `INNGEST_EVENT_KEY`, `INNGEST_SIGNING_KEY`.
+- Observabilidade: `SENTRY_DSN`, `NEXT_PUBLIC_SENTRY_DSN`, `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, `SENTRY_PROJECT`, `POSTHOG_API_KEY`, `NEXT_PUBLIC_POSTHOG_KEY`.
+
+Credenciais de conectores nao voltam para `.env`: Meta, Google Ads, Shopify, Nuvemshop, Tray, WBuy, iSet e Magazord sao configurados em `/connectors/settings` por um `W3_ADMIN` e gravados no Supabase Vault/KMS.
+
+O build falha de proposito em production se `AUTH_DISABLED=true` ou se as envs criticas de auth/banco estiverem ausentes.
+
+Antes do primeiro deploy com banco real, rode `supabase/bootstrap/w3ads-shared-project.sql` no projeto Supabase compartilhado. Isso cria o schema isolado `w3ads`, ajusta grants/search path sem tocar nos schemas `pulmao` e `saas`, habilita Vault e recarrega o cache do PostgREST.
 
 ## Auth e tenancy
 
@@ -53,56 +61,64 @@ Enquanto Supabase nao existir, as telas publicas (`/login`, `/sign-up`, `/forgot
 - Google OAuth fica configurado via Auth.js + Prisma Adapter quando `GOOGLE_OAUTH_CLIENT_ID` e `GOOGLE_OAUTH_CLIENT_SECRET` existirem.
 - Signup cria `User`, `Workspace`, `Membership(OWNER)` e dashboard padrao em transacao.
 - Convites de workspace ficam em `WorkspaceInvite`; envio por email e no-op local enquanto `RESEND_API_KEY` nao estiver definida.
-- RLS Supabase esta versionado em `prisma/migrations/20260516221000_auth_multi_tenant/migration.sql` como placeholder para um futuro JWT compativel com `auth.uid()`.
+- RLS Supabase esta versionado nas migrations, com reforcos em `prisma/migrations/20260519121000_real_rbac_policies/migration.sql` para roles internos, `CLIENT` read-only e limite de um workspace por cliente. Em runtime, as rotas server-side tambem filtram explicitamente por `workspaceId`.
 
 ## Conector Meta Ads
 
 A Fase 2 ja tem a base local do OAuth da Meta sem exigir Supabase real:
 
 - `/api/connectors/meta/connect` gera `state` CSRF em cookie httpOnly e redireciona para o Facebook.
-- `/api/connectors/meta/callback` valida `state` assinado e amarrado ao usuario/workspace, protege modo demo e, com auth/banco ativos, salva `ConnectorAccount` com token AES-256-GCM.
+- `/api/connectors/meta/callback` valida `state` assinado e amarrado ao usuario/workspace e cria uma sessao temporaria de selecao para salvar apenas as contas de anuncio escolhidas.
 - `src/lib/connectors/retry.ts` aplica retry exponencial com jitter e respeita `Retry-After`.
 - `src/lib/connectors/meta/client.ts` troca `code` por token via POST, troca para long-lived token, lista ad accounts com `Authorization` header e pausa quando o header de uso da Meta passa do limite definido.
 - Quando `INNGEST_EVENT_KEY` estiver configurada, cada conta conectada dispara backfill automatico de 90 dias.
 
-Para testar conexao real depois de criar Supabase/Auth, configure:
+Para testar conexao real depois de criar Supabase/Auth:
 
-```bash
-AUTH_DISABLED="false"
-TOKEN_ENCRYPTION_KEY="$(openssl rand -base64 32)"
-META_API_VERSION="v25.0"
-META_APP_ID="..."
-META_APP_SECRET="..."
-META_REDIRECT_URI="http://localhost:3000/api/connectors/meta/callback"
-```
+1. Aplique as migrations no Supabase/Postgres.
+2. Ative a extensao Supabase Vault/KMS no projeto.
+3. Acesse `/platform/bootstrap` para promover o primeiro usuario a `W3_ADMIN`.
+4. Acesse `/connectors/settings` e cadastre as credenciais dos provedores no app.
 
-Com `AUTH_DISABLED="true"`, a tela `/connectors` continua funcionando para demo e mostra quando as variaveis da Meta ainda estao pendentes.
+O app nao desliga auth em producao. Para QA local, rode `npm run db:seed` e use `DEV_AUTH_BYPASS_EMAIL` apontando para um usuario seed; `AUTH_DISABLED` deve permanecer vazio ou `false`.
 
 ## Conectores Google Ads e Shopify
 
 As bases das Fases 3 e 4 tambem estao preparadas sem chamar providers em ambiente sem credenciais:
 
-- Google Ads usa OAuth offline, `customers:listAccessibleCustomers`, GAQL via REST, refresh automatico do access token e job Inngest `connector.google_ads.backfill`.
+- Google Ads usa OAuth offline, `customers:listAccessibleCustomers`, expansao de hierarquia via `customer_client`, selecao apenas de contas anunciante, GAQL via REST, refresh automatico do access token e job Inngest `connector.google_ads.backfill`.
 - Shopify usa OAuth com validacao HMAC, GraphQL Orders, registro dos webhooks `orders/create`, `orders/updated`, `orders/paid` e `app/uninstalled`, webhook assinado em `/api/webhooks/shopify` e job `connector.shopify.backfill`.
-- Tokens de acesso ficam criptografados com `TOKEN_ENCRYPTION_KEY`; refresh token do Google fica salvo como envelope criptografado.
-- O state de todos os conectores e assinado com `AUTH_SECRET`, `NEXTAUTH_SECRET` ou `TOKEN_ENCRYPTION_KEY`; em producao configure pelo menos um segredo forte.
+- Nuvemshop usa OAuth oficial, token sem expiracao e `user_id` como loja; pedidos entram no job generico `connector.ecommerce.backfill`.
+- iSet, Tray, WBuy e Magazord usam conexao manual REST: URL da API, caminho de pedidos e credenciais sao validados antes de salvar.
+- Tokens OAuth, API keys, usuarios/senhas, developer tokens e webhook secrets ficam no Supabase Vault/KMS.
+- `ConnectorProviderConfig` guarda apenas campos publicos do app/API por workspace.
+- `ConnectorAccount` usa `credentialSecretId` e `refreshCredentialSecretId` para novas conexoes; os campos AES antigos continuam como fallback legado.
+- O state de todos os conectores e assinado com `AUTH_SECRET` ou `NEXTAUTH_SECRET`; em producao configure pelo menos um segredo forte.
+- Nao existem mais envs obrigatorias `META_*`, `GOOGLE_ADS_*`, `SHOPIFY_*` ou `NUVEMSHOP_*`.
 
-Variaveis adicionais:
+## Jobs e operacao
+
+- `sync-active-connectors-daily` roda no Inngest as `09:00 UTC` (`06:00 BRT`).
+- Ads fazem incremental dos ultimos 7 dias.
+- E-commerces fazem incremental dos ultimos 3 dias.
+- `SyncJob` registra `workspaceId`, `provider`, `syncType`, `cursor`, status, contadores e erro.
+- `/api/health` valida modo de auth, banco, Vault, Inngest e Redis sem expor segredos.
+- Rate limit via Upstash protege auth, callbacks de conector, webhooks e conectores manuais.
+
+## CI e gates
+
+O workflow `.github/workflows/ci.yml` roda em PR/push:
 
 ```bash
-GOOGLE_ADS_API_VERSION="v24"
-GOOGLE_ADS_CLIENT_ID="..."
-GOOGLE_ADS_CLIENT_SECRET="..."
-GOOGLE_ADS_DEVELOPER_TOKEN="..."
-GOOGLE_ADS_LOGIN_CUSTOMER_ID="" # opcional para MCC
-GOOGLE_ADS_REDIRECT_URI="http://localhost:3000/api/connectors/google-ads/callback"
-
-SHOPIFY_API_VERSION="2026-04"
-SHOPIFY_APP_API_KEY="..."
-SHOPIFY_APP_API_SECRET="..."
-SHOPIFY_REDIRECT_URI="http://localhost:3000/api/connectors/shopify/callback"
-SHOPIFY_SCOPES="read_orders,read_products,read_customers,read_analytics"
+npm run typecheck
+npm run lint
+npm test
+npm run build
+npm run e2e
+npm audit --audit-level=high
 ```
+
+O deploy para production deve acontecer somente depois desses gates e das envs reais no Vercel.
 
 ## Dashboard core
 
@@ -116,7 +132,7 @@ A rota `/dashboard` usa `src/lib/metrics/aggregator.ts` para calcular:
 - Top 10 campanhas por ROAS
 - Funil de impressoes, cliques, sessoes e pedidos
 
-Com `AUTH_DISABLED="true"`, o dashboard usa dados demo deterministas para permitir QA visual sem Supabase. Com auth/banco ativos, os mesmos componentes passam a ler `EcommerceOrder` e `DailyMetric`.
+O dashboard nao inventa dados para preencher visual. Sem `EcommerceOrder`, `EcommerceOrderItem` e `DailyMetric` reais no periodo, a UI exibe empty states claros.
 
 ## Dashboards customizaveis
 
@@ -125,8 +141,7 @@ A rota `/dashboards` lista paineis do workspace e `/dashboards/new` cria dashboa
 - 12 widgets disponiveis: KPIs, grafico receita x investimento, tabela de campanhas, funil e distribuicao de fonte.
 - `/dashboards/[id]` permite adicionar, remover e ordenar widgets por botoes de subir/descer.
 - OWNER e ADMIN editam; VIEWER apenas consulta.
-- Com `AUTH_DISABLED="true"`, dashboards criados sao persistidos em cookie local para QA sem banco.
-- Com auth/banco ativos, a persistencia usa `Dashboard.layout` e `Dashboard.widgets` no Prisma.
+- Dashboards customizados persistem em `Dashboard.layout` e `Dashboard.widgets` no Prisma.
 
 ## LGPD e beta polish
 
@@ -134,14 +149,15 @@ A rota `/dashboards` lista paineis do workspace e `/dashboards/new` cria dashboa
 - `/profile/data-export` gera JSON baixavel e registra solicitacao em audit log quando o banco esta ativo.
 - `/profile/delete-account` exige confirmacao exata por email; em banco real marca `User.deletedAt` e encerra sessoes.
 - Cookie banner e onboarding de 3 passos rodam no client sem dependencia externa.
-- `/api/health` retorna status basico do app.
-- `/feedback` coleta problemas, duvidas e sugestoes do beta; em demo salva apenas cookie,
+- `/api/health` retorna health granular de auth, DB, Vault, Inngest e Redis.
+- `/feedback` coleta problemas, duvidas e sugestoes do beta com usuario autenticado,
   com banco ativo persiste em `BetaFeedback` e grava audit log.
 - `NEXT_PUBLIC_POSTHOG_KEY` habilita envio opcional para a Capture API do PostHog.
-- Erros capturados no client sao enviados para `/api/observability/client-error`; em demo a rota
+- `SENTRY_DSN` e `NEXT_PUBLIC_SENTRY_DSN` ativam o SDK oficial `@sentry/nextjs` para front, back e edge.
+- Erros capturados no client sao enviados para `/api/observability/client-error`; quando o banco
   responde sem tocar no banco, com Supabase ativo grava `AuditLog`.
 - `NEXT_PUBLIC_POSTHOG_KEY` habilita dispatch local de eventos seguros, sem PII.
 
 ## Design system W3
 
-Os tokens centrais ficam em `src/app/globals.css`. Componentes React devem consumir CSS variables, evitando hexadecimais hardcoded fora de assets como `public/logo-w3.svg`.
+Os tokens centrais ficam em `src/app/globals.css`. Componentes React devem consumir CSS variables, evitando hexadecimais fixos fora de assets como `public/logo-w3.svg`.

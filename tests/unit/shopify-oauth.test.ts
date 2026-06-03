@@ -3,28 +3,19 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildShopifyOAuthUrl,
-  getShopifyConfigStatus,
   normalizeShopDomain,
   verifyShopifyQueryHmac,
 } from "@/lib/connectors/shopify/oauth";
 
-const shopifyEnv = {
-  SHOPIFY_API_VERSION: "2026-04",
-  SHOPIFY_APP_API_KEY: "shopify-key",
-  SHOPIFY_APP_API_SECRET: "shopify-secret",
-  SHOPIFY_REDIRECT_URI: "http://localhost:3000/api/connectors/shopify/callback",
-  SHOPIFY_SCOPES: "read_orders,read_products",
+const shopifyConfig = {
+  apiVersion: "2026-04",
+  apiKey: "shopify-key",
+  apiSecret: "shopify-secret",
+  redirectUri: "http://localhost:3000/api/connectors/shopify/callback",
+  scopes: "read_orders,read_products",
 };
 
 describe("Shopify OAuth helpers", () => {
-  it("reports missing env vars without throwing", () => {
-    expect(getShopifyConfigStatus({}).missing).toEqual([
-      "SHOPIFY_APP_API_KEY",
-      "SHOPIFY_APP_API_SECRET",
-      "SHOPIFY_REDIRECT_URI",
-    ]);
-  });
-
   it("normalizes shop domains", () => {
     expect(normalizeShopDomain("https://Loja-Teste.myshopify.com/admin")).toBe(
       "loja-teste.myshopify.com",
@@ -34,16 +25,17 @@ describe("Shopify OAuth helpers", () => {
   });
 
   it("builds the shop authorization URL", () => {
-    const url = buildShopifyOAuthUrl(
-      { shop: "loja-teste", state: "csrf-state" },
-      shopifyEnv,
-    );
+    const url = buildShopifyOAuthUrl({
+      shop: "loja-teste",
+      state: "csrf-state",
+      config: shopifyConfig,
+    });
 
     expect(url.origin).toBe("https://loja-teste.myshopify.com");
     expect(url.pathname).toBe("/admin/oauth/authorize");
     expect(url.searchParams.get("client_id")).toBe("shopify-key");
     expect(url.searchParams.get("scope")).toBe("read_orders,read_products");
-    expect(url.searchParams.get("redirect_uri")).toBe(shopifyEnv.SHOPIFY_REDIRECT_URI);
+    expect(url.searchParams.get("redirect_uri")).toBe(shopifyConfig.redirectUri);
     expect(url.searchParams.get("state")).toBe("csrf-state");
   });
 

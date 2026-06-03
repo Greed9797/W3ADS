@@ -1,0 +1,1 @@
+{"nodes": [{"id": "coverage_auth_schemas", "label": "Coverage Report: lib/auth/schemas.ts (100% all metrics, 10/10 stmts, 3/3 branches)", "file_type": "html", "source_file": "coverage/lcov-report/lib/auth/schemas.ts.html", "source_location": null, "source_url": null, "captured_at": "2026-05-16T22:20:00.809Z", "author": null, "contributor": null}], "edges": [], "hyperedges": []}

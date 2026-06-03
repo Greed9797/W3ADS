@@ -1,18 +1,20 @@
-import { ConnectorProvider, ConnectorStatus } from "@prisma/client";
+import { ConnectorProvider, ConnectorStatus, Prisma } from "@prisma/client";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { logAudit } from "@/lib/audit/log";
+import { ecommerceDailyDedupeHash } from "@/lib/connectors/ecommerce-sync";
+import {
+  buildShopifyConfigFromProviderConfig,
+  getActiveProviderConfig,
+} from "@/lib/connectors/provider-config";
 import { normalizeShopifyWebhookOrder } from "@/lib/connectors/shopify/client";
 import {
-  getShopifyConfigStatus,
   normalizeShopDomain,
   verifyShopifyWebhookHmac,
 } from "@/lib/connectors/shopify/oauth";
-import {
-  dailyDedupeHash,
-  mapShopifyOrderToEcommerceOrder,
-} from "@/lib/connectors/shopify/sync";
+import { mapShopifyOrderToEcommerceOrder } from "@/lib/connectors/shopify/sync";
 import { prisma } from "@/lib/db/prisma";
+import { isApprovedOrderStatus } from "@/lib/metrics/order-status";
 
 export const runtime = "nodejs";
 
@@ -34,36 +36,44 @@ async function refreshShopifyDailyMetric(input: {
   placedAt: Date;
 }) {
   const bounds = dayBounds(input.placedAt);
-  const aggregate = await prisma.ecommerceOrder.aggregate({
+
+  // Re-aggregate only orders with approved financial status. Reading the rows
+  // is mandatory (status enum lives on the row, not on a column we could
+  // aggregate directly), but we keep the projection narrow.
+  const dayOrders = await prisma.ecommerceOrder.findMany({
     where: {
       connectorAccountId: input.connectorAccountId,
-      placedAt: {
-        gte: bounds.start,
-        lte: bounds.end,
-      },
+      placedAt: { gte: bounds.start, lte: bounds.end },
     },
-    _sum: { orderTotal: true },
-    _count: { _all: true },
+    select: { orderTotal: true, status: true },
   });
-  const dedupeHash = dailyDedupeHash({
+
+  const approved = dayOrders.filter((row) => isApprovedOrderStatus(row.status));
+  const revenue = approved
+    .reduce(
+      (sum, row) => sum.plus(new Prisma.Decimal(row.orderTotal ?? 0)),
+      new Prisma.Decimal(0),
+    )
+    .toFixed(2);
+  const orders = BigInt(approved.length);
+
+  const dedupeHash = ecommerceDailyDedupeHash({
     workspaceId: input.workspaceId,
     connectorAccountId: input.connectorAccountId,
+    provider: ConnectorProvider.SHOPIFY,
     date: bounds.day,
   });
 
   await prisma.dailyMetric.upsert({
     where: { dedupeHash },
-    update: {
-      revenue: aggregate._sum.orderTotal?.toString() ?? "0",
-      orders: BigInt(aggregate._count._all),
-    },
+    update: { revenue, orders },
     create: {
       workspaceId: input.workspaceId,
       connectorAccountId: input.connectorAccountId,
       date: bounds.start,
       source: ConnectorProvider.SHOPIFY,
-      revenue: aggregate._sum.orderTotal?.toString() ?? "0",
-      orders: BigInt(aggregate._count._all),
+      revenue,
+      orders,
       dedupeHash,
     },
   });
@@ -74,19 +84,67 @@ export async function POST(request: NextRequest) {
   const hmac = request.headers.get("x-shopify-hmac-sha256");
   const topic = request.headers.get("x-shopify-topic");
   const shopHeader = request.headers.get("x-shopify-shop-domain");
-  const status = getShopifyConfigStatus();
 
-  if (!status.configured || !process.env.SHOPIFY_APP_API_SECRET) {
-    return NextResponse.json({ error: "Shopify webhook secret is not configured" }, { status: 503 });
+  if (!shopHeader) {
+    return NextResponse.json(
+      { error: "Missing Shopify shop domain" },
+      { status: 400 },
+    );
+  }
+  const shop = normalizeShopDomain(shopHeader);
+  const candidateConnectors = await prisma.connectorAccount.findMany({
+    where: {
+      provider: ConnectorProvider.SHOPIFY,
+      externalAccountId: shop,
+      status: ConnectorStatus.ACTIVE,
+    },
+  });
+
+  if (candidateConnectors.length === 0) {
+    return NextResponse.json(
+      { error: "Shopify connector is not configured" },
+      { status: 503 },
+    );
   }
 
-  if (!verifyShopifyWebhookHmac(rawBody, hmac, process.env.SHOPIFY_APP_API_SECRET)) {
-    return NextResponse.json({ error: "Invalid Shopify webhook signature" }, { status: 401 });
+  const verifiedConnectors = [];
+  for (const connector of candidateConnectors) {
+    const providerConfig = await getActiveProviderConfig({
+      workspaceId: connector.workspaceId,
+      provider: ConnectorProvider.SHOPIFY,
+    });
+    if (!providerConfig) {
+      continue;
+    }
+
+    const config = await buildShopifyConfigFromProviderConfig(providerConfig);
+    if (verifyShopifyWebhookHmac(rawBody, hmac, config.apiSecret)) {
+      verifiedConnectors.push(connector);
+    }
   }
 
-  if (topic === "app/uninstalled" && shopHeader) {
-    const shop = normalizeShopDomain(shopHeader);
+  if (verifiedConnectors.length === 0) {
+    return NextResponse.json(
+      { error: "Invalid Shopify webhook signature" },
+      { status: 401 },
+    );
+  }
 
+  // Two workspaces sharing the same `apiSecret` for the same shop would let
+  // one workspace's webhook leak into the other. Treat that as a config error
+  // and refuse to fan out — operator must rotate one of the secrets.
+  if (verifiedConnectors.length > 1) {
+     
+    console.error(
+      `[shopify-webhook] ambiguous shop=${shop} matched ${verifiedConnectors.length} connectors; refusing fan-out`,
+    );
+    return NextResponse.json(
+      { error: "Ambiguous Shopify connector — secret collision" },
+      { status: 409 },
+    );
+  }
+
+  if (topic === "app/uninstalled") {
     await prisma.connectorAccount.updateMany({
       where: {
         provider: ConnectorProvider.SHOPIFY,
@@ -109,20 +167,12 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  if (topic && orderTopics.has(topic) && shopHeader) {
-    const shop = normalizeShopDomain(shopHeader);
+  if (topic && orderTopics.has(topic)) {
     const order = normalizeShopifyWebhookOrder(
       JSON.parse(rawBody) as Parameters<typeof normalizeShopifyWebhookOrder>[0],
     );
-    const connectors = await prisma.connectorAccount.findMany({
-      where: {
-        provider: ConnectorProvider.SHOPIFY,
-        externalAccountId: shop,
-        status: ConnectorStatus.ACTIVE,
-      },
-    });
 
-    for (const connector of connectors) {
+    for (const connector of verifiedConnectors) {
       const payload = mapShopifyOrderToEcommerceOrder({
         workspaceId: connector.workspaceId,
         connectorAccountId: connector.id,

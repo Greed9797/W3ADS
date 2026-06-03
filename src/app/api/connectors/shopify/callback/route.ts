@@ -2,24 +2,33 @@ import { ConnectorProvider, ConnectorStatus } from "@prisma/client";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { logAudit } from "@/lib/audit/log";
-import { getCurrentUserContext } from "@/lib/auth/current";
+import {
+  getCurrentUserContext,
+  resolveConnectorWorkspaceAccess,
+} from "@/lib/auth/current";
+import { canOperateWorkspaceConnectors } from "@/lib/auth/platform-permissions";
 import { buildConnectorBackfillEvent } from "@/lib/connectors/backfill";
+import { vaultCredentialFields } from "@/lib/connectors/credentials";
 import { verifyConnectorOAuthState } from "@/lib/connectors/oauth-state";
+import {
+  buildShopifyConfigFromProviderConfig,
+  getActiveProviderConfig,
+} from "@/lib/connectors/provider-config";
 import { ShopifyClient } from "@/lib/connectors/shopify/client";
 import {
-  getShopifyConfig,
-  getShopifyConfigStatus,
   normalizeShopDomain,
   verifyShopifyQueryHmac,
 } from "@/lib/connectors/shopify/oauth";
 import { SHOPIFY_OAUTH_STATE_COOKIE } from "@/lib/connectors/shopify/state";
-import { encryptToken } from "@/lib/crypto/token-vault";
 import { prisma } from "@/lib/db/prisma";
 import { inngest } from "@/lib/jobs/inngest-client";
 
 export const runtime = "nodejs";
 
-function redirectToConnectors(request: NextRequest, params: Record<string, string>) {
+function redirectToConnectors(
+  request: NextRequest,
+  params: Record<string, string>,
+) {
   const url = new URL("/connectors", request.nextUrl.origin);
 
   for (const [key, value] of Object.entries(params)) {
@@ -39,56 +48,95 @@ function redirectToConnectors(request: NextRequest, params: Record<string, strin
 }
 
 export async function GET(request: NextRequest) {
-  const status = getShopifyConfigStatus();
-  if (!status.configured) {
-    return redirectToConnectors(request, { provider: "shopify", error: "missing-shopify-env" });
-  }
-
-  const config = getShopifyConfig();
-  if (!verifyShopifyQueryHmac(request.nextUrl.searchParams, config.apiSecret)) {
-    return redirectToConnectors(request, { provider: "shopify", error: "invalid-hmac" });
-  }
-
   const state = request.nextUrl.searchParams.get("state");
-  const storedState = request.cookies.get(SHOPIFY_OAUTH_STATE_COOKIE)?.value;
+  const debugKeys = Array.from(request.nextUrl.searchParams.keys())
+    .filter((key) => !["code", "state", "hmac"].includes(key))
+    .concat(state ? ["state-present"] : ["state-missing"])
+    .join(",");
 
-  if (!state || !storedState || state !== storedState) {
-    return redirectToConnectors(request, { provider: "shopify", error: "invalid-state" });
+  if (!state) {
+    return redirectToConnectors(request, {
+      provider: "shopify",
+      error: "invalid-state-no-state-param",
+      debug: debugKeys,
+    });
   }
 
   const code = request.nextUrl.searchParams.get("code");
   const shopParam = request.nextUrl.searchParams.get("shop");
 
   if (!code || !shopParam) {
-    return redirectToConnectors(request, { provider: "shopify", error: "missing-code" });
+    return redirectToConnectors(request, {
+      provider: "shopify",
+      error: "missing-code",
+    });
   }
 
   const shop = normalizeShopDomain(shopParam);
   const context = await getCurrentUserContext();
+
+  // Verify the signed state FIRST — it is self-contained (HMAC over its own
+  // payload) and tells us the authoritative workspace, independent of the
+  // request cookie (dropped on the cross-site OAuth return).
   const verifiedState = verifyConnectorOAuthState(state, {
     expectedProvider: "SHOPIFY",
     expectedUserId: context.user.id,
-    expectedWorkspaceId: context.currentWorkspace.id,
     expectedShop: shop,
+    // workspaceId read from signed payload below.
   });
 
   if (!verifiedState.valid) {
-    return redirectToConnectors(request, { provider: "shopify", error: "invalid-state" });
+    return redirectToConnectors(request, {
+      provider: "shopify",
+      error: `invalid-state-${verifiedState.reason}`,
+    });
   }
 
-  if (context.isDemoMode) {
-    return redirectToConnectors(request, { provider: "shopify", connected: "demo" });
+  const workspaceId = verifiedState.payload.workspaceId;
+  const access = await resolveConnectorWorkspaceAccess({
+    userId: context.user.id,
+    workspaceId,
+  });
+  if (!access || !canOperateWorkspaceConnectors(access.user, access.role)) {
+    return redirectToConnectors(request, {
+      provider: "shopify",
+      error: "forbidden",
+    });
+  }
+
+  const providerConfig = await getActiveProviderConfig({
+    workspaceId,
+    provider: ConnectorProvider.SHOPIFY,
+  });
+  if (!providerConfig) {
+    return redirectToConnectors(request, {
+      provider: "shopify",
+      error: "oauth-providerconfig-missing",
+    });
+  }
+
+  const config = await buildShopifyConfigFromProviderConfig(providerConfig);
+  if (!verifyShopifyQueryHmac(request.nextUrl.searchParams, config.apiSecret)) {
+    return redirectToConnectors(request, {
+      provider: "shopify",
+      error: "invalid-hmac",
+    });
   }
 
   try {
-    const client = new ShopifyClient();
+    const client = new ShopifyClient({ config });
     const token = await client.exchangeCodeForAccessToken({ shop, code });
-    const encryptedToken = encryptToken(token.access_token);
+    const credentialFields = await vaultCredentialFields({
+      workspaceId,
+      provider: ConnectorProvider.SHOPIFY,
+      externalAccountId: shop,
+      credentials: { accessToken: token.access_token },
+    });
 
     const connectorAccount = await prisma.connectorAccount.upsert({
       where: {
         workspaceId_provider_externalAccountId: {
-          workspaceId: context.currentWorkspace.id,
+          workspaceId,
           provider: ConnectorProvider.SHOPIFY,
           externalAccountId: shop,
         },
@@ -96,12 +144,7 @@ export async function GET(request: NextRequest) {
       update: {
         accountName: shop,
         status: ConnectorStatus.ACTIVE,
-        accessTokenCiphertext: encryptedToken.ciphertext,
-        refreshTokenCiphertext: null,
-        tokenIv: encryptedToken.iv,
-        tokenAuthTag: encryptedToken.authTag,
-        tokenKeyVersion: encryptedToken.keyVersion,
-        tokenExpiresAt: null,
+        ...credentialFields,
         metadata: {
           scope: token.scope,
           apiVersion: config.apiVersion,
@@ -109,17 +152,12 @@ export async function GET(request: NextRequest) {
         lastSyncError: null,
       },
       create: {
-        workspaceId: context.currentWorkspace.id,
+        workspaceId,
         provider: ConnectorProvider.SHOPIFY,
         externalAccountId: shop,
         accountName: shop,
         status: ConnectorStatus.ACTIVE,
-        accessTokenCiphertext: encryptedToken.ciphertext,
-        refreshTokenCiphertext: null,
-        tokenIv: encryptedToken.iv,
-        tokenAuthTag: encryptedToken.authTag,
-        tokenKeyVersion: encryptedToken.keyVersion,
-        tokenExpiresAt: null,
+        ...credentialFields,
         metadata: {
           scope: token.scope,
           apiVersion: config.apiVersion,
@@ -137,6 +175,7 @@ export async function GET(request: NextRequest) {
         buildConnectorBackfillEvent({
           provider: ConnectorProvider.SHOPIFY,
           connectorAccountId: connectorAccount.id,
+          scopes: token.scope ?? config.scopes,
         }),
       );
     }
@@ -144,7 +183,7 @@ export async function GET(request: NextRequest) {
     await logAudit({
       action: "connector.shopify.connect",
       userId: context.user.id,
-      workspaceId: context.currentWorkspace.id,
+      workspaceId,
       resourceType: "connector_account",
       resourceId: shop,
       metadata: {
@@ -153,13 +192,21 @@ export async function GET(request: NextRequest) {
       },
     });
 
-    return redirectToConnectors(request, { provider: "shopify", connected: "shopify" });
+    return redirectToConnectors(request, {
+      provider: "shopify",
+      connected: "shopify",
+    });
   } catch (caught) {
     const message = caught instanceof Error ? caught.message : "unknown";
-    const errorCode = message.includes("TOKEN_ENCRYPTION_KEY")
-      ? "missing-token-key"
-      : "shopify-api";
+    const isVaultMissing =
+      message.includes("Secret not found") ||
+      message.includes("Vault credential unavailable") ||
+      message.includes("Credentials missing");
+    const errorCode = isVaultMissing ? "oauth-vault-missing" : "oauth-failed";
 
-    return redirectToConnectors(request, { provider: "shopify", error: errorCode });
+    return redirectToConnectors(request, {
+      provider: "shopify",
+      error: errorCode,
+    });
   }
 }

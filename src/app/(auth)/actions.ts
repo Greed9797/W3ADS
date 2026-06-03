@@ -6,6 +6,10 @@ import { redirect } from "next/navigation";
 
 import { signIn } from "@/lib/auth/auth";
 import {
+  getAuthSessionCookieName,
+  getStrictCookieOptions,
+} from "@/lib/auth/cookies";
+import {
   forgotPasswordSchema,
   loginSchema,
   resetPasswordSchema,
@@ -14,7 +18,6 @@ import {
 import {
   AuthServiceError,
   createDatabaseSessionForUser,
-  getAuthSessionCookieName,
   getUserByCredentials,
   registerUserWithWorkspace,
   requestPasswordReset,
@@ -46,11 +49,7 @@ export async function loginAction(formData: FormData) {
   const cookieStore = await cookies();
 
   cookieStore.set(getAuthSessionCookieName(), session.sessionToken, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    expires: session.expires,
+    ...getStrictCookieOptions({ expires: session.expires }),
   });
 
   redirect("/dashboard");
@@ -65,17 +64,25 @@ export async function googleSignInAction() {
 }
 
 export async function signUpAction(formData: FormData) {
+  const inviteToken = getString(formData, "inviteToken") || undefined;
   const parsed = signUpSchema.safeParse({
     name: getString(formData, "name"),
     email: getString(formData, "email"),
     password: getString(formData, "password"),
     workspaceName: getString(formData, "workspaceName"),
     acceptedTerms: formData.get("acceptedTerms"),
-    inviteToken: getString(formData, "inviteToken") || undefined,
+    inviteToken,
   });
 
   if (!parsed.success) {
     redirect("/sign-up?error=invalid");
+  }
+
+  if (
+    !parsed.data.inviteToken &&
+    (process.env.NODE_ENV === "production" || process.env.VERCEL_ENV === "production")
+  ) {
+    redirect("/login?error=signup-closed");
   }
 
   try {
@@ -90,11 +97,7 @@ export async function signUpAction(formData: FormData) {
     const cookieStore = await cookies();
 
     cookieStore.set(getAuthSessionCookieName(), session.sessionToken, {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      path: "/",
-      expires: session.expires,
+      ...getStrictCookieOptions({ expires: session.expires }),
     });
 
     redirect("/dashboard");

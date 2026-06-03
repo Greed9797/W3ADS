@@ -2,13 +2,23 @@ import { ConnectorProvider } from "@prisma/client";
 import { Cable, CircleAlert, Settings } from "lucide-react";
 import type { ReactNode } from "react";
 
+import { MetaSystemUserDialog } from "@/components/connectors/meta-system-user-dialog";
+import { ShopifyConnectDialog } from "@/components/connectors/shopify-connect-dialog";
+import { SyncNowButton } from "@/components/connectors/sync-now-button";
 import { EventTracker } from "@/components/observability/event-tracker";
+import { ProviderLogo } from "@/components/providers/provider-logo";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getCurrentUserContext } from "@/lib/auth/current";
-import { getGoogleAdsConfigStatus } from "@/lib/connectors/google-ads/oauth";
-import { getMetaConfigStatus } from "@/lib/connectors/meta/oauth";
-import { getShopifyConfigStatus } from "@/lib/connectors/shopify/oauth";
+import {
+  canManageProviderConfigs,
+  canOperateWorkspaceConnectors,
+} from "@/lib/auth/platform-permissions";
+import { listPublicProviderConfigs } from "@/lib/connectors/provider-config";
+import {
+  getConnectorDefinition,
+  manualCommerceProviders,
+} from "@/lib/connectors/registry";
 import { prisma } from "@/lib/db/prisma";
 import { cn } from "@/lib/utils/cn";
 
@@ -17,6 +27,7 @@ type ConnectorsPageProps = {
 };
 
 type ProviderCard = {
+  provider: ConnectorProvider;
   name: string;
   description: string;
   statusLabel: string;
@@ -37,7 +48,11 @@ function statusClass(tone: ProviderCard["statusTone"]) {
   );
 }
 
-function connectorMessage(error: string | undefined, connected: string | undefined) {
+function connectorMessage(
+  error: string | undefined,
+  connected: string | undefined,
+  debug?: string | undefined,
+) {
   if (connected === "meta") {
     return {
       tone: "success" as const,
@@ -54,6 +69,14 @@ function connectorMessage(error: string | undefined, connected: string | undefin
     };
   }
 
+  if (connected === "google-analytics") {
+    return {
+      tone: "success" as const,
+      title: "Google Analytics conectado.",
+      body: "As propriedades GA4 selecionadas foram salvas e prontas para sincronizar sessões.",
+    };
+  }
+
   if (connected === "shopify") {
     return {
       tone: "success" as const,
@@ -62,11 +85,28 @@ function connectorMessage(error: string | undefined, connected: string | undefin
     };
   }
 
-  if (connected === "demo") {
+  if (connected === "nuvemshop") {
     return {
-      tone: "info" as const,
-      title: "OAuth recebido em modo demo.",
-      body: "Como o login e o Supabase estao desativados agora, nao gravamos a conexao no banco.",
+      tone: "success" as const,
+      title: "Nuvemshop conectada.",
+      body: "A loja selecionada foi salva com credenciais criptografadas e pronta para sincronizar pedidos.",
+    };
+  }
+
+  if (
+    connected &&
+    ["iset", "tray", "wbuy", "magazord", "google_sheets"].includes(connected)
+  ) {
+    return {
+      tone: "success" as const,
+      title:
+        connected === "google_sheets"
+          ? "Planilha conectada."
+          : "Loja conectada.",
+      body:
+        connected === "google_sheets"
+          ? "A planilha foi validada em tempo real e entrara na soma de pedidos aprovados do WhatsApp."
+          : "Validamos as credenciais antes de salvar e a sincronizacao de pedidos ja pode rodar.",
     };
   }
 
@@ -75,158 +115,312 @@ function connectorMessage(error: string | undefined, connected: string | undefin
   }
 
   const messages: Record<string, string> = {
-    "invalid-state": "O retorno da Meta nao passou na validacao de seguranca. Tente conectar de novo.",
-    "missing-code": "A Meta nao retornou o codigo de autorizacao. Tente conectar novamente.",
-    "missing-env": "Configure META_APP_ID, META_APP_SECRET e META_REDIRECT_URI para iniciar o OAuth.",
-    "missing-token-key": "Configure TOKEN_ENCRYPTION_KEY antes de salvar tokens OAuth.",
-    "meta-api": "Nao conseguimos concluir a conexao com a Meta agora. Tente novamente em alguns minutos.",
+    "invalid-state":
+      "O retorno da Meta nao passou na validacao de seguranca. Tente conectar de novo.",
+    "missing-code":
+      "A Meta nao retornou o codigo de autorizacao. Tente conectar novamente.",
+    "missing-provider-config":
+      "Esse conector ainda nao foi configurado no app pela equipe W3.",
+    "meta-api":
+      "Nao conseguimos concluir a conexao com a Meta agora. Tente novamente em alguns minutos.",
     "google-ads-api":
       "Nao conseguimos concluir a conexao com o Google Ads agora. Confira o developer token e tente novamente.",
-    "invalid-hmac": "A assinatura retornada pela Shopify nao passou na validacao HMAC.",
+    "oauth-failed":
+      "OAuth retornou erro. Confira developer token, redirect URI e que a conta esta autorizada nos Test Users do Cloud Console.",
+    "oauth-vault-missing":
+      "Credenciais do provedor nao encontradas no Vault. Salve client ID/secret em /connectors/settings antes de tentar de novo.",
+    "oauth-providerconfig-missing":
+      "Provider config do Google Ads esta inativo ou nao foi salvo. Acesse /connectors/settings/google_ads e ative.",
+    "google-analytics-api":
+      "Nao conseguimos concluir a conexao com o Google Analytics agora. Confira o OAuth e tente novamente.",
+    "invalid-hmac":
+      "A assinatura retornada pela Shopify nao passou na validacao HMAC.",
     "invalid-shop": "Informe uma loja Shopify valida, como loja.myshopify.com.",
     "provider-denied": "A autorizacao foi cancelada no provedor.",
-    "missing-google-ads-env":
-      "Configure GOOGLE_ADS_CLIENT_ID, GOOGLE_ADS_CLIENT_SECRET, GOOGLE_ADS_DEVELOPER_TOKEN e GOOGLE_ADS_REDIRECT_URI.",
     "missing-shop": "Informe o dominio da loja Shopify antes de conectar.",
-    "missing-shopify-env":
-      "Configure SHOPIFY_APP_API_KEY, SHOPIFY_APP_API_SECRET e SHOPIFY_REDIRECT_URI.",
-    "shopify-api": "Nao conseguimos concluir a conexao com a Shopify agora. Tente novamente em alguns minutos.",
+    "shopify-api":
+      "Nao conseguimos concluir a conexao com a Shopify agora. Tente novamente em alguns minutos.",
+    "nuvemshop-api":
+      "Nao conseguimos concluir a conexao com a Nuvemshop agora. Tente novamente em alguns minutos.",
+    "missing-selection": "Selecione pelo menos uma conta antes de vincular.",
+    "selection-expired": "A selecao expirou. Inicie a conexao novamente.",
+    "selection-failed":
+      "Nao conseguimos salvar a selecao agora. Tente novamente.",
+    "invalid-manual-connector": "Revise os dados da loja e tente novamente.",
+    "manual-credentials":
+      "Nao conseguimos validar essas credenciais. Confira a URL, caminho de pedidos e chaves da API.",
+    forbidden:
+      "Seu papel atual permite visualizar conectores, mas nao vincular ou alterar contas.",
   };
+
+  const baseBody =
+    messages[error] ?? "Nao conseguimos concluir a conexao agora.";
+  const body = debug ? `${baseBody} (debug: ${debug})` : baseBody;
 
   return {
     tone: "warning" as const,
     title: "Conexao nao concluida.",
-    body: messages[error] ?? "Nao conseguimos concluir a conexao agora.",
+    body,
   };
 }
 
-export default async function ConnectorsPage({ searchParams }: ConnectorsPageProps) {
+export default async function ConnectorsPage({
+  searchParams,
+}: ConnectorsPageProps) {
   const context = await getCurrentUserContext();
   const params = await searchParams;
   const connectedProvider = firstParam(params.connected);
-  const message = connectorMessage(firstParam(params.error), firstParam(params.connected));
-  const metaStatus = getMetaConfigStatus();
-  const googleAdsStatus = getGoogleAdsConfigStatus();
-  const shopifyStatus = getShopifyConfigStatus();
-  const [metaAccounts, googleAdsAccounts, shopifyAccounts] = context.isDemoMode
-    ? [0, 0, 0]
-    : await Promise.all([
-        prisma.connectorAccount.count({
-          where: {
-            workspaceId: context.currentWorkspace.id,
-            provider: ConnectorProvider.META_ADS,
-          },
-        }),
-        prisma.connectorAccount.count({
-          where: {
-            workspaceId: context.currentWorkspace.id,
-            provider: ConnectorProvider.GOOGLE_ADS,
-          },
-        }),
-        prisma.connectorAccount.count({
-          where: {
-            workspaceId: context.currentWorkspace.id,
-            provider: ConnectorProvider.SHOPIFY,
-          },
-        }),
-      ]);
+  const message = connectorMessage(
+    firstParam(params.error),
+    firstParam(params.connected),
+    firstParam(params.debug),
+  );
+  const canConfigureProviders = canManageProviderConfigs(context.user);
+  const canConnectAccounts = canOperateWorkspaceConnectors(
+    context.user,
+    context.currentMembership.role,
+  );
+  const connectorCounts = new Map<ConnectorProvider, number>();
+  const providerConfigs = new Set<ConnectorProvider>();
+  const connectors = await prisma.connectorAccount.groupBy({
+    by: ["provider"],
+    where: {
+      workspaceId: context.currentWorkspace.id,
+    },
+    _count: { provider: true },
+  });
+
+  for (const connector of connectors) {
+    connectorCounts.set(connector.provider, connector._count.provider);
+  }
+
+  const configs = await listPublicProviderConfigs(context.currentWorkspace.id);
+  for (const config of configs) {
+    if (config.status === "ACTIVE") {
+      providerConfigs.add(config.provider);
+    }
+  }
+
+  const connectorAccounts = await prisma.connectorAccount.findMany({
+    where: { workspaceId: context.currentWorkspace.id },
+    orderBy: { createdAt: "desc" },
+    select: {
+      id: true,
+      provider: true,
+      accountName: true,
+      externalAccountId: true,
+      lastSyncedAt: true,
+      lastSyncError: true,
+      status: true,
+      historicalSyncedAt: true,
+      historicalBackfillUntil: true,
+    },
+  });
+
+  const metaAccounts = connectorCounts.get(ConnectorProvider.META_ADS) ?? 0;
+  const googleAdsAccounts =
+    connectorCounts.get(ConnectorProvider.GOOGLE_ADS) ?? 0;
+  const googleAnalyticsProperties =
+    connectorCounts.get(ConnectorProvider.GA4) ?? 0;
+  const shopifyAccounts = connectorCounts.get(ConnectorProvider.SHOPIFY) ?? 0;
+  const nuvemshopAccounts =
+    connectorCounts.get(ConnectorProvider.NUVEMSHOP) ?? 0;
+
+  function missingConfigAction(provider: ConnectorProvider) {
+    if (canConfigureProviders) {
+      return (
+        <Button asChild size="sm" variant="secondary">
+          <a href={`/connectors/settings/${provider.toLowerCase()}`}>
+            <Settings size={16} aria-hidden="true" />
+            Configurar no app
+          </a>
+        </Button>
+      );
+    }
+
+    return (
+      <Button disabled size="sm" variant="secondary">
+        <Settings size={16} aria-hidden="true" />
+        Aguardando W3
+      </Button>
+    );
+  }
+
+  function readOnlyAction() {
+    return (
+      <Button disabled size="sm" variant="secondary">
+        <Cable size={16} aria-hidden="true" />
+        Somente leitura
+      </Button>
+    );
+  }
+
+  function connectorAction(provider: ConnectorProvider, action: ReactNode) {
+    if (!providerConfigs.has(provider)) return missingConfigAction(provider);
+    if (!canConnectAccounts) return readOnlyAction();
+
+    return action;
+  }
+
+  function statusLabel(
+    provider: ConnectorProvider,
+    count: number,
+    unit: string,
+  ) {
+    if (count > 0) return `${count} ${unit}(s) ativa(s)`;
+    if (providerConfigs.has(provider)) return "Pronto para conectar";
+
+    return "Aguardando configuração W3";
+  }
+
+  function statusTone(provider: ConnectorProvider, count: number) {
+    if (count > 0) return "success" as const;
+    if (providerConfigs.has(provider)) return "info" as const;
+
+    return "warning" as const;
+  }
 
   const providerCards: ProviderCard[] = [
     {
+      provider: ConnectorProvider.META_ADS,
       name: "Meta Ads",
-      description: context.isDemoMode
-        ? "OAuth preparado. Com AUTH_DISABLED=true, o callback valida estado mas nao grava token."
-        : "Conecte contas de anuncio, salve tokens criptografados e prepare o backfill de 90 dias.",
-      statusLabel:
-        metaAccounts > 0
-          ? `${metaAccounts} conta(s) ativa(s)`
-          : metaStatus.configured
-            ? "Pronto para OAuth"
-            : "Configurar env",
-      statusTone: metaAccounts > 0 ? "success" : metaStatus.configured ? "info" : "warning",
-      action: metaStatus.configured ? (
-        <Button asChild size="sm">
-          <a href="/api/connectors/meta/connect">
-            <Cable size={16} aria-hidden="true" />
-            Conectar Meta
-          </a>
-        </Button>
-      ) : (
-        <Button disabled size="sm" variant="secondary">
-          <Settings size={16} aria-hidden="true" />
-          Configurar env
-        </Button>
+      description:
+        "Conecte o perfil e vincule somente as contas de anuncio dos clientes selecionados.",
+      statusLabel: statusLabel(
+        ConnectorProvider.META_ADS,
+        metaAccounts,
+        "conta",
+      ),
+      statusTone: statusTone(ConnectorProvider.META_ADS, metaAccounts),
+      action: connectorAction(
+        ConnectorProvider.META_ADS,
+        <MetaSystemUserDialog />,
       ),
     },
     {
+      provider: ConnectorProvider.GOOGLE_ADS,
       name: "Google Ads",
-      description: context.isDemoMode
-        ? "OAuth preparado com acesso offline. Em demo, o callback valida estado mas nao grava conta."
-        : "Conecte customers acessiveis, salve refresh token criptografado e sincronize via GAQL.",
-      statusLabel:
-        googleAdsAccounts > 0
-          ? `${googleAdsAccounts} conta(s) ativa(s)`
-          : googleAdsStatus.configured
-            ? "Pronto para OAuth"
-            : "Configurar env",
-      statusTone:
-        googleAdsAccounts > 0 ? "success" : googleAdsStatus.configured ? "info" : "warning",
-      action: googleAdsStatus.configured ? (
+      description:
+        "Conecte o usuario/MCC, expanda a hierarquia e vincule apenas contas anunciante.",
+      statusLabel: statusLabel(
+        ConnectorProvider.GOOGLE_ADS,
+        googleAdsAccounts,
+        "conta",
+      ),
+      statusTone: statusTone(ConnectorProvider.GOOGLE_ADS, googleAdsAccounts),
+      action: connectorAction(
+        ConnectorProvider.GOOGLE_ADS,
         <Button asChild size="sm">
           <a href="/api/connectors/google-ads/connect">
             <Cable size={16} aria-hidden="true" />
             Conectar Google
           </a>
-        </Button>
-      ) : (
-        <Button disabled size="sm" variant="secondary">
-          <Settings size={16} aria-hidden="true" />
-          Configurar env
-        </Button>
+        </Button>,
       ),
     },
     {
-      name: "Shopify",
-      description: context.isDemoMode
-        ? "OAuth com HMAC preparado. Informe a loja quando as envs da Shopify estiverem configuradas."
-        : "Conecte a loja, ingira pedidos via GraphQL e receba webhooks assinados.",
-      statusLabel:
-        shopifyAccounts > 0
-          ? `${shopifyAccounts} loja(s) ativa(s)`
-          : shopifyStatus.configured
-            ? "Pronto para OAuth"
-            : "Configurar env",
-      statusTone:
-        shopifyAccounts > 0 ? "success" : shopifyStatus.configured ? "info" : "warning",
-      action: shopifyStatus.configured ? (
-        <form action="/api/connectors/shopify/connect" className="flex flex-col gap-2">
-          <label className="text-caption text-[var(--text-tertiary)]" htmlFor="shopify-shop">
-            Loja
-          </label>
-          <input
-            className="h-10 rounded-md border border-[var(--border-strong)] bg-[var(--bg-surface)] px-3 text-sm"
-            id="shopify-shop"
-            name="shop"
-            placeholder="loja.myshopify.com"
-            required
-          />
-          <Button className="w-fit" size="sm" type="submit">
+      provider: ConnectorProvider.GA4,
+      name: "Google Analytics",
+      description:
+        "Conecte o Google Analytics e vincule as propriedades GA4 dos clientes para puxar sessões.",
+      statusLabel: statusLabel(
+        ConnectorProvider.GA4,
+        googleAnalyticsProperties,
+        "propriedade",
+      ),
+      statusTone: statusTone(ConnectorProvider.GA4, googleAnalyticsProperties),
+      action: connectorAction(
+        ConnectorProvider.GA4,
+        <Button asChild size="sm">
+          <a href="/api/connectors/google-analytics/connect">
             <Cable size={16} aria-hidden="true" />
-            Conectar Shopify
-          </Button>
-        </form>
-      ) : (
-        <Button disabled size="sm" variant="secondary">
-          <Settings size={16} aria-hidden="true" />
-          Configurar env
-        </Button>
+            Conectar Analytics
+          </a>
+        </Button>,
       ),
     },
+    {
+      provider: ConnectorProvider.SHOPIFY,
+      name: "Shopify",
+      description:
+        "Conecte a loja, ingira pedidos via GraphQL e receba webhooks assinados.",
+      statusLabel: statusLabel(
+        ConnectorProvider.SHOPIFY,
+        shopifyAccounts,
+        "loja",
+      ),
+      statusTone: statusTone(ConnectorProvider.SHOPIFY, shopifyAccounts),
+      action: connectorAction(
+        ConnectorProvider.SHOPIFY,
+        <ShopifyConnectDialog />,
+      ),
+    },
+    {
+      provider: ConnectorProvider.NUVEMSHOP,
+      name: "Nuvemshop",
+      description:
+        "Conecte via OAuth, selecione a loja e sincronize pedidos e receita.",
+      statusLabel: statusLabel(
+        ConnectorProvider.NUVEMSHOP,
+        nuvemshopAccounts,
+        "loja",
+      ),
+      statusTone: statusTone(ConnectorProvider.NUVEMSHOP, nuvemshopAccounts),
+      action: connectorAction(
+        ConnectorProvider.NUVEMSHOP,
+        <Button asChild size="sm">
+          <a href="/api/connectors/nuvemshop/connect">
+            <Cable size={16} aria-hidden="true" />
+            Conectar Nuvemshop
+          </a>
+        </Button>,
+      ),
+    },
+    ...manualCommerceProviders.map((provider) => {
+      const definition = getConnectorDefinition(provider);
+      const count = connectorCounts.get(provider) ?? 0;
+
+      return {
+        provider,
+        name: definition.name,
+        description:
+          "Use a configuração W3 do workspace para validar e vincular a loja.",
+        statusLabel: statusLabel(provider, count, "loja"),
+        statusTone: statusTone(provider, count),
+        action: connectorAction(
+          provider,
+          <form
+            action="/api/connectors/manual"
+            className="grid gap-2"
+            method="post"
+          >
+            <input name="provider" type="hidden" value={provider} />
+            <label
+              className="text-caption text-[var(--text-tertiary)]"
+              htmlFor={`${provider}-name`}
+            >
+              Loja
+            </label>
+            <input
+              className="h-10 rounded-md border border-[var(--border-strong)] bg-[var(--bg-surface)] px-3 text-sm"
+              id={`${provider}-name`}
+              name="storeName"
+              placeholder="Nome da loja"
+              required
+            />
+            <Button className="w-fit" size="sm" type="submit">
+              <Cable size={16} aria-hidden="true" />
+              Validar e vincular
+            </Button>
+          </form>,
+        ),
+      };
+    }),
   ];
 
   return (
     <div className="space-y-6">
-      {connectedProvider && connectedProvider !== "demo" ? (
+      {connectedProvider ? (
         <EventTracker
           name="connector_connect"
           properties={{ provider: connectedProvider }}
@@ -236,7 +430,9 @@ export default async function ConnectorsPage({ searchParams }: ConnectorsPagePro
       ) : null}
       <div>
         <p className="text-caption text-[var(--text-tertiary)]">Conectores</p>
-        <h2 className="mt-2 text-2xl font-semibold tracking-[-0.02em]">Fontes de dados</h2>
+        <h2 className="mt-2 text-2xl font-semibold tracking-[-0.02em]">
+          Fontes de dados
+        </h2>
       </div>
 
       {message ? (
@@ -245,12 +441,15 @@ export default async function ConnectorsPage({ searchParams }: ConnectorsPagePro
             "flex gap-3 rounded-md border px-4 py-3 text-sm",
             message.tone === "success" &&
               "border-[var(--success)] bg-[var(--success-bg)] text-[var(--success)]",
-            message.tone === "info" && "border-[var(--info)] bg-[var(--info-bg)] text-[var(--info)]",
             message.tone === "warning" &&
               "border-[var(--warning)] bg-[var(--warning-bg)] text-[var(--warning)]",
           )}
         >
-          <CircleAlert className="mt-0.5 shrink-0" size={16} aria-hidden="true" />
+          <CircleAlert
+            className="mt-0.5 shrink-0"
+            size={16}
+            aria-hidden="true"
+          />
           <div>
             <p className="font-semibold">{message.title}</p>
             <p className="mt-1">{message.body}</p>
@@ -258,11 +457,12 @@ export default async function ConnectorsPage({ searchParams }: ConnectorsPagePro
         </div>
       ) : null}
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 xl:grid-cols-3">
         {providerCards.map((provider) => (
-          <Card key={provider.name}>
-            <CardHeader>
+          <Card key={provider.provider}>
+            <CardHeader className="items-center">
               <CardTitle>{provider.name}</CardTitle>
+              <ProviderLogo provider={provider.provider} />
             </CardHeader>
             <CardContent className="flex min-h-[180px] flex-col justify-between gap-5">
               <div>
@@ -278,6 +478,81 @@ export default async function ConnectorsPage({ searchParams }: ConnectorsPagePro
           </Card>
         ))}
       </div>
+
+      {connectorAccounts.length > 0 && canConnectAccounts ? (
+        <section>
+          <h3 className="text-lg font-semibold tracking-[-0.02em]">
+            Contas conectadas
+          </h3>
+          <p className="mt-1 text-sm text-[var(--text-secondary)]">
+            Force uma sincronização manual quando precisar atualizar o dashboard
+            imediatamente.
+          </p>
+          <div className="mt-4 overflow-x-auto rounded-md border border-[var(--border-subtle)]">
+            <table className="w-full min-w-[720px] text-left text-sm">
+              <thead className="bg-[var(--bg-elevated)] text-caption text-[var(--text-tertiary)]">
+                <tr>
+                  <th className="px-4 py-3">Conector</th>
+                  <th className="px-4 py-3">Conta</th>
+                  <th className="px-4 py-3">Última sync</th>
+                  <th className="px-4 py-3 text-right">Ações</th>
+                </tr>
+              </thead>
+              <tbody>
+                {connectorAccounts.map((account) => {
+                  const definition = getConnectorDefinition(account.provider);
+
+                  return (
+                    <tr
+                      className="border-t border-[var(--border-subtle)]"
+                      key={account.id}
+                    >
+                      <td className="px-4 py-3 font-medium">
+                        <span className="flex items-center gap-2">
+                          <ProviderLogo
+                            className="size-6"
+                            provider={account.provider}
+                          />
+                          {definition.name}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-[var(--text-secondary)]">
+                        {account.accountName ?? account.externalAccountId}
+                      </td>
+                      <td className="px-4 py-3 text-xs text-[var(--text-secondary)]">
+                        {account.lastSyncedAt
+                          ? new Date(account.lastSyncedAt).toLocaleString(
+                              "pt-BR",
+                            )
+                          : "—"}
+                        {account.lastSyncError ? (
+                          <p className="mt-1 text-[var(--danger)]">
+                            {account.lastSyncError}
+                          </p>
+                        ) : null}
+                        {!account.historicalSyncedAt &&
+                        account.historicalBackfillUntil ? (
+                          <p className="mt-1 text-[var(--text-tertiary)]">
+                            Sincronizando histórico em segundo plano: até{" "}
+                            {new Date(account.historicalBackfillUntil)
+                              .toISOString()
+                              .slice(0, 7)}
+                          </p>
+                        ) : null}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex justify-end">
+                          <SyncNowButton connectorAccountId={account.id} />
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 }

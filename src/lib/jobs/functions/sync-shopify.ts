@@ -1,9 +1,11 @@
 import { syncShopifyOrders, type ShopifySyncRange } from "@/lib/connectors/shopify/sync";
+import type { ConnectorSyncType } from "@/lib/connectors/backfill";
 import { inngest } from "@/lib/jobs/inngest-client";
 
 type SyncShopifyBackfillEvent = {
   connectorAccountId: string;
   range: ShopifySyncRange;
+  syncType?: ConnectorSyncType;
 };
 
 export const syncShopifyBackfill = inngest.createFunction(
@@ -19,6 +21,7 @@ export const syncShopifyBackfill = inngest.createFunction(
       syncShopifyOrders({
         connectorAccountId: data.connectorAccountId,
         range: data.range,
+        syncType: data.syncType,
       }),
     );
   },

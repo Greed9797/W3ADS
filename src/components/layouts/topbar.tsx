@@ -1,18 +1,18 @@
-import { CheckCircle2 } from "lucide-react";
-
-import { FeedbackLink } from "@/components/feedback/feedback-link";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
-import { Button } from "@/components/ui/button";
 import type { getCurrentUserContext } from "@/lib/auth/current";
+import { getWorkspaceRoleDefinition } from "@/lib/auth/permissions";
+import { SyncButton } from "./sync-button";
 
 type AppContext = Awaited<ReturnType<typeof getCurrentUserContext>>;
 
 export function Topbar({ context }: { context: AppContext }) {
+  const role = getWorkspaceRoleDefinition(context.currentMembership.role);
+
   return (
     <header className="sticky top-0 z-10 flex min-h-[72px] flex-wrap items-center justify-between gap-4 border-b border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--bg-canvas)_88%,transparent)] px-4 py-4 backdrop-blur sm:px-6 lg:px-8">
       <div className="min-w-0">
         <p className="text-caption text-[var(--text-tertiary)]">
-          {context.currentWorkspace.name} / {context.currentMembership.role}
+          {context.currentWorkspace.name} / {role.label}
         </p>
         <h1 className="mt-1 truncate font-sans text-[1.75rem] font-semibold leading-tight tracking-[-0.02em]">
           Central de crescimento W3
@@ -20,11 +20,7 @@ export function Topbar({ context }: { context: AppContext }) {
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <ThemeToggle />
-        <FeedbackLink />
-        <Button variant="secondary" className="gap-2">
-          <CheckCircle2 aria-hidden className="size-4 text-[var(--success)]" />
-          Sincronizado agora
-        </Button>
+        <SyncButton />
       </div>
     </header>
   );

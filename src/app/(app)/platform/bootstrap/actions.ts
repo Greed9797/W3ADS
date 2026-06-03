@@ -1,0 +1,35 @@
+"use server";
+
+import { redirect } from "next/navigation";
+
+import { logAudit } from "@/lib/audit/log";
+import { getCurrentUserContext } from "@/lib/auth/current";
+import { prisma } from "@/lib/db/prisma";
+
+export async function bootstrapW3AdminAction() {
+  const context = await getCurrentUserContext();
+
+  const existingAdmins = await prisma.user.count({
+    where: { platformRole: { in: ["ADMIN_MASTER", "W3_ADMIN"] } },
+  });
+
+  if (existingAdmins > 0) {
+    redirect("/connectors");
+  }
+
+  await prisma.user.update({
+    where: { id: context.user.id },
+    data: { platformRole: "ADMIN_MASTER" },
+  });
+
+  await logAudit({
+    action: "connector.provider_config.update",
+    userId: context.user.id,
+    workspaceId: context.currentWorkspace.id,
+    resourceType: "user",
+    resourceId: context.user.id,
+    metadata: { bootstrap: "ADMIN_MASTER" },
+  });
+
+  redirect("/connectors/settings?bootstrapped=1");
+}

@@ -1,6 +1,5 @@
 "use server";
 
-import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { logAudit } from "@/lib/audit/log";
@@ -15,18 +14,6 @@ function getString(formData: FormData, key: string) {
 
 export async function requestDataExportAction() {
   const context = await getCurrentUserContext();
-
-  if (context.isDemoMode) {
-    const cookieStore = await cookies();
-    cookieStore.set("adstart_demo_data_export_requested", new Date().toISOString(), {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      path: "/",
-      maxAge: 60 * 60 * 24,
-    });
-    redirect("/profile/data-export?requested=1");
-  }
 
   await logAudit({
     action: "lgpd.data_export.request",
@@ -45,18 +32,6 @@ export async function requestDeleteAccountAction(formData: FormData) {
 
   if (!validateDeleteConfirmation(context.user.email, confirmation)) {
     redirect("/profile/delete-account?error=confirmation");
-  }
-
-  if (context.isDemoMode) {
-    const cookieStore = await cookies();
-    cookieStore.set("adstart_demo_delete_requested", new Date().toISOString(), {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      path: "/",
-      maxAge: 60 * 60 * 24,
-    });
-    redirect("/profile/delete-account?requested=1");
   }
 
   await logAudit({

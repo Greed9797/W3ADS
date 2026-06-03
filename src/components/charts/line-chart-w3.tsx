@@ -17,6 +17,8 @@ type LineChartW3Props = {
     label: string;
     revenue: number;
     spend: number;
+    previousRevenue?: number;
+    previousSpend?: number;
   }>;
 };
 
@@ -87,11 +89,29 @@ export function LineChartW3({ data }: LineChartW3Props) {
             type="monotone"
           />
           <Line
+            dataKey="previousRevenue"
+            dot={false}
+            name="Faturamento anterior"
+            stroke="var(--text-tertiary)"
+            strokeDasharray="5 5"
+            strokeWidth={1.5}
+            type="monotone"
+          />
+          <Line
             dataKey="spend"
             dot={false}
             name="Investimento"
             stroke="var(--w3-gold)"
             strokeWidth={2}
+            type="monotone"
+          />
+          <Line
+            dataKey="previousSpend"
+            dot={false}
+            name="Investimento anterior"
+            stroke="var(--border-strong)"
+            strokeDasharray="4 6"
+            strokeWidth={1.5}
             type="monotone"
           />
         </LineChart>

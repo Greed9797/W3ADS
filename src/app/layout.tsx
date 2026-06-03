@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Fraunces, Geist, JetBrains_Mono } from "next/font/google";
+import { headers } from "next/headers";
 
 import { CookieBanner } from "@/components/compliance/cookie-banner";
 import { ThemeScript } from "@/components/theme/theme-script";
@@ -29,15 +30,17 @@ export const metadata: Metadata = {
   description: "Dashboard unificado de marketing analytics para e-commerce.",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const nonce = (await headers()).get("x-nonce");
+
   return (
     <html lang="pt-BR" data-theme="dark" suppressHydrationWarning>
       <head>
-        <ThemeScript />
+        <ThemeScript nonce={nonce} />
       </head>
       <body className={`${fraunces.variable} ${geist.variable} ${jetBrainsMono.variable}`}>
         {children}

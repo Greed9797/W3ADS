@@ -1,6 +1,6 @@
 import { callWithRetry } from "@/lib/connectors/retry";
 
-import { getShopifyConfig, normalizeShopDomain, type ShopifyConfig } from "./oauth";
+import { normalizeShopDomain, type ShopifyConfig } from "./oauth";
 
 type FetchLike = typeof fetch;
 
@@ -26,16 +26,25 @@ type ShopifyOrderNode = {
   lineItems?: {
     edges?: Array<{
       node?: {
+        title?: string | null;
+        sku?: string | null;
         quantity?: number;
+        discountedTotalSet?: {
+          shopMoney?: {
+            amount?: string;
+          };
+        };
       };
     }>;
   };
+  shippingAddress?: {
+    province?: string | null;
+    provinceCode?: string | null;
+  } | null;
   customAttributes?: Array<{
     key?: string;
     value?: string;
   }>;
-  landingSite?: string | null;
-  referringSite?: string | null;
 };
 
 type ShopifyWebhookOrderPayload = {
@@ -53,8 +62,16 @@ type ShopifyWebhookOrderPayload = {
     email?: string | null;
   } | null;
   line_items?: Array<{
+    title?: string | null;
+    sku?: string | null;
     quantity?: number;
+    price?: string;
+    total_discount?: string;
   }>;
+  shipping_address?: {
+    province?: string | null;
+    province_code?: string | null;
+  } | null;
   note_attributes?: Array<{
     name?: string;
     key?: string;
@@ -77,7 +94,19 @@ type ShopifyOrdersResponse = {
       };
     };
   };
-  errors?: unknown;
+  errors?: Array<{ message: string; extensions?: Record<string, unknown> }>;
+};
+
+type ShopifyWebhookSubscriptionResponse = {
+  data?: {
+    webhookSubscriptionCreate?: {
+      userErrors?: Array<{
+        field?: string[];
+        message?: string;
+      }>;
+    };
+  };
+  errors?: Array<{ message: string; extensions?: Record<string, unknown> }>;
 };
 
 export type ShopifyOrder = {
@@ -87,11 +116,20 @@ export type ShopifyOrder = {
   orderCurrency: string;
   customerEmail: string | null;
   itemsCount: number;
+  items?: ShopifyOrderItem[];
   status: string;
+  shippingState?: string | null;
   placedAt: string;
   utmSource?: string | null;
   utmMedium?: string | null;
   utmCampaign?: string | null;
+};
+
+export type ShopifyOrderItem = {
+  productName: string;
+  sku: string | null;
+  quantity: number;
+  total: string | null;
 };
 
 export const SHOPIFY_WEBHOOK_TOPICS = [
@@ -113,16 +151,46 @@ query Orders($cursor: String, $query: String) {
         displayFinancialStatus
         totalPriceSet { shopMoney { amount currencyCode } }
         customer { email }
-        lineItems(first: 50) { edges { node { quantity } } }
+        lineItems(first: 50) {
+          edges {
+            node {
+              title
+              sku
+              quantity
+              discountedTotalSet { shopMoney { amount } }
+            }
+          }
+        }
+        shippingAddress { province provinceCode }
         customAttributes { key value }
-        landingSite
-        referringSite
       }
     }
     pageInfo { hasNextPage endCursor }
   }
 }
 `;
+
+const SHOPIFY_WEBHOOK_SUBSCRIPTION_CREATE_MUTATION = `
+mutation WebhookSubscriptionCreate(
+  $topic: WebhookSubscriptionTopic!,
+  $webhookSubscription: WebhookSubscriptionInput!
+) {
+  webhookSubscriptionCreate(topic: $topic, webhookSubscription: $webhookSubscription) {
+    webhookSubscription { id }
+    userErrors { field message }
+  }
+}
+`;
+
+const SHOPIFY_GRAPHQL_WEBHOOK_TOPICS: Record<
+  (typeof SHOPIFY_WEBHOOK_TOPICS)[number],
+  string
+> = {
+  "orders/create": "ORDERS_CREATE",
+  "orders/updated": "ORDERS_UPDATED",
+  "orders/paid": "ORDERS_PAID",
+  "app/uninstalled": "APP_UNINSTALLED",
+};
 
 export class ShopifyApiError extends Error {
   status: number;
@@ -141,7 +209,11 @@ export class ShopifyApiError extends Error {
   }
 }
 
-async function fetchJson<T>(url: URL | string, fetchImpl: FetchLike, init?: RequestInit): Promise<T> {
+async function fetchJson<T>(
+  url: URL | string,
+  fetchImpl: FetchLike,
+  init?: RequestInit,
+): Promise<T> {
   const response = await fetchImpl(url, init);
   const body = await response.text();
 
@@ -174,15 +246,34 @@ function customAttributeValue(
   attributes: ShopifyWebhookOrderPayload["note_attributes"],
   key: string,
 ) {
-  return attributes?.find((attribute) => (attribute.key ?? attribute.name) === key)?.value ?? null;
+  return (
+    attributes?.find((attribute) => (attribute.key ?? attribute.name) === key)
+      ?.value ?? null
+  );
 }
 
 export function normalizeShopifyOrder(node: ShopifyOrderNode): ShopifyOrder {
   const customAttributes = new Map(
-    (node.customAttributes ?? []).map((attribute) => [attribute.key, attribute.value]),
+    (node.customAttributes ?? []).map((attribute) => [
+      attribute.key,
+      attribute.value,
+    ]),
   );
   const itemsCount =
-    node.lineItems?.edges?.reduce((sum, edge) => sum + (edge.node?.quantity ?? 0), 0) ?? 0;
+    node.lineItems?.edges?.reduce(
+      (sum, edge) => sum + (edge.node?.quantity ?? 0),
+      0,
+    ) ?? 0;
+  const items =
+    node.lineItems?.edges
+      ?.map((edge) => edge.node)
+      .filter((item): item is NonNullable<typeof item> => Boolean(item))
+      .map((item, index) => ({
+        productName: item.title ?? `Produto ${index + 1}`,
+        sku: item.sku ?? null,
+        quantity: item.quantity ?? 1,
+        total: item.discountedTotalSet?.shopMoney?.amount ?? null,
+      })) ?? [];
 
   return {
     externalOrderId: node.id,
@@ -191,7 +282,12 @@ export function normalizeShopifyOrder(node: ShopifyOrderNode): ShopifyOrder {
     orderCurrency: node.totalPriceSet?.shopMoney?.currencyCode ?? "BRL",
     customerEmail: node.customer?.email ?? null,
     itemsCount,
+    items,
     status: node.displayFinancialStatus ?? "UNKNOWN",
+    shippingState:
+      node.shippingAddress?.provinceCode ??
+      node.shippingAddress?.province ??
+      null,
     placedAt: node.createdAt,
     utmSource: customAttributes.get("utm_source") ?? null,
     utmMedium: customAttributes.get("utm_medium") ?? null,
@@ -199,24 +295,45 @@ export function normalizeShopifyOrder(node: ShopifyOrderNode): ShopifyOrder {
   };
 }
 
-export function normalizeShopifyWebhookOrder(payload: ShopifyWebhookOrderPayload): ShopifyOrder {
+export function normalizeShopifyWebhookOrder(
+  payload: ShopifyWebhookOrderPayload,
+): ShopifyOrder {
   const utmFromLandingSite = parseUtmFromValue(payload.landing_site);
-  const id = payload.admin_graphql_api_id ?? `gid://shopify/Order/${payload.id ?? ""}`;
+  const id =
+    payload.admin_graphql_api_id ?? `gid://shopify/Order/${payload.id ?? ""}`;
 
   return {
     externalOrderId: id,
     orderNumber: payload.name ?? null,
     orderTotal: payload.total_price ?? "0",
     orderCurrency: payload.currency ?? "BRL",
-    customerEmail: payload.email ?? payload.contact_email ?? payload.customer?.email ?? null,
+    customerEmail:
+      payload.email ?? payload.contact_email ?? payload.customer?.email ?? null,
     itemsCount:
-      payload.line_items?.reduce((sum, lineItem) => sum + (lineItem.quantity ?? 0), 0) ?? 0,
+      payload.line_items?.reduce(
+        (sum, lineItem) => sum + (lineItem.quantity ?? 0),
+        0,
+      ) ?? 0,
+    items:
+      payload.line_items?.map((lineItem, index) => ({
+        productName: lineItem.title ?? `Produto ${index + 1}`,
+        sku: lineItem.sku ?? null,
+        quantity: lineItem.quantity ?? 1,
+        total: lineItem.price ?? null,
+      })) ?? [],
     status: payload.financial_status?.toUpperCase() ?? "UNKNOWN",
-    placedAt: payload.processed_at ?? payload.created_at ?? new Date().toISOString(),
+    shippingState:
+      payload.shipping_address?.province_code ??
+      payload.shipping_address?.province ??
+      null,
+    placedAt:
+      payload.processed_at ?? payload.created_at ?? new Date().toISOString(),
     utmSource:
-      customAttributeValue(payload.note_attributes, "utm_source") ?? utmFromLandingSite.utmSource,
+      customAttributeValue(payload.note_attributes, "utm_source") ??
+      utmFromLandingSite.utmSource,
     utmMedium:
-      customAttributeValue(payload.note_attributes, "utm_medium") ?? utmFromLandingSite.utmMedium,
+      customAttributeValue(payload.note_attributes, "utm_medium") ??
+      utmFromLandingSite.utmMedium,
     utmCampaign:
       customAttributeValue(payload.note_attributes, "utm_campaign") ??
       utmFromLandingSite.utmCampaign,
@@ -235,12 +352,16 @@ function shouldIgnoreWebhookCreateError(error: unknown) {
   );
 }
 
+function shouldIgnoreWebhookUserError(message: string | undefined) {
+  return Boolean(message && /already|taken|address/i.test(message));
+}
+
 export class ShopifyClient {
   private readonly config: ShopifyConfig;
   private readonly fetchImpl: FetchLike;
 
-  constructor(input: { config?: ShopifyConfig; fetchImpl?: FetchLike } = {}) {
-    this.config = input.config ?? getShopifyConfig();
+  constructor(input: { config: ShopifyConfig; fetchImpl?: FetchLike }) {
+    this.config = input.config;
     this.fetchImpl = input.fetchImpl ?? fetch;
   }
 
@@ -253,15 +374,24 @@ export class ShopifyClient {
     });
 
     return callWithRetry(() =>
-      fetchJson<ShopifyTokenResponse>(`https://${shop}/admin/oauth/access_token`, this.fetchImpl, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body,
-      }),
+      fetchJson<ShopifyTokenResponse>(
+        `https://${shop}/admin/oauth/access_token`,
+        this.fetchImpl,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body,
+        },
+      ),
     );
   }
 
-  async listOrders(input: { shop: string; accessToken: string; since: string; until: string }) {
+  async listOrders(input: {
+    shop: string;
+    accessToken: string;
+    since: string;
+    until: string;
+  }) {
     const shop = normalizeShopDomain(input.shop);
     const orders: ShopifyOrder[] = [];
     let cursor: string | null = null;
@@ -288,11 +418,23 @@ export class ShopifyClient {
       );
 
       if (response.errors) {
-        throw new Error("Shopify GraphQL returned errors");
+        const summary = response.errors
+          .map((e) => {
+            const code =
+              (e.extensions as { code?: string } | undefined)?.code ?? "";
+            return code ? `${e.message} [${code}]` : e.message;
+          })
+          .filter(Boolean)
+          .join(" | ");
+        throw new Error(`Shopify GraphQL error: ${summary}`);
       }
 
       const connection = response.data?.orders;
-      orders.push(...(connection?.edges ?? []).map((edge) => normalizeShopifyOrder(edge.node)));
+      orders.push(
+        ...(connection?.edges ?? []).map((edge) =>
+          normalizeShopifyOrder(edge.node),
+        ),
+      );
       hasNextPage = Boolean(connection?.pageInfo?.hasNextPage);
       cursor = connection?.pageInfo?.endCursor ?? null;
     }
@@ -300,15 +442,20 @@ export class ShopifyClient {
     return orders;
   }
 
-  async ensureWebhookSubscriptions(input: { shop: string; accessToken: string }) {
+  async ensureWebhookSubscriptions(input: {
+    shop: string;
+    accessToken: string;
+  }) {
     const shop = normalizeShopDomain(input.shop);
-    const address = buildShopifyWebhookAddress({ redirectUri: this.config.redirectUri });
+    const address = buildShopifyWebhookAddress({
+      redirectUri: this.config.redirectUri,
+    });
 
     for (const topic of SHOPIFY_WEBHOOK_TOPICS) {
       try {
-        await callWithRetry(() =>
-          fetchJson<unknown>(
-            `https://${shop}/admin/api/${this.config.apiVersion}/webhooks.json`,
+        const response = await callWithRetry(() =>
+          fetchJson<ShopifyWebhookSubscriptionResponse>(
+            `https://${shop}/admin/api/${this.config.apiVersion}/graphql.json`,
             this.fetchImpl,
             {
               method: "POST",
@@ -317,15 +464,33 @@ export class ShopifyClient {
                 "X-Shopify-Access-Token": input.accessToken,
               },
               body: JSON.stringify({
-                webhook: {
-                  topic,
-                  address,
-                  format: "json",
+                query: SHOPIFY_WEBHOOK_SUBSCRIPTION_CREATE_MUTATION,
+                variables: {
+                  topic: SHOPIFY_GRAPHQL_WEBHOOK_TOPICS[topic],
+                  webhookSubscription: {
+                    callbackUrl: address,
+                    format: "JSON",
+                  },
                 },
               }),
             },
           ),
         );
+
+        if (response.errors) {
+          throw new Error("Shopify GraphQL webhook creation returned errors");
+        }
+
+        const userErrors =
+          response.data?.webhookSubscriptionCreate?.userErrors ?? [];
+        const unexpectedErrors = userErrors.filter(
+          (userError) => !shouldIgnoreWebhookUserError(userError.message),
+        );
+        if (unexpectedErrors.length > 0) {
+          throw new Error(
+            unexpectedErrors.map((error) => error.message).join("; "),
+          );
+        }
       } catch (error) {
         if (!shouldIgnoreWebhookCreateError(error)) {
           throw error;

@@ -1,0 +1,9 @@
+.env
+.env.*
+!.env.example
+
+# Local dev/agent artifacts — never deploy (transient sqlite files break the tar)
+.code-review-graph
+graphify-out
+.claude
+.smart-hook

@@ -13,10 +13,14 @@ describe("Meta insights normalization", () => {
     const insight = normalizeMetaInsight({
       campaign_id: "123",
       campaign_name: "Campanha W3",
+      effective_status: "ACTIVE",
+      configured_status: "PAUSED",
+      objective: "OUTCOME_SALES",
       spend: "42.10",
       impressions: "1000",
       clicks: "120",
       actions: [
+        { action_type: "omni_add_to_cart", value: "7" },
         { action_type: "offsite_conversion.fb_pixel_purchase", value: "2" },
         { action_type: "omni_purchase", value: "3" },
       ],
@@ -28,9 +32,12 @@ describe("Meta insights normalization", () => {
     expect(insight).toMatchObject({
       campaignId: "123",
       campaignName: "Campanha W3",
+      campaignStatus: "ACTIVE",
+      campaignObjective: "OUTCOME_SALES",
       spend: "42.10",
       impressions: "1000",
       clicks: "120",
+      addToCart: "7",
       conversions: "3",
       conversionsValue: "599.90",
     });
@@ -43,27 +50,41 @@ describe("Meta insights normalization", () => {
       insight: {
         campaignId: "123",
         campaignName: "Campanha W3",
+        campaignStatus: "ACTIVE",
+        campaignObjective: "OUTCOME_SALES",
         spend: "42.10",
         impressions: "1000",
         clicks: "120",
+        addToCart: "7",
         conversions: "3",
         conversionsValue: "599.90",
+        leads: null,
+        scheduledEvents: null,
         dateStart: "2026-05-01",
         dateStop: "2026-05-01",
       },
     });
 
     expect(metric.source).toBe(ConnectorProvider.META_ADS);
+    expect(metric.campaignStatus).toBe("ACTIVE");
+    expect(metric.campaignObjective).toBe("OUTCOME_SALES");
+    expect(metric.addToCart).toBe(BigInt(7));
     expect(metric.impressions).toBe(BigInt(1000));
     expect(metric.clicks).toBe(BigInt(120));
     expect(metric.dedupeHash).toHaveLength(64);
   });
 
   it("turns high Meta business usage into a retry-after pause", () => {
-    expect(parseMetaBusinessUsageRetryAfter('{"ads_management":[{"call_count":80}]}')).toBe(
-      "3600",
-    );
-    expect(parseMetaBusinessUsageRetryAfter('{"ads_management":[{"call_count":40}]}')).toBeNull();
+    expect(
+      parseMetaBusinessUsageRetryAfter(
+        '{"ads_management":[{"call_count":80}]}',
+      ),
+    ).toBe("3600");
+    expect(
+      parseMetaBusinessUsageRetryAfter(
+        '{"ads_management":[{"call_count":40}]}',
+      ),
+    ).toBeNull();
     expect(parseMetaBusinessUsageRetryAfter("not-json")).toBeNull();
   });
 

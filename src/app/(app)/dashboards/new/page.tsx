@@ -7,21 +7,21 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { HydratedSubmitButton } from "@/components/ui/hydrated-submit-button";
 import { Input } from "@/components/ui/input";
 import { getCurrentUserContext } from "@/lib/auth/current";
-import { canEditDashboards } from "@/lib/auth/permissions";
+import { canManagePlatformUsers } from "@/lib/auth/platform-permissions";
 import { dashboardWidgetCatalog, defaultWidgetIds } from "@/lib/metrics/kpi-catalog";
 
 export default async function NewDashboardPage() {
   const context = await getCurrentUserContext();
 
-  if (!canEditDashboards(context.currentMembership.role)) {
+  if (!canManagePlatformUsers(context.user)) {
     redirect("/dashboards");
   }
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
       <div>
-        <p className="text-caption text-[var(--text-tertiary)]">Dashboards</p>
-        <h2 className="mt-2 text-2xl font-semibold tracking-[-0.02em]">Novo dashboard</h2>
+        <p className="text-caption text-[var(--text-tertiary)]">Marcas</p>
+        <h2 className="mt-2 text-2xl font-semibold tracking-[-0.02em]">Novo painel interno</h2>
       </div>
 
       <form action={createDashboardAction} className="space-y-6">

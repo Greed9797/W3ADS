@@ -1,5 +1,30 @@
+import { ConnectorProvider } from "@prisma/client";
+
+import { GoogleAdsLogo, MetaAdsLogo } from "@/components/providers/provider-logo";
 import type { DashboardSnapshot } from "@/lib/metrics/aggregator";
 import { formatCurrencyBR, formatRoasBR } from "@/lib/utils/format-br";
+
+function ProviderBadge({ source }: { source: ConnectorProvider }) {
+  if (source === ConnectorProvider.META_ADS) {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-[var(--radius-pill)] bg-[var(--info-bg)] px-2 py-1 text-[0.6875rem] font-semibold uppercase text-[var(--info)]">
+        <MetaAdsLogo className="size-4 rounded-[5px] shadow-none" />
+        Meta ROAS
+      </span>
+    );
+  }
+
+  if (source === ConnectorProvider.GOOGLE_ADS) {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-[var(--radius-pill)] bg-[var(--success-bg)] px-2 py-1 text-[0.6875rem] font-semibold uppercase text-[var(--success)]">
+        <GoogleAdsLogo className="size-4 shadow-none" />
+        Valor conv./custo
+      </span>
+    );
+  }
+
+  return null;
+}
 
 export function TopCampaignsTable({
   campaigns,
@@ -20,6 +45,7 @@ export function TopCampaignsTable({
         <thead>
           <tr className="border-b border-[var(--border-strong)] bg-[var(--bg-elevated)] text-caption text-[var(--text-tertiary)]">
             <th className="px-4 py-3">Campanha</th>
+            <th className="px-4 py-3">Plataforma</th>
             <th className="px-4 py-3 text-right">Receita atribuída</th>
             <th className="px-4 py-3 text-right">Investimento</th>
             <th className="px-4 py-3 text-right">ROAS</th>
@@ -33,6 +59,9 @@ export function TopCampaignsTable({
             >
               <td className={index === 0 ? "border-l-[3px] border-[var(--w3-gold)] px-4 py-3" : "px-4 py-3"}>
                 <span className="font-medium">{campaign.campaignName}</span>
+              </td>
+              <td className="px-4 py-3">
+                <ProviderBadge source={campaign.source} />
               </td>
               <td className="px-4 py-3 text-right font-mono">
                 {formatCurrencyBR(campaign.conversionsValue)}

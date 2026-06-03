@@ -12,6 +12,11 @@ const themeScript = `
 })();
 `;
 
-export function ThemeScript() {
-  return <script dangerouslySetInnerHTML={{ __html: themeScript }} />;
+export function ThemeScript({ nonce }: { nonce?: string | null }) {
+  return (
+    <script
+      nonce={nonce ?? undefined}
+      dangerouslySetInnerHTML={{ __html: themeScript }}
+    />
+  );
 }

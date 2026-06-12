@@ -27,6 +27,7 @@ import {
   createWorkspaceInvite,
 } from "@/lib/auth/service";
 import {
+  canAddWorkspaceConnectors,
   isAdminMaster,
   isInternalW3User,
 } from "@/lib/auth/platform-permissions";
@@ -454,6 +455,17 @@ export async function manualSyncAction(): Promise<{
   reason: string;
 }> {
   const context = await getCurrentUserContext();
+
+  // Read-only roles (VIEWER/CLIENT) must not trigger a sync: it consumes
+  // provider API quota and holds the workspace sync lock. Mirror the connector
+  // operate gate — OWNER/ADMIN and internal admins only. The button is also
+  // hidden for these roles in the topbar, but the server is the real boundary.
+  if (
+    !canAddWorkspaceConnectors(context.user, context.currentMembership.role)
+  ) {
+    return { ok: false, reason: "forbidden" };
+  }
+
   const { triggerWorkspaceSyncIfStale } =
     await import("@/lib/workspace/sync-orchestrator");
   const outcome = await triggerWorkspaceSyncIfStale({

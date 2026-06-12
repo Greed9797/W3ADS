@@ -11,9 +11,15 @@ import {
   getActiveProviderConfig,
 } from "@/lib/connectors/provider-config";
 import { prisma } from "@/lib/db/prisma";
-import { buildSyncJobCreateInput, type ProductionSyncType } from "@/lib/jobs/sync-operations";
+import {
+  buildSyncJobCreateInput,
+  type ProductionSyncType,
+} from "@/lib/jobs/sync-operations";
 
-import { GoogleAnalyticsClient, type GoogleAnalyticsSessionMetric } from "./client";
+import {
+  GoogleAnalyticsClient,
+  type GoogleAnalyticsSessionMetric,
+} from "./client";
 
 export type GoogleAnalyticsSyncRange = {
   since: string;
@@ -23,11 +29,15 @@ export type GoogleAnalyticsSyncRange = {
 const tokenRefreshSkewMs = 5 * 60 * 1000;
 
 function tokenExpiresAt(expiresInSeconds: number | undefined) {
-  return expiresInSeconds ? new Date(Date.now() + expiresInSeconds * 1000) : null;
+  return expiresInSeconds
+    ? new Date(Date.now() + expiresInSeconds * 1000)
+    : null;
 }
 
 function tokenNeedsRefresh(expiresAt: Date | null, now = new Date()) {
-  return Boolean(expiresAt && expiresAt.getTime() <= now.getTime() + tokenRefreshSkewMs);
+  return Boolean(
+    expiresAt && expiresAt.getTime() <= now.getTime() + tokenRefreshSkewMs,
+  );
 }
 
 function gaDateToIsoDate(value: string) {
@@ -119,7 +129,8 @@ export async function syncGoogleAnalyticsSessions(input: {
     }
     let accessToken = await connectorAccessTokenFromAccount(connector);
     const client = new GoogleAnalyticsClient({
-      config: await buildGoogleAnalyticsConfigFromProviderConfig(providerConfig),
+      config:
+        await buildGoogleAnalyticsConfigFromProviderConfig(providerConfig),
     });
 
     if (tokenNeedsRefresh(connector.tokenExpiresAt)) {
@@ -164,18 +175,23 @@ export async function syncGoogleAnalyticsSessions(input: {
       until: input.range.until,
     });
 
-    for (const metric of metrics) {
-      const payload = mapGoogleAnalyticsSessionToDailyMetric({
+    const payloads = metrics.map((metric) =>
+      mapGoogleAnalyticsSessionToDailyMetric({
         workspaceId: connector.workspaceId,
         connectorAccountId: connector.id,
         metric,
-      });
-
-      await prisma.dailyMetric.upsert({
-        where: { dedupeHash: payload.dedupeHash },
-        update: payload,
-        create: payload,
-      });
+      }),
+    );
+    if (payloads.length > 0) {
+      await prisma.$transaction(
+        payloads.map((payload) =>
+          prisma.dailyMetric.upsert({
+            where: { dedupeHash: payload.dedupeHash },
+            update: payload,
+            create: payload,
+          }),
+        ),
+      );
     }
 
     await prisma.connectorAccount.update({
@@ -197,8 +213,13 @@ export async function syncGoogleAnalyticsSessions(input: {
 
     return { rowsUpserted: metrics.length };
   } catch (caught) {
-    const message = caught instanceof Error ? caught.message : "Unknown Google Analytics sync error";
-    const status = message.includes("refresh token") ? ConnectorStatus.TOKEN_EXPIRED : ConnectorStatus.ERROR;
+    const message =
+      caught instanceof Error
+        ? caught.message
+        : "Unknown Google Analytics sync error";
+    const status = message.includes("refresh token")
+      ? ConnectorStatus.TOKEN_EXPIRED
+      : ConnectorStatus.ERROR;
 
     await prisma.connectorAccount.update({
       where: { id: input.connectorAccountId },

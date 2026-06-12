@@ -1,0 +1,19 @@
+.env
+.env.*
+!.env.example
+
+# Local dev/agent artifacts — never deploy (transient sqlite files break the tar)
+.code-review-graph
+graphify-out
+.claude
+.smart-hook
+.serena
+.playwright-mcp
+
+# Untracked local scratch — keep out of production builds.
+# NOTE: anchor screenshot PNGs to the repo ROOT (leading slash). A bare
+# `*.png` matches recursively and would strip public/connector-logos/*.png,
+# 404-ing every connector logo in production.
+/*.png
+wbuy-after.md
+src/app/preview

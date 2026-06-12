@@ -15,11 +15,9 @@ export default async function PlatformBootstrapPage() {
     redirect("/connectors/settings");
   }
 
-  const existingAdmins = context.isDemoMode
-    ? 0
-    : await prisma.user.count({
-        where: { platformRole: { in: ["ADMIN_MASTER", "W3_ADMIN"] } },
-      });
+  const existingAdmins = await prisma.user.count({
+    where: { platformRole: { in: ["ADMIN_MASTER", "W3_ADMIN"] } },
+  });
 
   if (existingAdmins > 0) {
     redirect("/connectors");
@@ -33,8 +31,9 @@ export default async function PlatformBootstrapPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <p className="text-sm leading-6 text-[var(--text-secondary)]">
-            Ainda não existe um administrador interno para configurar apps e APIs dos conectores.
-            Esta ação promove o usuário atual a Admin Master.
+            Ainda não existe um administrador interno para configurar apps e
+            APIs dos conectores. Esta ação promove o usuário atual a Admin
+            Master.
           </p>
           <form action={bootstrapW3AdminAction}>
             <Button type="submit">Ativar meu acesso Admin Master</Button>

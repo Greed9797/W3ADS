@@ -1,14 +1,19 @@
-import { createHash } from "node:crypto";
 import { ConnectorProvider, ConnectorStatus, SyncStatus } from "@prisma/client";
-import Decimal from "decimal.js";
 
 import { connectorAccessTokenFromAccount } from "@/lib/connectors/credentials";
+import {
+  ecommerceDailyDedupeHash,
+  mapEcommerceOrdersToDailyMetricSummaries,
+} from "@/lib/connectors/ecommerce-sync";
 import {
   buildShopifyConfigFromProviderConfig,
   getActiveProviderConfig,
 } from "@/lib/connectors/provider-config";
 import { prisma } from "@/lib/db/prisma";
-import { buildSyncJobCreateInput, type ProductionSyncType } from "@/lib/jobs/sync-operations";
+import {
+  buildSyncJobCreateInput,
+  type ProductionSyncType,
+} from "@/lib/jobs/sync-operations";
 
 import { ShopifyClient, type ShopifyOrder } from "./client";
 
@@ -17,18 +22,22 @@ export type ShopifySyncRange = {
   until: string;
 };
 
-function asDateOnly(value: string) {
-  return new Date(`${value.slice(0, 10)}T00:00:00.000Z`);
-}
-
+/**
+ * @deprecated Kept as a thin wrapper around `ecommerceDailyDedupeHash` so the
+ * webhook route and legacy callers stay compatible while the codebase
+ * converges on the canonical helper.
+ */
 export function dailyDedupeHash(input: {
   workspaceId: string;
   connectorAccountId: string;
   date: string;
 }) {
-  return createHash("sha256")
-    .update([input.workspaceId, input.connectorAccountId, input.date, ConnectorProvider.SHOPIFY].join(":"))
-    .digest("hex");
+  return ecommerceDailyDedupeHash({
+    workspaceId: input.workspaceId,
+    connectorAccountId: input.connectorAccountId,
+    provider: ConnectorProvider.SHOPIFY,
+    date: input.date,
+  });
 }
 
 export function mapShopifyOrdersToDailyMetricSummaries(input: {
@@ -36,30 +45,12 @@ export function mapShopifyOrdersToDailyMetricSummaries(input: {
   connectorAccountId: string;
   orders: ShopifyOrder[];
 }) {
-  const byDay = new Map<string, { revenue: Decimal; orders: number }>();
-
-  for (const order of input.orders) {
-    const day = order.placedAt.slice(0, 10);
-    const current = byDay.get(day) ?? { revenue: new Decimal(0), orders: 0 };
-    current.revenue = current.revenue.plus(order.orderTotal);
-    current.orders += 1;
-    byDay.set(day, current);
-  }
-
-  return Array.from(byDay.entries()).map(([day, summary]) => ({
+  return mapEcommerceOrdersToDailyMetricSummaries({
     workspaceId: input.workspaceId,
     connectorAccountId: input.connectorAccountId,
-    date: asDateOnly(day),
-    day,
-    source: ConnectorProvider.SHOPIFY,
-    revenue: summary.revenue.toFixed(2),
-    orders: BigInt(summary.orders),
-    dedupeHash: dailyDedupeHash({
-      workspaceId: input.workspaceId,
-      connectorAccountId: input.connectorAccountId,
-      date: day,
-    }),
-  }));
+    provider: ConnectorProvider.SHOPIFY,
+    orders: input.orders,
+  });
 }
 
 export function mapShopifyOrderToEcommerceOrder(input: {
@@ -221,7 +212,8 @@ export async function syncShopifyOrders(input: {
 
     return { rowsUpserted: orders.length };
   } catch (caught) {
-    const message = caught instanceof Error ? caught.message : "Unknown Shopify sync error";
+    const message =
+      caught instanceof Error ? caught.message : "Unknown Shopify sync error";
 
     await prisma.connectorAccount.update({
       where: { id: input.connectorAccountId },

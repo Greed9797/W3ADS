@@ -16,8 +16,6 @@ export type DashboardDraft = {
   widgets: DashboardWidgetConfig[];
 };
 
-export const demoDashboardId = "demo-performance-geral";
-
 export function sanitizeDashboardName(value: string) {
   const name = value.trim().replace(/\s+/g, " ");
   return name.length > 0 ? name.slice(0, 80) : "Novo dashboard";
@@ -28,7 +26,9 @@ export function normalizeWidgetIds(values: string[]) {
     Boolean(resolveWidgetCatalogItem(value)),
   );
 
-  return ids.length > 0 ? ids : defaultDashboardWidgets().map((widget) => widget.widgetId);
+  return ids.length > 0
+    ? ids
+    : defaultDashboardWidgets().map((widget) => widget.widgetId);
 }
 
 export function buildDashboardDraft(input: {
@@ -70,8 +70,13 @@ function isWidgetConfig(value: unknown): value is DashboardWidgetConfig {
 export function parseDashboardWidgets(value: unknown): DashboardWidgetConfig[] {
   try {
     const parsed = typeof value === "string" ? JSON.parse(value) : value;
-    if (Array.isArray(parsed) && parsed.every(isWidgetConfig)) {
-      return parsed;
+    if (Array.isArray(parsed)) {
+      // Keep every VALID widget instead of discarding the whole array when one
+      // entry is bad (e.g. a removed/renamed catalog id). Rejecting all would
+      // silently wipe a user's entire custom layout. Only fall back to defaults
+      // when nothing valid survives.
+      const valid = parsed.filter(isWidgetConfig);
+      return valid.length > 0 ? valid : defaultDashboardWidgets();
     }
   } catch {
     return defaultDashboardWidgets();
@@ -80,7 +85,10 @@ export function parseDashboardWidgets(value: unknown): DashboardWidgetConfig[] {
   return defaultDashboardWidgets();
 }
 
-export function parseDashboardLayout(value: unknown, widgets: DashboardWidgetConfig[]) {
+export function parseDashboardLayout(
+  value: unknown,
+  widgets: DashboardWidgetConfig[],
+) {
   try {
     const parsed = typeof value === "string" ? JSON.parse(value) : value;
     if (
@@ -102,26 +110,16 @@ export function parseDashboardLayout(value: unknown, widgets: DashboardWidgetCon
   return createDashboardLayout(widgets);
 }
 
-export function widgetsToPrismaJson(widgets: DashboardWidgetConfig[]): Prisma.InputJsonValue {
-  return JSON.parse(serializeDashboardWidgets(widgets)) as Prisma.InputJsonValue;
+export function widgetsToPrismaJson(
+  widgets: DashboardWidgetConfig[],
+): Prisma.InputJsonValue {
+  return JSON.parse(
+    serializeDashboardWidgets(widgets),
+  ) as Prisma.InputJsonValue;
 }
 
-export function layoutToPrismaJson(layout: DashboardLayoutItem[]): Prisma.InputJsonValue {
+export function layoutToPrismaJson(
+  layout: DashboardLayoutItem[],
+): Prisma.InputJsonValue {
   return JSON.parse(serializeDashboardLayout(layout)) as Prisma.InputJsonValue;
-}
-
-export function buildDemoDashboard() {
-  const widgets = defaultDashboardWidgets();
-
-  return {
-    id: demoDashboardId,
-    workspaceId: "demo-workspace",
-    ownerId: "demo-user",
-    name: "Performance Geral",
-    isDefault: true,
-    layout: createDashboardLayout(widgets),
-    widgets,
-    createdAt: new Date("2026-01-01T00:00:00.000Z"),
-    updatedAt: new Date("2026-01-01T00:00:00.000Z"),
-  };
 }

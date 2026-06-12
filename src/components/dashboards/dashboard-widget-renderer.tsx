@@ -32,7 +32,6 @@ function widgetValue(widgetId: DashboardWidgetId, snapshot: DashboardSnapshot) {
   const revenue = snapshot.kpis.revenue.value;
   const spend = snapshot.kpis.spend.value;
   const orders = snapshot.kpis.orders.value;
-  const sessions = snapshot.funnel.sessions;
 
   switch (widgetId) {
     case "revenue":
@@ -48,9 +47,11 @@ function widgetValue(widgetId: DashboardWidgetId, snapshot: DashboardSnapshot) {
     case "cpa_blended":
       return formatCurrencyBR(ratio(spend, orders));
     case "sessions":
-      return formatIntegerBR(sessions);
+      // Use the pre-computed KPI (same value as funnel.sessions) for parity
+      // with the other KPI widgets.
+      return formatIntegerBR(snapshot.kpis.sessions.value);
     case "conversion_rate":
-      return formatPercentBR(ratio(orders, sessions) * 100);
+      return formatPercentBR(snapshot.kpis.conversionRate.value);
     default:
       return "";
   }
@@ -62,8 +63,16 @@ function SourceDistribution({ snapshot }: { snapshot: DashboardSnapshot }) {
   const orders = snapshot.kpis.orders.value;
   const max = Math.max(revenue, spend, orders, 1);
   const rows = [
-    { label: "Receita Shopify", value: revenue, formatted: formatCurrencyBR(revenue) },
-    { label: "Investimento Ads", value: spend, formatted: formatCurrencyBR(spend) },
+    {
+      label: "Receita Shopify",
+      value: revenue,
+      formatted: formatCurrencyBR(revenue),
+    },
+    {
+      label: "Investimento Ads",
+      value: spend,
+      formatted: formatCurrencyBR(spend),
+    },
     { label: "Pedidos", value: orders, formatted: formatIntegerBR(orders) },
   ];
 
@@ -73,12 +82,16 @@ function SourceDistribution({ snapshot }: { snapshot: DashboardSnapshot }) {
         <div className="grid gap-2" key={row.label}>
           <div className="flex items-center justify-between gap-4 text-sm">
             <span className="font-medium">{row.label}</span>
-            <span className="font-mono text-[var(--text-secondary)]">{row.formatted}</span>
+            <span className="font-mono text-[var(--text-secondary)]">
+              {row.formatted}
+            </span>
           </div>
           <div className="h-3 overflow-hidden rounded-[var(--radius-pill)] bg-[var(--bg-elevated)]">
             <div
               className="h-full rounded-[var(--radius-pill)] bg-[var(--w3-gold)]"
-              style={{ width: `${Math.max((row.value / max) * 100, row.value > 0 ? 2 : 0)}%` }}
+              style={{
+                width: `${Math.max((row.value / max) * 100, row.value > 0 ? 2 : 0)}%`,
+              }}
             />
           </div>
         </div>
@@ -138,10 +151,14 @@ export function DashboardWidgetRenderer({
     <div className="grid gap-4 xl:grid-cols-2">
       {widgets.map((widget, index) => {
         const catalogItem = resolveWidgetCatalogItem(widget.widgetId);
-        const isWide = catalogItem?.size === "wide" || catalogItem?.size === "table";
+        const isWide =
+          catalogItem?.size === "wide" || catalogItem?.size === "table";
 
         return (
-          <Card className={isWide ? "xl:col-span-2" : undefined} key={widget.instanceId}>
+          <Card
+            className={isWide ? "xl:col-span-2" : undefined}
+            key={widget.instanceId}
+          >
             <CardHeader>
               <div>
                 <CardTitle>{catalogItem?.label ?? widget.widgetId}</CardTitle>
@@ -152,17 +169,38 @@ export function DashboardWidgetRenderer({
               {canEdit ? (
                 <div className="flex items-center gap-2">
                   <form action={moveWidgetAction}>
-                    <input name="dashboardId" type="hidden" value={dashboardId} />
-                    <input name="instanceId" type="hidden" value={widget.instanceId} />
+                    <input
+                      name="dashboardId"
+                      type="hidden"
+                      value={dashboardId}
+                    />
+                    <input
+                      name="instanceId"
+                      type="hidden"
+                      value={widget.instanceId}
+                    />
                     <input name="direction" type="hidden" value="up" />
-                    <Button disabled={index === 0} size="icon" type="submit" variant="ghost">
+                    <Button
+                      disabled={index === 0}
+                      size="icon"
+                      type="submit"
+                      variant="ghost"
+                    >
                       <ArrowUp aria-hidden className="size-4" />
                       <span className="sr-only">Subir widget</span>
                     </Button>
                   </form>
                   <form action={moveWidgetAction}>
-                    <input name="dashboardId" type="hidden" value={dashboardId} />
-                    <input name="instanceId" type="hidden" value={widget.instanceId} />
+                    <input
+                      name="dashboardId"
+                      type="hidden"
+                      value={dashboardId}
+                    />
+                    <input
+                      name="instanceId"
+                      type="hidden"
+                      value={widget.instanceId}
+                    />
                     <input name="direction" type="hidden" value="down" />
                     <Button
                       disabled={index === widgets.length - 1}
@@ -175,8 +213,16 @@ export function DashboardWidgetRenderer({
                     </Button>
                   </form>
                   <form action={removeWidgetAction}>
-                    <input name="dashboardId" type="hidden" value={dashboardId} />
-                    <input name="instanceId" type="hidden" value={widget.instanceId} />
+                    <input
+                      name="dashboardId"
+                      type="hidden"
+                      value={dashboardId}
+                    />
+                    <input
+                      name="instanceId"
+                      type="hidden"
+                      value={widget.instanceId}
+                    />
                     <Button size="icon" type="submit" variant="ghost">
                       <Trash2 aria-hidden className="size-4" />
                       <span className="sr-only">Remover widget</span>

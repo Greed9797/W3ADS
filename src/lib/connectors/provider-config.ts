@@ -13,6 +13,7 @@ import {
   type SecretStore,
 } from "@/lib/security/secret-store";
 
+import { getProviderDefaults } from "./global-defaults";
 import type { GoogleAdsConfig } from "./google-ads/oauth";
 import type { GoogleAnalyticsConfig } from "./google-analytics/oauth";
 import type { MetaConfig } from "./meta/oauth";
@@ -20,7 +21,10 @@ import type { NuvemshopConfig } from "./nuvemshop/oauth";
 import { getConnectorDefinition, isManualCommerceProvider } from "./registry";
 import type { ShopifyConfig } from "./shopify/oauth";
 
-export type ProviderConfigPublicCredentials = Record<string, string | null | undefined>;
+export type ProviderConfigPublicCredentials = Record<
+  string,
+  string | null | undefined
+>;
 export type ProviderConfigSecrets = Record<string, string | null | undefined>;
 
 export type ProviderConfigLike = {
@@ -84,21 +88,25 @@ function jsonRecord(value: unknown): Record<string, unknown> {
 
 function stringRecord(value: unknown): ProviderConfigPublicCredentials {
   return Object.fromEntries(
-    Object.entries(jsonRecord(value)).filter((entry): entry is [string, string] => {
-      const [, item] = entry;
+    Object.entries(jsonRecord(value)).filter(
+      (entry): entry is [string, string] => {
+        const [, item] = entry;
 
-      return typeof item === "string";
-    }),
+        return typeof item === "string";
+      },
+    ),
   );
 }
 
 export function parseSecretRefs(value: unknown): SecretRefMap {
   return Object.fromEntries(
-    Object.entries(jsonRecord(value)).filter((entry): entry is [string, string] => {
-      const [, item] = entry;
+    Object.entries(jsonRecord(value)).filter(
+      (entry): entry is [string, string] => {
+        const [, item] = entry;
 
-      return typeof item === "string" && item.length > 0;
-    }),
+        return typeof item === "string" && item.length > 0;
+      },
+    ),
   );
 }
 
@@ -113,31 +121,105 @@ function providerName(provider: ConnectorProvider) {
 function requiredPublicKey(config: ProviderConfigLike, key: string) {
   const value = config.publicCredentials?.[key];
   if (typeof value !== "string" || !hasText(value)) {
-    throw new Error(`Configuração ${providerName(config.provider)} sem ${key}.`);
+    throw new Error(
+      `Configuração ${providerName(config.provider)} sem ${key}.`,
+    );
   }
 
   return value.trim();
 }
 
-async function requiredSecret(config: ProviderConfigLike, store: SecretStore, key: string) {
+async function requiredSecret(
+  config: ProviderConfigLike,
+  store: SecretStore,
+  key: string,
+) {
   const ref = config.secretRefs?.[key];
   if (!ref) {
-    throw new Error(`Configuração ${providerName(config.provider)} sem segredo ${key}.`);
+    throw new Error(
+      `Configuração ${providerName(config.provider)} sem segredo ${key}.`,
+    );
   }
 
   return store.getSecret(ref);
 }
 
-function requiredConfigText(config: ProviderConfigLike, key: keyof ProviderConfigLike) {
+function requiredConfigText(
+  config: ProviderConfigLike,
+  key: keyof ProviderConfigLike,
+) {
   const value = config[key];
   if (typeof value !== "string" || !hasText(value)) {
-    throw new Error(`Configuração ${providerName(config.provider)} sem ${String(key)}.`);
+    throw new Error(
+      `Configuração ${providerName(config.provider)} sem ${String(key)}.`,
+    );
   }
 
   return value.trim();
 }
 
-export function publicProviderConfig(config: ProviderConfigLike): PublicProviderConfig {
+/**
+ * Public credential with fallback to the official env-backed default, so the
+ * connector works even when the workspace never filled the field.
+ */
+function resolvePublicKey(config: ProviderConfigLike, key: string) {
+  const value = config.publicCredentials?.[key];
+  if (typeof value === "string" && hasText(value)) {
+    return value.trim();
+  }
+
+  const fallback = getProviderDefaults(config.provider)?.publicCredentials[key];
+  if (fallback && hasText(fallback)) {
+    return fallback.trim();
+  }
+
+  throw new Error(`Configuração ${providerName(config.provider)} sem ${key}.`);
+}
+
+/** Secret from the store, falling back to the official env-backed default. */
+async function resolveSecret(
+  config: ProviderConfigLike,
+  store: SecretStore,
+  key: string,
+) {
+  const ref = config.secretRefs?.[key];
+  if (ref) {
+    return store.getSecret(ref);
+  }
+
+  const fallback = getProviderDefaults(config.provider)?.secretValues[key];
+  if (fallback && hasText(fallback)) {
+    return fallback;
+  }
+
+  throw new Error(
+    `Configuração ${providerName(config.provider)} sem segredo ${key}.`,
+  );
+}
+
+/** Config text (redirectUri/scopes/apiVersion) with env-default fallback. */
+function resolveConfigText(
+  config: ProviderConfigLike,
+  key: "redirectUri" | "scopes" | "apiVersion",
+) {
+  const value = config[key];
+  if (typeof value === "string" && hasText(value)) {
+    return value.trim();
+  }
+
+  const fallback = getProviderDefaults(config.provider)?.[key];
+  if (fallback && hasText(fallback)) {
+    return fallback.trim();
+  }
+
+  throw new Error(
+    `Configuração ${providerName(config.provider)} sem ${String(key)}.`,
+  );
+}
+
+export function publicProviderConfig(
+  config: ProviderConfigLike,
+): PublicProviderConfig {
   return {
     id: config.id ?? "",
     workspaceId: config.workspaceId ?? "",
@@ -162,56 +244,107 @@ export function validateProviderConfigInput(input: ProviderConfigInput) {
   const existingRefs = input.existingSecretRefs ?? {};
   const publicCredentials = input.publicCredentials ?? {};
   const secrets = input.secrets ?? {};
-  const hasSecret = (key: string) => hasText(secrets[key]) || hasText(existingRefs[key]);
-  const hasPublic = (key: string) => hasText(publicCredentials[key]);
+  // Official "W3 Ads app" env-backed defaults (Google Ads/GA4/Meta) satisfy the
+  // requirement when a field is left blank — OAuth/sync fall back to them, so
+  // validation must too, otherwise the pre-filled form falsely blocks save.
+  const envDefaults = getProviderDefaults(input.provider);
+  const hasSecret = (key: string) =>
+    hasText(secrets[key]) ||
+    hasText(existingRefs[key]) ||
+    Boolean(envDefaults?.secretValues[key]);
+  const hasPublic = (key: string) =>
+    hasText(publicCredentials[key]) ||
+    hasText(envDefaults?.publicCredentials[key]);
 
   if (status !== "ACTIVE") {
     return { success: true as const };
   }
 
   if (input.provider === ConnectorProvider.META_ADS) {
-    if (!hasPublic("appId")) return { success: false as const, error: "Informe o App ID da Meta." };
-    if (!hasSecret("appSecret")) {
-      return { success: false as const, error: "Informe o app secret da Meta." };
+    // OAuth path only: appId + appSecret required only when redirectUri set.
+    // System User mode: skip OAuth credential checks (token lives on the
+    // ConnectorAccount, ProviderConfig keeps pixel event IDs / scopes).
+    if (hasText(input.redirectUri)) {
+      if (!hasPublic("appId")) {
+        return {
+          success: false as const,
+          error:
+            "Informe o App ID da Meta para o fluxo OAuth ou remova o Redirect URI.",
+        };
+      }
+      if (!hasSecret("appSecret")) {
+        return {
+          success: false as const,
+          error:
+            "Informe o app secret da Meta para o fluxo OAuth ou remova o Redirect URI.",
+        };
+      }
     }
   }
 
   if (input.provider === ConnectorProvider.GOOGLE_ADS) {
     if (!hasPublic("clientId")) {
-      return { success: false as const, error: "Informe o client ID do Google Ads." };
+      return {
+        success: false as const,
+        error: "Informe o client ID do Google Ads.",
+      };
     }
     if (!hasSecret("clientSecret")) {
-      return { success: false as const, error: "Informe o client secret do Google Ads." };
+      return {
+        success: false as const,
+        error: "Informe o client secret do Google Ads.",
+      };
     }
     if (!hasSecret("developerToken")) {
-      return { success: false as const, error: "Informe o developer token do Google Ads." };
+      return {
+        success: false as const,
+        error: "Informe o developer token do Google Ads.",
+      };
     }
   }
 
   if (input.provider === ConnectorProvider.GA4) {
     if (!hasPublic("clientId")) {
-      return { success: false as const, error: "Informe o client ID do Google Analytics." };
+      return {
+        success: false as const,
+        error: "Informe o client ID do Google Analytics.",
+      };
     }
     if (!hasSecret("clientSecret")) {
-      return { success: false as const, error: "Informe o client secret do Google Analytics." };
+      return {
+        success: false as const,
+        error: "Informe o client secret do Google Analytics.",
+      };
     }
   }
 
   if (input.provider === ConnectorProvider.SHOPIFY) {
     if (!hasPublic("apiKey")) {
-      return { success: false as const, error: "Informe a API key da Shopify." };
+      return {
+        success: false as const,
+        error: "Informe a API key da Shopify.",
+      };
     }
     if (!hasSecret("apiSecret")) {
-      return { success: false as const, error: "Informe o API secret da Shopify." };
+      return {
+        success: false as const,
+        error: "Informe o API secret da Shopify.",
+      };
     }
   }
 
   if (input.provider === ConnectorProvider.NUVEMSHOP) {
     if (!hasPublic("clientId")) {
-      return { success: false as const, error: "Informe o client ID da Nuvemshop." };
+      return {
+        success: false as const,
+        error: "Informe o client ID da Nuvemshop.",
+      };
     }
     if (!hasSecret("clientSecret")) {
-      return { success: false as const, error: "Informe o client secret da Nuvemshop." };
+      return {
+        success: false as const,
+        error: "Informe o client secret da Nuvemshop.",
+      };
     }
   }
 
@@ -234,14 +367,19 @@ export function validateProviderConfigInput(input: ProviderConfigInput) {
       !hasSecret("apiUser") &&
       !hasSecret("apiPassword")
     ) {
-      return { success: false as const, error: "Informe pelo menos uma credencial da API." };
+      return {
+        success: false as const,
+        error: "Informe pelo menos uma credencial da API.",
+      };
     }
   }
 
   return { success: true as const };
 }
 
-function cleanPublicCredentials(credentials: ProviderConfigPublicCredentials | undefined) {
+function cleanPublicCredentials(
+  credentials: ProviderConfigPublicCredentials | undefined,
+) {
   return Object.fromEntries(
     Object.entries(credentials ?? {})
       .map(([key, value]) => [key, value?.trim() ?? ""] as const)
@@ -307,7 +445,9 @@ export async function upsertConnectorProviderConfig(input: {
     existingRefs,
     store,
   });
-  const publicCredentials = cleanPublicCredentials(input.config.publicCredentials);
+  const publicCredentials = cleanPublicCredentials(
+    input.config.publicCredentials,
+  );
   const status = input.config.status ?? "ACTIVE";
 
   return prisma.connectorProviderConfig.upsert({
@@ -403,13 +543,17 @@ export async function buildGoogleAdsConfigFromProviderConfig(
   config: ProviderConfigLike,
   store: SecretStore = getSecretStore(),
 ): Promise<GoogleAdsConfig> {
+  const defaults = getProviderDefaults(config.provider);
   return {
-    clientId: requiredPublicKey(config, "clientId"),
-    clientSecret: await requiredSecret(config, store, "clientSecret"),
-    developerToken: await requiredSecret(config, store, "developerToken"),
-    redirectUri: requiredConfigText(config, "redirectUri"),
-    apiVersion: config.apiVersion?.trim() || "v24",
-    loginCustomerId: config.publicCredentials?.loginCustomerId ?? undefined,
+    clientId: resolvePublicKey(config, "clientId"),
+    clientSecret: await resolveSecret(config, store, "clientSecret"),
+    developerToken: await resolveSecret(config, store, "developerToken"),
+    redirectUri: resolveConfigText(config, "redirectUri"),
+    apiVersion: config.apiVersion?.trim() || defaults?.apiVersion || "v24",
+    loginCustomerId:
+      config.publicCredentials?.loginCustomerId ??
+      defaults?.publicCredentials.loginCustomerId ??
+      undefined,
   };
 }
 
@@ -418,9 +562,9 @@ export async function buildGoogleAnalyticsConfigFromProviderConfig(
   store: SecretStore = getSecretStore(),
 ): Promise<GoogleAnalyticsConfig> {
   return {
-    clientId: requiredPublicKey(config, "clientId"),
-    clientSecret: await requiredSecret(config, store, "clientSecret"),
-    redirectUri: requiredConfigText(config, "redirectUri"),
+    clientId: resolvePublicKey(config, "clientId"),
+    clientSecret: await resolveSecret(config, store, "clientSecret"),
+    redirectUri: resolveConfigText(config, "redirectUri"),
   };
 }
 
@@ -432,7 +576,9 @@ export async function buildShopifyConfigFromProviderConfig(
     apiKey: requiredPublicKey(config, "apiKey"),
     apiSecret: await requiredSecret(config, store, "apiSecret"),
     redirectUri: requiredConfigText(config, "redirectUri"),
-    scopes: config.scopes?.trim() || "read_orders,read_products,read_customers,read_analytics",
+    scopes:
+      config.scopes?.trim() ||
+      "read_orders,read_products,read_customers,read_analytics",
     apiVersion: config.apiVersion?.trim() || "2026-04",
   };
 }
@@ -445,7 +591,7 @@ export async function buildNuvemshopConfigFromProviderConfig(
     clientId: requiredPublicKey(config, "clientId"),
     clientSecret: await requiredSecret(config, store, "clientSecret"),
     redirectUri: requiredConfigText(config, "redirectUri"),
-    apiBaseUrl: config.baseUrl?.trim() || "https://api.tiendanube.com/v1",
+    apiBaseUrl: config.baseUrl?.trim() || "https://api.nuvemshop.com.br/v1",
   };
 }
 
@@ -461,6 +607,12 @@ export async function publicManualCredentialsFromProviderConfig(
       credentials[key] = await store.getSecret(secretRefs[key]);
     }
   }
+  if (
+    !credentials.apiKey &&
+    typeof config.publicCredentials?.apiKey === "string"
+  ) {
+    credentials.apiKey = config.publicCredentials.apiKey;
+  }
 
   return {
     ...credentials,
@@ -469,15 +621,19 @@ export async function publicManualCredentialsFromProviderConfig(
         ? "https://sistema.sistemawbuy.com.br/api/v1"
         : requiredConfigText(config, "baseUrl"),
     ordersPath:
-      config.ordersPath?.trim() ||
-      (config.provider === ConnectorProvider.GOOGLE_SHEETS
-        ? ""
-        : config.provider === ConnectorProvider.WBUY
-          ? "/order"
-          : config.provider === ConnectorProvider.ISET ||
-              config.provider === ConnectorProvider.MAGAZORD
-            ? "/pedidos"
-            : "/orders"),
+      config.provider === ConnectorProvider.WBUY &&
+      config.ordersPath?.trim().replace(/\/+$/, "").toLowerCase() === "/orders"
+        ? "/order"
+        : config.ordersPath?.trim() ||
+          (config.provider === ConnectorProvider.GOOGLE_SHEETS
+            ? ""
+            : config.provider === ConnectorProvider.WBUY
+              ? "/order"
+              : config.provider === ConnectorProvider.ISET
+                ? "/pedidos"
+                : config.provider === ConnectorProvider.MAGAZORD
+                  ? "/api/v2/site/pedido"
+                  : "/orders"),
   };
 }
 

@@ -1,4 +1,4 @@
-import { ConnectorProvider, ConnectorStatus } from "@prisma/client";
+import { ConnectorProvider, ConnectorStatus, Prisma } from "@prisma/client";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
@@ -10,10 +10,11 @@ import {
   stableExternalAccountId,
   vaultCredentialFields,
 } from "@/lib/connectors/credentials";
+import { syncEcommerceOrders } from "@/lib/connectors/ecommerce-sync";
+import { isInngestConfigured } from "@/lib/connectors/inngest-config";
+import { IsetClient } from "@/lib/connectors/iset/client";
 import { ManualCommerceClient } from "@/lib/connectors/manual-commerce-client";
-import {
-  normalizeManualProviderCredentials,
-} from "@/lib/connectors/manual-commerce";
+import { normalizeManualProviderCredentials } from "@/lib/connectors/manual-commerce";
 import {
   getActiveProviderConfig,
   publicManualCredentialsFromProviderConfig,
@@ -23,6 +24,9 @@ import { prisma } from "@/lib/db/prisma";
 import { inngest } from "@/lib/jobs/inngest-client";
 
 export const runtime = "nodejs";
+// Heavy iSET stores can take a while on the inline connect sync; give the
+// function room and bound the sync below so it never hits the gateway 504.
+export const maxDuration = 300;
 
 const manualConnectorSchema = z.object({
   provider: z.nativeEnum(ConnectorProvider),
@@ -35,7 +39,10 @@ const manualConnectorSchema = z.object({
   apiPassword: z.string().optional(),
 });
 
-function redirectToConnectors(request: NextRequest, params: Record<string, string>) {
+function redirectToConnectors(
+  request: NextRequest,
+  params: Record<string, string>,
+) {
   const url = new URL("/connectors", request.nextUrl.origin);
   for (const [key, value] of Object.entries(params)) {
     url.searchParams.set(key, value);
@@ -47,16 +54,16 @@ function redirectToConnectors(request: NextRequest, params: Record<string, strin
 export async function POST(request: NextRequest) {
   const context = await getCurrentUserContext();
   const formData = await request.formData();
-  const parsed = manualConnectorSchema.safeParse(Object.fromEntries(formData.entries()));
+  const parsed = manualConnectorSchema.safeParse(
+    Object.fromEntries(formData.entries()),
+  );
 
   if (!parsed.success || !isManualCommerceProvider(parsed.data.provider)) {
     return redirectToConnectors(request, { error: "invalid-manual-connector" });
   }
-
-  if (context.isDemoMode) {
-    return redirectToConnectors(request, { connected: "demo" });
-  }
-  if (!canOperateWorkspaceConnectors(context.user, context.currentMembership.role)) {
+  if (
+    !canOperateWorkspaceConnectors(context.user, context.currentMembership.role)
+  ) {
     return redirectToConnectors(request, { error: "forbidden" });
   }
 
@@ -71,7 +78,8 @@ export async function POST(request: NextRequest) {
         error: "missing-provider-config",
       });
     }
-    const configuredCredentials = await publicManualCredentialsFromProviderConfig(providerConfig);
+    const configuredCredentials =
+      await publicManualCredentialsFromProviderConfig(providerConfig);
     const normalized = normalizeManualProviderCredentials({
       ...configuredCredentials,
       provider: parsed.data.provider,
@@ -86,10 +94,35 @@ export async function POST(request: NextRequest) {
       apiPassword: normalized.apiPassword,
     };
 
-    await new ManualCommerceClient({
-      provider: normalized.provider,
-      credentials: credentialPayload,
-    }).healthCheck();
+    // iSET speaks a different protocol (Basic -> /oauth token -> POST
+    // /order/list) than the generic GET-based manual client. Validate it with
+    // its dedicated client: a successful token exchange proves the creds.
+    // iSET refuses to mint a new token while one is active, so we MUST persist
+    // the token we obtain here and reuse it for the subsequent sync.
+    let isetToken: string | null = null;
+    if (normalized.provider === ConnectorProvider.ISET) {
+      const isetClient = new IsetClient({
+        config: {
+          baseUrl: normalized.baseUrl ?? "",
+          identifier: normalized.apiUser ?? "",
+          secret: normalized.apiKey ?? normalized.apiSecret ?? "",
+        },
+      });
+      await isetClient.healthCheck();
+      isetToken = isetClient.activeToken;
+    } else {
+      await new ManualCommerceClient({
+        provider: normalized.provider,
+        credentials: credentialPayload,
+      }).healthCheck();
+    }
+
+    const baseMetadata: Prisma.InputJsonObject = {
+      credentialMode: "manual",
+      providerConfigId: providerConfig.id,
+      syncMode: isInngestConfigured() ? "inngest" : "inline",
+      ...(isetToken ? { isetToken } : {}),
+    };
 
     const externalAccountId = stableExternalAccountId(
       normalized.provider,
@@ -101,6 +134,7 @@ export async function POST(request: NextRequest) {
       externalAccountId,
       credentials: credentialPayload,
     });
+    const inngestActive = isInngestConfigured();
     const connectorAccount = await prisma.connectorAccount.upsert({
       where: {
         workspaceId_provider_externalAccountId: {
@@ -113,10 +147,7 @@ export async function POST(request: NextRequest) {
         accountName: normalized.storeName,
         status: ConnectorStatus.ACTIVE,
         ...credentialFields,
-        metadata: {
-          credentialMode: "manual",
-          providerConfigId: providerConfig.id,
-        },
+        metadata: baseMetadata,
         lastSyncError: null,
       },
       create: {
@@ -126,20 +157,76 @@ export async function POST(request: NextRequest) {
         accountName: normalized.storeName,
         status: ConnectorStatus.ACTIVE,
         ...credentialFields,
-        metadata: {
-          credentialMode: "manual",
-          providerConfigId: providerConfig.id,
-        },
+        metadata: baseMetadata,
       },
     });
 
-    if (process.env.INNGEST_EVENT_KEY) {
-      await inngest.send(
-        buildConnectorBackfillEvent({
-          provider: normalized.provider,
+    let inlineSyncRan = false;
+    let inlineSyncError: string | null = null;
+
+    if (inngestActive) {
+      try {
+        await inngest.send(
+          buildConnectorBackfillEvent({
+            provider: normalized.provider,
+            connectorAccountId: connectorAccount.id,
+          }),
+        );
+      } catch (err) {
+        inlineSyncError =
+          err instanceof Error ? err.message : "inngest_send_failed";
+      }
+    } else {
+      // Inngest not configured (placeholder keys): run sync inline so dashboard
+      // gets populated immediately. Errors get persisted via syncEcommerceOrders
+      // (which writes lastSyncError) but don't fail the connect flow.
+      const since = new Date();
+      since.setUTCHours(0, 0, 0, 0);
+      since.setUTCDate(since.getUTCDate() - 30);
+      const until = new Date();
+      until.setUTCHours(23, 59, 59, 999);
+
+      try {
+        await syncEcommerceOrders({
           connectorAccountId: connectorAccount.id,
-        }),
-      );
+          range: { since: since.toISOString(), until: until.toISOString() },
+          syncType: "BACKFILL",
+          // ~30s under the 300s limit so a heavy iSET window is cut cleanly and
+          // resumed on the next sync instead of being killed mid-flight (504).
+          deadlineMs: Date.now() + 270_000,
+        });
+        inlineSyncRan = true;
+      } catch (err) {
+        inlineSyncError =
+          err instanceof Error ? err.message : "inline_sync_failed";
+      }
+    }
+
+    if (inlineSyncRan) {
+      // Re-read metadata: syncEcommerceOrders may have refreshed isetToken.
+      // Preserve it (and everything else) instead of overwriting blindly.
+      const current = await prisma.connectorAccount.findUnique({
+        where: { id: connectorAccount.id },
+        select: { metadata: true },
+      });
+      const currentMeta =
+        current?.metadata &&
+        typeof current.metadata === "object" &&
+        !Array.isArray(current.metadata)
+          ? (current.metadata as Record<string, unknown>)
+          : {};
+      await prisma.connectorAccount.update({
+        where: { id: connectorAccount.id },
+        data: {
+          metadata: {
+            ...currentMeta,
+            credentialMode: "manual",
+            providerConfigId: providerConfig.id,
+            syncMode: "inline",
+            inlineLastBackfillAt: new Date().toISOString(),
+          } as Prisma.InputJsonObject,
+        },
+      });
     }
 
     await logAudit({
@@ -150,7 +237,10 @@ export async function POST(request: NextRequest) {
       resourceId: connectorAccount.id,
       metadata: {
         provider: normalized.provider,
-        backfillQueued: Boolean(process.env.INNGEST_EVENT_KEY),
+        backfillQueued: inngestActive,
+        inlineSyncRan,
+        inlineSyncError,
+        syncMode: inngestActive ? "inngest" : "inline",
       },
     });
 
@@ -160,8 +250,13 @@ export async function POST(request: NextRequest) {
     });
   } catch (caught) {
     const message = caught instanceof Error ? caught.message : "unknown";
-    const error = message.includes("Secret not found") ? "missing-provider-config" : "manual-credentials";
+    const error = message.includes("Secret not found")
+      ? "missing-provider-config"
+      : "manual-credentials";
 
-    return redirectToConnectors(request, { provider: parsed.data.provider.toLowerCase(), error });
+    return redirectToConnectors(request, {
+      provider: parsed.data.provider.toLowerCase(),
+      error,
+    });
   }
 }

@@ -3,6 +3,7 @@ import { ConnectorProvider, Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/db/prisma";
 
+import { isApprovedOrderStatus } from "./order-status";
 import {
   dashboardCommerceProviders,
   dashboardTrafficProviders,
@@ -10,6 +11,8 @@ import {
   toDateKey,
   type DashboardPeriod,
 } from "./period";
+
+export { isApprovedOrderStatus };
 
 type NumericLike = Decimal.Value | null | undefined;
 
@@ -28,8 +31,10 @@ export type DashboardOrderRow = {
 
 export type DashboardOrderItemRow = {
   productName: string;
+  categoryName?: string | null;
   quantity: number;
   total: NumericLike;
+  status?: string | null;
   placedAt: Date;
 };
 
@@ -39,9 +44,12 @@ export type DashboardMetricRow = {
   date: Date;
   campaignId: string | null;
   campaignName: string | null;
+  campaignStatus?: string | null;
+  campaignObjective?: string | null;
   spend: NumericLike;
   impressions: bigint | number | null;
   clicks: bigint | number | null;
+  addToCart?: bigint | number | null;
   sessions: bigint | number | null;
   conversions: NumericLike;
   conversionsValue: NumericLike;
@@ -68,6 +76,7 @@ export type DashboardKpi = {
 
 export type DashboardSnapshot = {
   hasData: boolean;
+  fetchError: "schema_error" | "db_error" | null;
   kpis: {
     revenue: DashboardKpi;
     spend: DashboardKpi;
@@ -106,9 +115,20 @@ export type DashboardSnapshot = {
   topCampaigns: Array<{
     campaignId: string;
     campaignName: string;
+    campaignStatus: string | null;
+    campaignObjective: string | null;
     source: ConnectorProvider;
     spend: number;
+    impressions: number;
+    clicks: number;
+    addToCart: number;
+    conversions: number;
     conversionsValue: number;
+    ctr: number;
+    cpc: number | null;
+    costPerAddToCart: number | null;
+    costPerConversion: number | null;
+    conversionsPerCost: number;
     roas: number;
   }>;
   funnel: {
@@ -131,6 +151,7 @@ export type DashboardSnapshot = {
   stateOrders: Array<DashboardBreakdownItem>;
   originMedia: Array<DashboardBreakdownItem>;
   products: Array<DashboardProductRow>;
+  categories: Array<DashboardCategoryRow>;
   connectorRanking: Array<DashboardConnectorRankingRow>;
 };
 
@@ -144,7 +165,15 @@ export type DashboardProductRow = {
   productName: string;
   quantitySold: number;
   revenue: number;
-  status: "available" | "missing_data";
+  averagePrice: number;
+  stockQuantity: number | null;
+};
+
+export type DashboardCategoryRow = {
+  categoryName: string;
+  quantitySold: number;
+  revenue: number;
+  percent: number;
 };
 
 export type DashboardConnectorRankingRow = {
@@ -206,12 +235,19 @@ export function calculateRatioPercent(numerator: number, denominator: number) {
   return round((numerator / denominator) * 100);
 }
 
+// Cap runaway deltas (e.g. previous≈0) so the UI never shows +999900%.
+const DELTA_PERCENT_CAP = 999;
+
 export function calculateDeltaPercent(current: number, previous: number) {
   if (previous === 0) {
-    return current === 0 ? 0 : 100;
+    // No baseline: signal direction, don't fabricate a magnitude.
+    if (current === 0) return 0;
+    return current > 0 ? DELTA_PERCENT_CAP : -DELTA_PERCENT_CAP;
   }
 
-  return round(((current - previous) / Math.abs(previous)) * 100, 1);
+  const raw = ((current - previous) / Math.abs(previous)) * 100;
+  const capped = Math.max(-DELTA_PERCENT_CAP, Math.min(DELTA_PERCENT_CAP, raw));
+  return round(capped, 1);
 }
 
 function kpi(current: number, previous: number): DashboardKpi {
@@ -222,29 +258,19 @@ function kpi(current: number, previous: number): DashboardKpi {
   };
 }
 
-export function isApprovedOrderStatus(status: string | null | undefined) {
-  const normalized = (status ?? "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
-  const rejectedTerms = [
-    "cancel",
-    "cancelado",
-    "refund",
-    "reembolsado",
-    "void",
-    "failed",
-    "falhou",
-    "recusado",
-    "unpaid",
-    "pending",
-    "pendente",
-    "aguardando",
-    "aberto",
-  ];
+function orderCount(order: DashboardOrderRow) {
+  if (order.platform === ConnectorProvider.GOOGLE_SHEETS) {
+    return Math.max(0, order.itemsCount ?? 0);
+  }
 
-  return !rejectedTerms.some((term) => normalized.includes(term));
+  return 1;
 }
+
+function approvedOrderCount(order: DashboardOrderRow) {
+  return isApprovedOrderStatus(order.status) ? orderCount(order) : 0;
+}
+
+// isApprovedOrderStatus is imported from ./order-status and re-exported above.
 
 function applyPercent(items: Array<Omit<DashboardBreakdownItem, "percent">>) {
   const total = items.reduce((sum, item) => sum + item.value, 0);
@@ -256,6 +282,20 @@ function applyPercent(items: Array<Omit<DashboardBreakdownItem, "percent">>) {
       percent: total > 0 ? round((item.value / total) * 100, 1) : 0,
     }))
     .sort((a, b) => b.value - a.value);
+}
+
+function applyCategoryPercent(
+  items: Array<Omit<DashboardCategoryRow, "percent">>,
+) {
+  const total = items.reduce((sum, item) => sum + item.revenue, 0);
+
+  return items
+    .map((item) => ({
+      ...item,
+      revenue: round(item.revenue),
+      percent: total > 0 ? round((item.revenue / total) * 100, 1) : 0,
+    }))
+    .sort((a, b) => b.revenue - a.revenue);
 }
 
 function originLabel(order: DashboardOrderRow) {
@@ -275,19 +315,6 @@ function originLabel(order: DashboardOrderRow) {
   }
 
   return "Sem UTM";
-}
-
-function emptyFunnelStage(
-  id: DashboardSnapshot["funnel"]["stages"][number]["id"],
-  label: string,
-): DashboardSnapshot["funnel"]["stages"][number] {
-  return {
-    id,
-    label,
-    value: 0,
-    available: false,
-    percentOfFirstStage: 0,
-  };
 }
 
 function buildFunnelStages(input: {
@@ -313,8 +340,13 @@ function buildFunnelStages(input: {
 
   return [
     stage("sessions", "Sessões", input.sessions, input.sessions > 0),
-    emptyFunnelStage("add_to_cart", "Adições ao carrinho"),
-    emptyFunnelStage("checkouts", "Checkouts"),
+    stage(
+      "add_to_cart",
+      "Adições ao carrinho",
+      input.addToCart,
+      input.addToCart > 0,
+    ),
+    stage("checkouts", "Checkouts", input.checkouts, input.checkouts > 0),
     stage("purchases", "Compras", input.purchases, input.purchases > 0),
     stage("orders", "Pedidos", input.orders, input.orders > 0),
   ];
@@ -330,10 +362,16 @@ export function buildDashboardSnapshot(input: {
   commerceProviders?: ConnectorProvider[];
 }): DashboardSnapshot {
   const { period } = input;
-  const trafficProviders = input.trafficProviders ?? [...dashboardTrafficProviders];
-  const commerceProviders = input.commerceProviders ?? [...dashboardCommerceProviders];
+  const trafficProviders = input.trafficProviders ?? [
+    ...dashboardTrafficProviders,
+  ];
+  const commerceProviders = input.commerceProviders ?? [
+    ...dashboardCommerceProviders,
+  ];
   const connectorNames = new Map(
-    (input.connectorAccounts ?? []).map((account) => [account.id, account] as const),
+    (input.connectorAccounts ?? []).map(
+      (account) => [account.id, account] as const,
+    ),
   );
   const filteredOrders = input.orders.filter((order) =>
     commerceProviders.includes(order.platform),
@@ -341,46 +379,99 @@ export function buildDashboardSnapshot(input: {
   const filteredMetrics = input.metrics.filter((metric) =>
     trafficProviders.includes(metric.source),
   );
-  const filteredOrderItems = (input.orderItems ?? []).filter((item) =>
-    isWithin(item.placedAt, period.from, period.to),
+  const filteredOrderItems = (input.orderItems ?? []).filter(
+    (item) =>
+      isWithin(item.placedAt, period.from, period.to) &&
+      isApprovedOrderStatus(item.status),
   );
-  const currentOrders = filteredOrders.filter((order) => isWithin(order.placedAt, period.from, period.to));
-  const previousOrders = input.orders.filter((order) =>
-    commerceProviders.includes(order.platform) &&
-    isWithin(order.placedAt, period.comparison.from, period.comparison.to),
+  const currentOrders = filteredOrders.filter((order) =>
+    isWithin(order.placedAt, period.from, period.to),
   );
-  const currentMetrics = filteredMetrics.filter((metric) => isWithin(metric.date, period.from, period.to));
-  const previousMetrics = input.metrics.filter((metric) =>
-    trafficProviders.includes(metric.source) &&
-    isWithin(metric.date, period.comparison.from, period.comparison.to),
+  const previousOrders = input.orders.filter(
+    (order) =>
+      commerceProviders.includes(order.platform) &&
+      isWithin(order.placedAt, period.comparison.from, period.comparison.to),
+  );
+  const currentMetrics = filteredMetrics.filter((metric) =>
+    isWithin(metric.date, period.from, period.to),
+  );
+  const previousMetrics = input.metrics.filter(
+    (metric) =>
+      trafficProviders.includes(metric.source) &&
+      isWithin(metric.date, period.comparison.from, period.comparison.to),
   );
 
-  const revenue = currentOrders.reduce((sum, order) => sum + asNumber(order.orderTotal), 0);
-  const previousRevenue = previousOrders.reduce((sum, order) => sum + asNumber(order.orderTotal), 0);
-  const spend = currentMetrics.reduce((sum, metric) => sum + asNumber(metric.spend), 0);
-  const previousSpend = previousMetrics.reduce((sum, metric) => sum + asNumber(metric.spend), 0);
-  const impressions = currentMetrics.reduce((sum, metric) => sum + asInteger(metric.impressions), 0);
-  const clicks = currentMetrics.reduce((sum, metric) => sum + asInteger(metric.clicks), 0);
-  const sessions = currentMetrics.reduce((sum, metric) => sum + asInteger(metric.sessions), 0);
-  const previousSessions = previousMetrics.reduce((sum, metric) => sum + asInteger(metric.sessions), 0);
+  // Revenue counts only paid/approved orders — pending / cancelled /
+  // refunded amounts are excluded so the headline number matches what
+  // the customer sees in their financial panel.
+  const revenue = currentOrders.reduce(
+    (sum, order) =>
+      sum +
+      (isApprovedOrderStatus(order.status) ? asNumber(order.orderTotal) : 0),
+    0,
+  );
+  const previousRevenue = previousOrders.reduce(
+    (sum, order) =>
+      sum +
+      (isApprovedOrderStatus(order.status) ? asNumber(order.orderTotal) : 0),
+    0,
+  );
+  const spend = currentMetrics.reduce(
+    (sum, metric) => sum + asNumber(metric.spend),
+    0,
+  );
+  const previousSpend = previousMetrics.reduce(
+    (sum, metric) => sum + asNumber(metric.spend),
+    0,
+  );
+  const impressions = currentMetrics.reduce(
+    (sum, metric) => sum + asInteger(metric.impressions),
+    0,
+  );
+  const clicks = currentMetrics.reduce(
+    (sum, metric) => sum + asInteger(metric.clicks),
+    0,
+  );
+  const addToCart = currentMetrics.reduce(
+    (sum, metric) => sum + asInteger(metric.addToCart),
+    0,
+  );
+  const sessions = currentMetrics.reduce(
+    (sum, metric) => sum + asInteger(metric.sessions),
+    0,
+  );
+  const previousSessions = previousMetrics.reduce(
+    (sum, metric) => sum + asInteger(metric.sessions),
+    0,
+  );
   const roas = calculateRoas(revenue, spend);
   const previousRoas = calculateRoas(previousRevenue, previousSpend);
-  const orders = currentOrders.length;
-  const previousOrderCount = previousOrders.length;
-  const approvedOrders = currentOrders.filter((order) =>
-    isApprovedOrderStatus((order as { status?: string | null }).status),
-  ).length;
-  const previousApprovedOrders = previousOrders.filter((order) =>
-    isApprovedOrderStatus((order as { status?: string | null }).status),
-  ).length;
+  const approvedOrders = currentOrders.reduce(
+    (sum, order) => sum + approvedOrderCount(order),
+    0,
+  );
+  const previousApprovedOrders = previousOrders.reduce(
+    (sum, order) => sum + approvedOrderCount(order),
+    0,
+  );
+  const orders = approvedOrders;
+  const previousOrderCount = previousApprovedOrders;
   const averageOrderValue = orders > 0 ? revenue / orders : 0;
-  const previousAverageOrderValue = previousOrderCount > 0 ? previousRevenue / previousOrderCount : 0;
+  const previousAverageOrderValue =
+    previousOrderCount > 0 ? previousRevenue / previousOrderCount : 0;
   const mediaRate = calculateRatioPercent(spend, revenue);
-  const previousMediaRate = calculateRatioPercent(previousSpend, previousRevenue);
+  const previousMediaRate = calculateRatioPercent(
+    previousSpend,
+    previousRevenue,
+  );
   const conversionRate = calculateRatioPercent(orders, sessions);
-  const previousConversionRate = calculateRatioPercent(previousOrderCount, previousSessions);
+  const previousConversionRate = calculateRatioPercent(
+    previousOrderCount,
+    previousSessions,
+  );
   const costPerSession = sessions > 0 ? spend / sessions : 0;
-  const previousCostPerSession = previousSessions > 0 ? previousSpend / previousSessions : 0;
+  const previousCostPerSession =
+    previousSessions > 0 ? previousSpend / previousSessions : 0;
   const daily = new Map(
     listDateKeys(period.from, period.to).map((date) => [
       date,
@@ -416,11 +507,14 @@ export function buildDashboardSnapshot(input: {
   for (const order of currentOrders) {
     const item = daily.get(toDateKey(order.placedAt));
     if (item) {
-      item.revenue += asNumber(order.orderTotal);
-      item.orders += 1;
-      if (isApprovedOrderStatus((order as { status?: string | null }).status)) {
-        item.approvedOrders += 1;
+      const approved = approvedOrderCount(order);
+      // Same rule as the headline revenue: only paid orders count toward the
+      // daily revenue series so the line chart matches the KPI total.
+      if (isApprovedOrderStatus(order.status)) {
+        item.revenue += asNumber(order.orderTotal);
       }
+      item.orders += approved;
+      item.approvedOrders += approved;
     }
   }
 
@@ -441,14 +535,19 @@ export function buildDashboardSnapshot(input: {
   }
 
   const currentDateKeys = listDateKeys(period.from, period.to);
-  const previousDateKeys = listDateKeys(period.comparison.from, period.comparison.to);
+  const previousDateKeys = listDateKeys(
+    period.comparison.from,
+    period.comparison.to,
+  );
   const alignedDates = currentDateKeys.map((date, index) => ({
     current: date,
     previous: previousDateKeys[index],
   }));
   const alignedByPreviousDate = new Map(
     alignedDates
-      .filter((item): item is { current: string; previous: string } => Boolean(item.previous))
+      .filter((item): item is { current: string; previous: string } =>
+        Boolean(item.previous),
+      )
       .map((item) => [item.previous, item.current] as const),
   );
 
@@ -456,11 +555,12 @@ export function buildDashboardSnapshot(input: {
     const currentKey = alignedByPreviousDate.get(toDateKey(order.placedAt));
     const item = currentKey ? daily.get(currentKey) : null;
     if (item) {
-      item.previousRevenue += asNumber(order.orderTotal);
-      item.previousOrders += 1;
-      if (isApprovedOrderStatus((order as { status?: string | null }).status)) {
-        item.previousApprovedOrders += 1;
+      const approved = approvedOrderCount(order);
+      if (isApprovedOrderStatus(order.status)) {
+        item.previousRevenue += asNumber(order.orderTotal);
       }
+      item.previousOrders += approved;
+      item.previousApprovedOrders += approved;
     }
   }
 
@@ -477,8 +577,15 @@ export function buildDashboardSnapshot(input: {
     {
       campaignId: string;
       campaignName: string;
+      campaignStatus: string | null;
+      campaignStatusDate: Date | null;
+      campaignObjective: string | null;
       source: ConnectorProvider;
       spend: number;
+      impressions: number;
+      clicks: number;
+      addToCart: number;
+      conversions: number;
       conversionsValue: number;
     }
   >();
@@ -498,12 +605,36 @@ export function buildDashboardSnapshot(input: {
     const existing = campaigns.get(campaignKey) ?? {
       campaignId,
       campaignName: metric.campaignName ?? "Sem campanha",
+      campaignStatus: metric.campaignStatus ?? null,
+      campaignStatusDate: metric.campaignStatus ? metric.date : null,
+      campaignObjective: metric.campaignObjective ?? null,
       source: metric.source,
       spend: 0,
+      impressions: 0,
+      clicks: 0,
+      addToCart: 0,
+      conversions: 0,
       conversionsValue: 0,
     };
 
     existing.spend += asNumber(metric.spend);
+    // Use the status from the row with the LATEST date — a campaign paused
+    // late in the period (or after a previous sync) must report as paused
+    // even if older rows still carry the old "ACTIVE" snapshot.
+    if (
+      metric.campaignStatus &&
+      (!existing.campaignStatusDate ||
+        metric.date >= existing.campaignStatusDate)
+    ) {
+      existing.campaignStatus = metric.campaignStatus;
+      existing.campaignStatusDate = metric.date;
+    }
+    existing.campaignObjective =
+      existing.campaignObjective ?? metric.campaignObjective ?? null;
+    existing.impressions += asInteger(metric.impressions);
+    existing.clicks += asInteger(metric.clicks);
+    existing.addToCart += asInteger(metric.addToCart);
+    existing.conversions += asNumber(metric.conversions);
     existing.conversionsValue += asNumber(metric.conversionsValue);
     campaigns.set(campaignKey, existing);
 
@@ -530,7 +661,10 @@ export function buildDashboardSnapshot(input: {
     providerPerformance.set(metric.source, provider);
   }
 
-  const purchases = currentMetrics.reduce((sum, metric) => sum + asNumber(metric.conversions), 0);
+  const purchases = currentMetrics.reduce(
+    (sum, metric) => sum + asNumber(metric.conversions),
+    0,
+  );
   const originRevenue = new Map<string, number>();
   const stateRevenue = new Map<string, number>();
   const stateOrderCounts = new Map<string, number>();
@@ -538,6 +672,14 @@ export function buildDashboardSnapshot(input: {
     string,
     {
       productName: string;
+      quantitySold: number;
+      revenue: number;
+    }
+  >();
+  const categoryRevenue = new Map<
+    string,
+    {
+      categoryName: string;
       quantitySold: number;
       revenue: number;
     }
@@ -555,14 +697,27 @@ export function buildDashboardSnapshot(input: {
   >();
 
   for (const order of currentOrders) {
-    originRevenue.set(originLabel(order), (originRevenue.get(originLabel(order)) ?? 0) + asNumber(order.orderTotal));
+    const approved = isApprovedOrderStatus(order.status);
+    const approvedCount = approved ? orderCount(order) : 0;
+    const orderTotal = asNumber(order.orderTotal);
+    const revenueContribution = approved ? orderTotal : 0;
+
+    if (approved) {
+      originRevenue.set(
+        originLabel(order),
+        (originRevenue.get(originLabel(order)) ?? 0) + revenueContribution,
+      );
+    }
     const shippingState = order.shippingState?.trim();
-    if (shippingState) {
+    if (approved && shippingState) {
       stateRevenue.set(
         shippingState,
-        (stateRevenue.get(shippingState) ?? 0) + asNumber(order.orderTotal),
+        (stateRevenue.get(shippingState) ?? 0) + revenueContribution,
       );
-      stateOrderCounts.set(shippingState, (stateOrderCounts.get(shippingState) ?? 0) + 1);
+      stateOrderCounts.set(
+        shippingState,
+        (stateOrderCounts.get(shippingState) ?? 0) + approvedCount,
+      );
     }
     const account = connectorNames.get(order.connectorAccountId);
     const existing = connectorRanking.get(order.connectorAccountId) ?? {
@@ -574,8 +729,8 @@ export function buildDashboardSnapshot(input: {
       orders: 0,
     };
 
-    existing.revenue += asNumber(order.orderTotal);
-    existing.orders += 1;
+    existing.revenue += revenueContribution;
+    existing.orders += approvedCount;
     connectorRanking.set(order.connectorAccountId, existing);
   }
 
@@ -594,15 +749,16 @@ export function buildDashboardSnapshot(input: {
     connectorRanking.set(metric.connectorAccountId, existing);
   }
 
-  const originMedia = applyPercent(
-    Array.from(originRevenue.entries()).map(([label, value]) => ({ label, value })).slice(0, 8),
-  );
-  const stateSales = applyPercent(
-    Array.from(stateRevenue.entries()).map(([label, value]) => ({ label, value })).slice(0, 8),
-  );
-  const stateOrders = applyPercent(
-    Array.from(stateOrderCounts.entries()).map(([label, value]) => ({ label, value })).slice(0, 8),
-  );
+  // Sort by value BEFORE slicing — Map iteration is insertion order, so a bare
+  // slice(0,8) would keep the first 8 labels seen, not the top 8 by value.
+  const topByValue = (entries: Map<string, number>) =>
+    Array.from(entries.entries())
+      .map(([label, value]) => ({ label, value }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 8);
+  const originMedia = applyPercent(topByValue(originRevenue));
+  const stateSales = applyPercent(topByValue(stateRevenue));
+  const stateOrders = applyPercent(topByValue(stateOrderCounts));
   for (const item of filteredOrderItems) {
     const existing = productRevenue.get(item.productName) ?? {
       productName: item.productName,
@@ -612,10 +768,20 @@ export function buildDashboardSnapshot(input: {
     existing.quantitySold += item.quantity;
     existing.revenue += asNumber(item.total);
     productRevenue.set(item.productName, existing);
+
+    const categoryName = item.categoryName?.trim() || "Sem categoria";
+    const category = categoryRevenue.get(categoryName) ?? {
+      categoryName,
+      quantitySold: 0,
+      revenue: 0,
+    };
+    category.quantitySold += item.quantity;
+    category.revenue += asNumber(item.total);
+    categoryRevenue.set(categoryName, category);
   }
   const funnelStages = buildFunnelStages({
     sessions,
-    addToCart: 0,
+    addToCart,
     checkouts: 0,
     purchases: round(purchases),
     orders,
@@ -623,6 +789,7 @@ export function buildDashboardSnapshot(input: {
 
   return {
     hasData: currentOrders.length > 0 || currentMetrics.length > 0,
+    fetchError: null as null,
     kpis: {
       revenue: kpi(revenue, previousRevenue),
       spend: kpi(spend, previousSpend),
@@ -637,16 +804,22 @@ export function buildDashboardSnapshot(input: {
     },
     lineSeries: Array.from(daily.values()).map((item) => ({
       ...item,
-      averageOrderValue: item.orders > 0 ? round(item.revenue / item.orders) : 0,
+      averageOrderValue:
+        item.orders > 0 ? round(item.revenue / item.orders) : 0,
       mediaRate: calculateRatioPercent(item.spend, item.revenue),
-      previousMediaRate: calculateRatioPercent(item.previousSpend, item.previousRevenue),
+      previousMediaRate: calculateRatioPercent(
+        item.previousSpend,
+        item.previousRevenue,
+      ),
       conversionRate: calculateRatioPercent(item.orders, item.sessions),
       costPerSession: item.sessions > 0 ? round(item.spend / item.sessions) : 0,
       roas: calculateRoas(item.revenue, item.spend),
       metaRoas: calculateRoas(item.metaConversionsValue, item.metaSpend),
       googleRoas: calculateRoas(item.googleConversionsValue, item.googleSpend),
       previousAverageOrderValue:
-        item.previousOrders > 0 ? round(item.previousRevenue / item.previousOrders) : 0,
+        item.previousOrders > 0
+          ? round(item.previousRevenue / item.previousOrders)
+          : 0,
       revenue: round(item.revenue),
       spend: round(item.spend),
       previousRevenue: round(item.previousRevenue),
@@ -655,22 +828,28 @@ export function buildDashboardSnapshot(input: {
     platformRoas: {
       meta: kpi(
         calculateRoas(
-          providerPerformance.get(ConnectorProvider.META_ADS)?.conversionsValue ?? 0,
+          providerPerformance.get(ConnectorProvider.META_ADS)
+            ?.conversionsValue ?? 0,
           providerPerformance.get(ConnectorProvider.META_ADS)?.spend ?? 0,
         ),
         calculateRoas(
-          providerPerformance.get(ConnectorProvider.META_ADS)?.previousConversionsValue ?? 0,
-          providerPerformance.get(ConnectorProvider.META_ADS)?.previousSpend ?? 0,
+          providerPerformance.get(ConnectorProvider.META_ADS)
+            ?.previousConversionsValue ?? 0,
+          providerPerformance.get(ConnectorProvider.META_ADS)?.previousSpend ??
+            0,
         ),
       ),
       google: kpi(
         calculateRoas(
-          providerPerformance.get(ConnectorProvider.GOOGLE_ADS)?.conversionsValue ?? 0,
+          providerPerformance.get(ConnectorProvider.GOOGLE_ADS)
+            ?.conversionsValue ?? 0,
           providerPerformance.get(ConnectorProvider.GOOGLE_ADS)?.spend ?? 0,
         ),
         calculateRoas(
-          providerPerformance.get(ConnectorProvider.GOOGLE_ADS)?.previousConversionsValue ?? 0,
-          providerPerformance.get(ConnectorProvider.GOOGLE_ADS)?.previousSpend ?? 0,
+          providerPerformance.get(ConnectorProvider.GOOGLE_ADS)
+            ?.previousConversionsValue ?? 0,
+          providerPerformance.get(ConnectorProvider.GOOGLE_ADS)
+            ?.previousSpend ?? 0,
         ),
       ),
     },
@@ -678,17 +857,41 @@ export function buildDashboardSnapshot(input: {
       .map((campaign) => ({
         ...campaign,
         spend: round(campaign.spend),
+        impressions: Math.round(campaign.impressions),
+        clicks: Math.round(campaign.clicks),
+        addToCart: Math.round(campaign.addToCart),
+        conversions: round(campaign.conversions),
         conversionsValue: round(campaign.conversionsValue),
+        ctr: calculateRatioPercent(campaign.clicks, campaign.impressions),
+        cpc:
+          campaign.clicks > 0 ? round(campaign.spend / campaign.clicks) : null,
+        costPerAddToCart:
+          campaign.addToCart > 0
+            ? round(campaign.spend / campaign.addToCart)
+            : null,
+        costPerConversion:
+          campaign.conversions > 0
+            ? round(campaign.spend / campaign.conversions)
+            : null,
+        conversionsPerCost: calculateRoas(
+          campaign.conversionsValue,
+          campaign.spend,
+        ),
         roas: calculateRoas(campaign.conversionsValue, campaign.spend),
       }))
-      .filter((campaign) => campaign.spend > 0)
+      // Keep campaigns with any activity (spend OR impressions OR clicks).
+      // Active campaigns with zero spend but visible delivery still surface.
+      .filter(
+        (campaign) =>
+          campaign.spend > 0 || campaign.impressions > 0 || campaign.clicks > 0,
+      )
       .sort((a, b) => b.roas - a.roas)
       .slice(0, 10),
     funnel: {
       impressions,
       clicks,
       sessions,
-      addToCart: 0,
+      addToCart,
       checkouts: 0,
       purchases: round(purchases),
       orders,
@@ -701,10 +904,17 @@ export function buildDashboardSnapshot(input: {
       .map((product) => ({
         ...product,
         revenue: round(product.revenue),
-        status: "available" as const,
+        averagePrice:
+          product.quantitySold > 0
+            ? round(product.revenue / product.quantitySold)
+            : 0,
+        stockQuantity: null,
       }))
       .sort((a, b) => b.revenue - a.revenue)
       .slice(0, 10),
+    categories: applyCategoryPercent(
+      Array.from(categoryRevenue.values()),
+    ).slice(0, 10),
     connectorRanking: Array.from(connectorRanking.values())
       .filter((row) => row.revenue > 0 || row.spend > 0 || row.orders > 0)
       .map((row) => ({
@@ -719,14 +929,42 @@ export function buildDashboardSnapshot(input: {
   };
 }
 
+function buildZeroedDashboardSnapshot(
+  input: {
+    period: DashboardPeriod;
+    trafficProviders: ConnectorProvider[];
+    commerceProviders: ConnectorProvider[];
+  },
+  fetchError: "schema_error" | "db_error",
+): DashboardSnapshot {
+  const snapshot = buildDashboardSnapshot({
+    period: input.period,
+    orders: [],
+    orderItems: [],
+    metrics: [],
+    connectorAccounts: [],
+    trafficProviders: input.trafficProviders,
+    commerceProviders: input.commerceProviders,
+  });
+
+  return {
+    ...snapshot,
+    fetchError,
+  };
+}
+
 export async function getDashboardSnapshot(input: {
   workspaceId: string;
   period: DashboardPeriod;
   trafficProviders?: ConnectorProvider[];
   commerceProviders?: ConnectorProvider[];
-}) {
-  const trafficProviders = input.trafficProviders ?? [...dashboardTrafficProviders];
-  const commerceProviders = input.commerceProviders ?? [...dashboardCommerceProviders];
+}): Promise<DashboardSnapshot> {
+  const trafficProviders = input.trafficProviders ?? [
+    ...dashboardTrafficProviders,
+  ];
+  const commerceProviders = input.commerceProviders ?? [
+    ...dashboardCommerceProviders,
+  ];
 
   const queryInput = {
     workspaceId: input.workspaceId,
@@ -735,70 +973,100 @@ export async function getDashboardSnapshot(input: {
     commerceProviders,
   };
 
-  const [orders, orderItems, metrics, connectorAccounts] = await Promise.all([
-    findDashboardOrders(queryInput),
-    findDashboardOrderItems(queryInput),
-    prisma.dailyMetric.findMany({
-      where: {
-        workspaceId: input.workspaceId,
-        source: {
-          in: trafficProviders,
-        },
-        date: {
-          gte: input.period.comparison.from,
-          lte: input.period.to,
-        },
-      },
-      select: {
-        connectorAccountId: true,
-        source: true,
-        date: true,
-        campaignId: true,
-        campaignName: true,
-        spend: true,
-        impressions: true,
-        clicks: true,
-        sessions: true,
-        conversions: true,
-        conversionsValue: true,
-      },
-    }),
-    prisma.connectorAccount.findMany({
-      where: {
-        workspaceId: input.workspaceId,
-        OR: [
-          {
-            provider: {
-              in: trafficProviders,
-            },
+  try {
+    const [orders, orderItems, metrics, connectorAccounts] = await Promise.all([
+      findDashboardOrders(queryInput),
+      findDashboardOrderItems(queryInput),
+      prisma.dailyMetric.findMany({
+        where: {
+          workspaceId: input.workspaceId,
+          source: {
+            in: trafficProviders,
           },
-          {
-            provider: {
-              in: commerceProviders,
-            },
+          date: {
+            gte: input.period.comparison.from,
+            lt: dayAfter(input.period.to),
           },
-        ],
-      },
-      select: {
-        id: true,
-        provider: true,
-        accountName: true,
-      },
-    }),
-  ]);
+        },
+        select: {
+          connectorAccountId: true,
+          source: true,
+          date: true,
+          campaignId: true,
+          campaignName: true,
+          campaignStatus: true,
+          campaignObjective: true,
+          spend: true,
+          impressions: true,
+          clicks: true,
+          addToCart: true,
+          sessions: true,
+          conversions: true,
+          conversionsValue: true,
+        },
+      }),
+      prisma.connectorAccount.findMany({
+        where: {
+          workspaceId: input.workspaceId,
+          OR: [
+            {
+              provider: {
+                in: trafficProviders,
+              },
+            },
+            {
+              provider: {
+                in: commerceProviders,
+              },
+            },
+          ],
+        },
+        select: {
+          id: true,
+          provider: true,
+          accountName: true,
+        },
+      }),
+    ]);
 
-  return buildDashboardSnapshot({
-    period: input.period,
-    orders,
-    orderItems,
-    metrics,
-    connectorAccounts,
-    trafficProviders,
-    commerceProviders,
-  });
+    return buildDashboardSnapshot({
+      period: input.period,
+      orders,
+      orderItems,
+      metrics,
+      connectorAccounts,
+      trafficProviders,
+      commerceProviders,
+    });
+  } catch (error: unknown) {
+    const code =
+      error instanceof Prisma.PrismaClientKnownRequestError ? error.code : null;
+    const fetchError: "schema_error" | "db_error" =
+      code === "P2021" || code === "P2022" ? "schema_error" : "db_error";
+
+    return buildZeroedDashboardSnapshot(
+      {
+        period: input.period,
+        trafficProviders,
+        commerceProviders,
+      },
+      fetchError,
+    );
+  }
 }
 
-async function findDashboardOrders(input: DashboardSnapshotQueryInput): Promise<DashboardOrderRow[]> {
+// period.to and period.comparison.from/to are normalized to start-of-UTC-day
+// upstream. For date-range filters we want the entire `to` day included, so
+// we add one day and use `lt` instead of `lte`.
+function dayAfter(date: Date): Date {
+  const next = new Date(date);
+  next.setUTCDate(next.getUTCDate() + 1);
+  return next;
+}
+
+async function findDashboardOrders(
+  input: DashboardSnapshotQueryInput,
+): Promise<DashboardOrderRow[]> {
   const where = {
     workspaceId: input.workspaceId,
     platform: {
@@ -806,7 +1074,7 @@ async function findDashboardOrders(input: DashboardSnapshotQueryInput): Promise<
     },
     placedAt: {
       gte: input.period.comparison.from,
-      lte: input.period.to,
+      lt: dayAfter(input.period.to),
     },
   };
 
@@ -858,7 +1126,7 @@ async function findDashboardOrderItems(
   input: DashboardSnapshotQueryInput,
 ): Promise<DashboardOrderItemRow[]> {
   try {
-    return await prisma.ecommerceOrderItem.findMany({
+    const rows = await prisma.ecommerceOrderItem.findMany({
       where: {
         workspaceId: input.workspaceId,
         ecommerceOrder: {
@@ -868,7 +1136,7 @@ async function findDashboardOrderItems(
         },
         placedAt: {
           gte: input.period.from,
-          lte: input.period.to,
+          lt: dayAfter(input.period.to),
         },
       },
       select: {
@@ -876,8 +1144,22 @@ async function findDashboardOrderItems(
         quantity: true,
         total: true,
         placedAt: true,
+        ecommerceOrder: {
+          select: {
+            status: true,
+          },
+        },
       },
     });
+
+    return rows.map((row) => ({
+      productName: row.productName,
+      quantity: row.quantity,
+      total: row.total,
+      placedAt: row.placedAt,
+      status: row.ecommerceOrder.status,
+      categoryName: null,
+    }));
   } catch (error) {
     if (isMissingDashboardSchemaError(error)) {
       return [];

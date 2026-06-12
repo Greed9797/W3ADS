@@ -7,20 +7,21 @@ import {
   ShoppingCart,
   TrendingUp,
 } from "lucide-react";
+import { ConnectorProvider } from "@prisma/client";
 
-import { DashboardDonut } from "@/components/dashboards/dashboard-donut";
+import { DashboardAutoRefresh } from "@/components/dashboard/dashboard-auto-refresh";
 import { DashboardFilterBar } from "@/components/dashboards/dashboard-filter-bar";
 import { OperationalKpiCard } from "@/components/dashboards/operational-kpi-card";
 import {
-  ConnectorRankingTable,
+  CampaignsTable,
+  CategoriesTable,
   ProductsTable,
+  StateSalesTable,
 } from "@/components/dashboards/operational-tables";
-import { TopCampaignsTable } from "@/components/dashboards/top-campaigns-table";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getCurrentUserContext } from "@/lib/auth/current";
 import { getDashboardSnapshot } from "@/lib/metrics/aggregator";
-import { getDemoDashboardSnapshot } from "@/lib/metrics/demo";
 import { getDashboardFilters } from "@/lib/metrics/period";
 import {
   formatCurrencyBR,
@@ -40,17 +41,19 @@ type DashboardSeriesKey =
   | "previousSpend"
   | "previousMediaRate";
 
-export default async function DashboardPage({ searchParams }: DashboardPageProps) {
+export default async function DashboardPage({
+  searchParams,
+}: DashboardPageProps) {
   const context = await getCurrentUserContext();
+
   const params = await searchParams;
   const filters = getDashboardFilters(params);
   const { period } = filters;
-  const snapshot = context.isDemoMode
-    ? getDemoDashboardSnapshot(period)
-    : await getDashboardSnapshot({
-        workspaceId: context.currentWorkspace.id,
-        period,
-      });
+  const showComparison = filters.comparisonEnabled;
+  const snapshot = await getDashboardSnapshot({
+    workspaceId: context.currentWorkspace.id,
+    period,
+  });
 
   const empty = !snapshot.hasData;
   const chartSeries = (
@@ -62,22 +65,52 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
       value: item[currentKey],
       previousValue: item[previousKey],
     }));
+  const campaignTables = [
+    {
+      provider: ConnectorProvider.META_ADS,
+      title: "Campanhas Meta Ads",
+      description: "Performance das campanhas Meta no período selecionado.",
+    },
+    {
+      provider: ConnectorProvider.GOOGLE_ADS,
+      title: "Campanhas Google Ads",
+      description:
+        "Performance das campanhas Google Ads no período selecionado.",
+    },
+  ];
 
   return (
     <div className="space-y-5">
+      <DashboardAutoRefresh />
       <section>
         <DashboardFilterBar filters={filters} showProviderFilters={false} />
       </section>
+
+      {snapshot.fetchError ? (
+        <Card>
+          <CardContent className="border border-dashed border-[var(--danger)] bg-[var(--bg-elevated)] p-4 text-sm text-[var(--danger)]">
+            <strong>Erro ao carregar dados.</strong>{" "}
+            {snapshot.fetchError === "schema_error"
+              ? "Houve uma divergência de schema no banco. Avise o suporte."
+              : "Houve uma falha de conexão com o banco. Tente novamente em instantes ou avise o suporte."}
+          </CardContent>
+        </Card>
+      ) : null}
 
       {empty ? (
         <Card>
           <CardContent className="grid min-h-48 place-items-center border border-dashed border-[var(--border-strong)] bg-[var(--bg-elevated)] p-8 text-center">
             <div className="max-w-md">
-              <BarChart3 aria-hidden className="mx-auto mb-4 size-8 text-[var(--w3-red)]" />
-              <h2 className="text-lg font-semibold">Sem dados nesse período.</h2>
+              <BarChart3
+                aria-hidden
+                className="mx-auto mb-4 size-8 text-[var(--w3-red)]"
+              />
+              <h2 className="text-lg font-semibold">
+                Sem dados nesse período.
+              </h2>
               <p className="mt-2 text-sm text-[var(--text-secondary)]">
-                Tente outro intervalo ou conecte uma nova conta. Não vamos estimar valores
-                para preencher visual.
+                Tente outro intervalo ou conecte uma nova conta. Não vamos
+                estimar valores para preencher visual.
               </p>
               <Button className="mt-5" asChild>
                 <a href="/connectors">Conectar minha primeira conta</a>
@@ -87,13 +120,14 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
         </Card>
       ) : null}
 
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_1.35fr]">
+      <section className="grid items-start gap-4 md:grid-cols-2 xl:grid-cols-[1.35fr_1fr_1fr_0.72fr]">
         <OperationalKpiCard
           accent="var(--w3-red)"
           icon={<ReceiptText aria-hidden className="size-4" />}
           kpi={snapshot.kpis.revenue}
           label="Faturamento"
           previousValue={formatCurrencyBR(snapshot.kpis.revenue.previousValue)}
+          showComparison={showComparison}
           chart={{
             data: chartSeries("revenue", "previousRevenue"),
             format: "currency",
@@ -106,6 +140,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
           kpi={snapshot.kpis.spend}
           label="Valor investido"
           previousValue={formatCurrencyBR(snapshot.kpis.spend.previousValue)}
+          showComparison={showComparison}
           chart={{
             data: chartSeries("spend", "previousSpend"),
             format: "currency",
@@ -118,6 +153,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
           kpi={snapshot.kpis.mediaRate}
           label="Custo de mídia"
           previousValue={formatPercentBR(snapshot.kpis.mediaRate.previousValue)}
+          showComparison={showComparison}
           chart={{
             data: chartSeries("mediaRate", "previousMediaRate"),
             format: "percent",
@@ -126,11 +162,13 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
         />
         <OperationalKpiCard
           accent="var(--w3-red)"
-          icon={<PackageCheck aria-hidden className="size-4" />}
-          kpi={snapshot.kpis.approvedOrders}
-          label="Pedidos aprovados"
-          previousValue={formatIntegerBR(snapshot.kpis.approvedOrders.previousValue)}
-          value={formatIntegerBR(snapshot.kpis.approvedOrders.value)}
+          compact
+          icon={<ShoppingCart aria-hidden className="size-4" />}
+          kpi={snapshot.kpis.orders}
+          label="Qtd. de vendas"
+          previousValue={formatIntegerBR(snapshot.kpis.orders.previousValue)}
+          showComparison={showComparison}
+          value={formatIntegerBR(snapshot.kpis.orders.value)}
         />
       </section>
 
@@ -141,7 +179,10 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
           icon={<MousePointerClick aria-hidden className="size-4" />}
           kpi={snapshot.kpis.costPerSession}
           label="Custo por sessão"
-          previousValue={formatCurrencyBR(snapshot.kpis.costPerSession.previousValue)}
+          previousValue={formatCurrencyBR(
+            snapshot.kpis.costPerSession.previousValue,
+          )}
+          showComparison={showComparison}
           value={formatCurrencyBR(snapshot.kpis.costPerSession.value)}
         />
         <OperationalKpiCard
@@ -150,7 +191,10 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
           icon={<MousePointerClick aria-hidden className="size-4" />}
           kpi={snapshot.kpis.conversionRate}
           label="Taxa de conversão"
-          previousValue={formatPercentBR(snapshot.kpis.conversionRate.previousValue)}
+          previousValue={formatPercentBR(
+            snapshot.kpis.conversionRate.previousValue,
+          )}
+          showComparison={showComparison}
           value={formatPercentBR(snapshot.kpis.conversionRate.value)}
         />
         <OperationalKpiCard
@@ -159,57 +203,40 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
           icon={<ShoppingCart aria-hidden className="size-4" />}
           kpi={snapshot.kpis.averageOrderValue}
           label="Ticket médio"
-          previousValue={formatCurrencyBR(snapshot.kpis.averageOrderValue.previousValue)}
+          previousValue={formatCurrencyBR(
+            snapshot.kpis.averageOrderValue.previousValue,
+          )}
+          showComparison={showComparison}
           value={formatCurrencyBR(snapshot.kpis.averageOrderValue.value)}
         />
+      </section>
+
+      <section>
+        <Card>
+          <CardHeader>
+            <div>
+              <CardTitle>Total de vendas por Estado</CardTitle>
+              <p className="mt-1 text-sm text-[var(--text-secondary)]">
+                Distribuição de receita por UF a partir dos pedidos
+                normalizados.
+              </p>
+            </div>
+            <ReceiptText aria-hidden className="size-4 text-[var(--w3-red)]" />
+          </CardHeader>
+          <CardContent>
+            <StateSalesTable states={snapshot.stateSales} />
+          </CardContent>
+        </Card>
       </section>
 
       <section className="grid gap-4 xl:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle>Total de vendas por Estado</CardTitle>
-            <ReceiptText aria-hidden className="size-4 text-[var(--w3-red)]" />
-          </CardHeader>
-          <CardContent>
-            <DashboardDonut
-              centerLabel="Vendas"
-              centerValue={
-                snapshot.stateSales.length
-                  ? formatCurrencyBR(
-                      snapshot.stateSales.reduce((sum, item) => sum + item.value, 0),
-                    )
-                  : "—"
-              }
-              data={snapshot.stateSales}
-            />
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Total de pedidos por Estado</CardTitle>
-            <PackageCheck aria-hidden className="size-4 text-[var(--w3-gold)]" />
-          </CardHeader>
-          <CardContent>
-            <DashboardDonut
-              centerLabel="Pedidos"
-              centerValue={formatIntegerBR(
-                snapshot.stateOrders.reduce((sum, item) => sum + item.value, 0),
-              )}
-              data={snapshot.stateOrders}
-              valueKind="integer"
-            />
-          </CardContent>
-        </Card>
-      </section>
-
-      <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-        <Card>
-          <CardHeader>
             <div>
               <CardTitle>Produtos</CardTitle>
               <p className="mt-1 text-sm text-[var(--text-secondary)]">
-                Produtos vendidos quando o conector entregar itens de pedido.
+                Produtos vendidos no período a partir dos itens de pedido
+                normalizados.
               </p>
             </div>
             <PackageCheck aria-hidden className="size-4 text-[var(--w3-red)]" />
@@ -222,33 +249,42 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
         <Card>
           <CardHeader>
             <div>
-              <CardTitle>Top 10 campanhas por ROAS</CardTitle>
+              <CardTitle>Categorias</CardTitle>
               <p className="mt-1 text-sm text-[var(--text-secondary)]">
-                Receita atribuída dividida pelo investimento.
+                Categorias que mais vendem no período. Itens sem categoria ficam
+                agrupados em Sem categoria.
               </p>
             </div>
-            <BarChart3 aria-hidden className="size-4 text-[var(--w3-gold)]" />
+            <PackageCheck aria-hidden className="size-4 text-[var(--w3-red)]" />
           </CardHeader>
           <CardContent>
-            <TopCampaignsTable campaigns={snapshot.topCampaigns} />
+            <CategoriesTable categories={snapshot.categories} />
           </CardContent>
         </Card>
       </section>
 
-      <Card>
-        <CardHeader>
-          <div>
-            <CardTitle>Ranking interno de lojas e contas</CardTitle>
-            <p className="mt-1 text-sm text-[var(--text-secondary)]">
-              Agrupado por conector do workspace atual.
-            </p>
-          </div>
-          <TrendingUp aria-hidden className="size-4 text-[var(--w3-red)]" />
-        </CardHeader>
-        <CardContent>
-          <ConnectorRankingTable ranking={snapshot.connectorRanking} />
-        </CardContent>
-      </Card>
+      <section className="grid gap-4">
+        {campaignTables.map((table) => (
+          <Card key={table.provider}>
+            <CardHeader>
+              <div>
+                <CardTitle>{table.title}</CardTitle>
+                <p className="mt-1 text-sm text-[var(--text-secondary)]">
+                  {table.description}
+                </p>
+              </div>
+              <TrendingUp aria-hidden className="size-4 text-[var(--w3-red)]" />
+            </CardHeader>
+            <CardContent>
+              <CampaignsTable
+                campaigns={snapshot.topCampaigns.filter(
+                  (campaign) => campaign.source === table.provider,
+                )}
+              />
+            </CardContent>
+          </Card>
+        ))}
+      </section>
     </div>
   );
 }

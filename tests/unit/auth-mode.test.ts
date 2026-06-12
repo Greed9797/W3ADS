@@ -1,32 +1,26 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { isAuthDisabled } from "@/lib/auth/mode";
+import { getDevBypassEmail } from "@/lib/auth/mode";
 
 describe("auth mode", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
   });
 
-  it("keeps demo mode enabled by default outside production", () => {
+  it("returns DEV_AUTH_BYPASS_EMAIL only outside production", () => {
+    vi.stubEnv("DEV_AUTH_BYPASS_EMAIL", "admin@w3ads.local");
+
     vi.stubEnv("NODE_ENV", "development");
-    vi.stubEnv("AUTH_DISABLED", undefined);
+    expect(getDevBypassEmail()).toBe("admin@w3ads.local");
 
-    expect(isAuthDisabled()).toBe(true);
+    vi.stubEnv("NODE_ENV", "production");
+    expect(getDevBypassEmail()).toBeNull();
   });
 
-  it("never disables auth by default in production", () => {
-    vi.stubEnv("NODE_ENV", "production");
-    vi.stubEnv("AUTH_DISABLED", undefined);
+  it("returns null when bypass email is unset", () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("DEV_AUTH_BYPASS_EMAIL", "");
 
-    expect(isAuthDisabled()).toBe(false);
-  });
-
-  it("honors explicit production auth mode flags", () => {
-    vi.stubEnv("NODE_ENV", "production");
-    vi.stubEnv("AUTH_DISABLED", "true");
-    expect(isAuthDisabled()).toBe(true);
-
-    vi.stubEnv("AUTH_DISABLED", "false");
-    expect(isAuthDisabled()).toBe(false);
+    expect(getDevBypassEmail()).toBeNull();
   });
 });

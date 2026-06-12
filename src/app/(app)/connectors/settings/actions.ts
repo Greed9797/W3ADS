@@ -6,6 +6,7 @@ import { redirect } from "next/navigation";
 
 import { logAudit } from "@/lib/audit/log";
 import { getCurrentUserContext } from "@/lib/auth/current";
+import { resolveAppOrigin } from "@/lib/auth/origin";
 import { assertCanManageProviderConfigs } from "@/lib/auth/platform-permissions";
 import {
   getProviderConfig,
@@ -37,19 +38,43 @@ function providerConfigFromFormData(formData: FormData): ProviderConfigInput {
   const publicCredentials: Record<string, string> = {};
   const secrets: Record<string, string> = {};
 
-  for (const key of ["appId", "clientId", "apiKey", "loginCustomerId"]) {
+  for (const key of [
+    "appId",
+    "clientId",
+    "loginCustomerId",
+    "leadEventId",
+    "scheduledEventId",
+    "shopDomain",
+  ]) {
     const value = getString(formData, key);
     if (value) publicCredentials[key] = value;
   }
 
-  for (const key of ["appSecret", "clientSecret", "developerToken", "apiSecret", "apiUser", "apiPassword"]) {
+  const apiKey = getString(formData, "apiKey");
+  if (apiKey) {
+    if (isManualCommerceProvider(provider)) {
+      secrets.apiKey = apiKey;
+    } else {
+      publicCredentials.apiKey = apiKey;
+    }
+  }
+
+  for (const key of [
+    "appSecret",
+    "clientSecret",
+    "developerToken",
+    "apiSecret",
+    "apiUser",
+    "apiPassword",
+  ]) {
     const value = getString(formData, key);
     if (value) secrets[key] = value;
   }
 
   return {
     provider,
-    status: getString(formData, "status") === "INACTIVE" ? "INACTIVE" : "ACTIVE",
+    status:
+      getString(formData, "status") === "INACTIVE" ? "INACTIVE" : "ACTIVE",
     redirectUri: getString(formData, "redirectUri") || null,
     scopes: getString(formData, "scopes") || null,
     apiVersion: getString(formData, "apiVersion") || null,
@@ -67,10 +92,20 @@ export async function saveProviderConfigAction(formData: FormData) {
   const config = providerConfigFromFormData(formData);
   const redirectPath = `/connectors/settings/${config.provider.toLowerCase()}`;
 
-  if (context.isDemoMode) {
-    redirect(`${redirectPath}?saved=demo`);
+  const autoRedirectProviders: Partial<Record<ConnectorProvider, string>> = {
+    [ConnectorProvider.SHOPIFY]: "/api/connectors/shopify/callback",
+    [ConnectorProvider.GOOGLE_ADS]: "/api/connectors/google-ads/callback",
+    [ConnectorProvider.GA4]: "/api/connectors/google-analytics/callback",
+    [ConnectorProvider.META_ADS]: "/api/connectors/meta/callback",
+    [ConnectorProvider.NUVEMSHOP]: "/api/connectors/nuvemshop/callback",
+  };
+  const autoCallbackPath = autoRedirectProviders[config.provider];
+  if (autoCallbackPath && !config.redirectUri) {
+    const origin = await resolveAppOrigin();
+    config.redirectUri = `${origin}${autoCallbackPath}`;
   }
 
+  let saveError: string | null = null;
   try {
     await upsertConnectorProviderConfig({
       workspaceId: context.currentWorkspace.id,
@@ -89,23 +124,26 @@ export async function saveProviderConfigAction(formData: FormData) {
 
     revalidatePath("/connectors");
     revalidatePath("/connectors/settings");
-    redirect(`${redirectPath}?saved=1`);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Erro ao salvar configuração.";
-    redirect(`${redirectPath}?error=${encodeURIComponent(message)}`);
+    saveError =
+      error instanceof Error ? error.message : "Erro ao salvar configuração.";
   }
+
+  if (saveError) {
+    redirect(`${redirectPath}?error=${encodeURIComponent(saveError)}`);
+  }
+
+  redirect(`${redirectPath}?saved=1`);
 }
 
 export async function validateProviderConfigAction(formData: FormData) {
   const context = await getCurrentUserContext();
   assertCanManageProviderConfigs(context.user);
   const config = providerConfigFromFormData(formData);
-  const existing = context.isDemoMode
-    ? null
-    : await getProviderConfig({
-        workspaceId: context.currentWorkspace.id,
-        provider: config.provider,
-      });
+  const existing = await getProviderConfig({
+    workspaceId: context.currentWorkspace.id,
+    provider: config.provider,
+  });
   const validation = validateProviderConfigInput({
     ...config,
     existingSecretRefs: parseSecretRefs(existing?.secretRefs),
@@ -114,10 +152,6 @@ export async function validateProviderConfigAction(formData: FormData) {
 
   if (!validation.success) {
     redirect(`${redirectPath}?error=${encodeURIComponent(validation.error)}`);
-  }
-
-  if (context.isDemoMode) {
-    redirect(`${redirectPath}?validated=demo`);
   }
 
   await logAudit({
@@ -139,10 +173,6 @@ export async function deleteProviderConfigAction(formData: FormData) {
   const context = await getCurrentUserContext();
   assertCanManageProviderConfigs(context.user);
   const provider = getProvider(getString(formData, "provider"));
-
-  if (context.isDemoMode) {
-    redirect("/connectors/settings?deleted=demo");
-  }
 
   const existing = await prisma.connectorProviderConfig.findUnique({
     where: {

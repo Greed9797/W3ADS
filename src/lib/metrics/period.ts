@@ -1,6 +1,11 @@
 import { ConnectorProvider } from "@prisma/client";
 
-export type DashboardPeriodPreset = "real_time" | "day" | "week" | "month" | "custom";
+export type DashboardPeriodPreset =
+  | "real_time"
+  | "day"
+  | "week"
+  | "month"
+  | "custom";
 
 export type DashboardComparisonPeriod = {
   from: Date;
@@ -25,6 +30,7 @@ export type DashboardFilters = {
   period: DashboardPeriod;
   trafficProviders: ConnectorProvider[];
   commerceProviders: ConnectorProvider[];
+  comparisonEnabled: boolean;
 };
 
 type PeriodParams = Record<string, string | string[] | undefined>;
@@ -33,7 +39,6 @@ export const dashboardTrafficProviders = [
   ConnectorProvider.META_ADS,
   ConnectorProvider.GOOGLE_ADS,
   ConnectorProvider.GA4,
-  ConnectorProvider.TIKTOK_ADS,
 ] as const;
 
 export const dashboardCommerceProviders = [
@@ -53,7 +58,6 @@ export const dashboardTrafficProviderLabels: Record<
   [ConnectorProvider.META_ADS]: "Meta",
   [ConnectorProvider.GOOGLE_ADS]: "Google Ads",
   [ConnectorProvider.GA4]: "Google Analytics",
-  [ConnectorProvider.TIKTOK_ADS]: "TikTok",
 };
 
 export const dashboardCommerceProviderLabels: Record<
@@ -81,7 +85,9 @@ function firstParam(value: string | string[] | undefined) {
 }
 
 function startOfUtcDay(date: Date) {
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  return new Date(
+    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
+  );
 }
 
 function addDays(date: Date, days: number) {
@@ -104,13 +110,21 @@ function parseDateKey(value: string | undefined) {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
-function buildPeriod(preset: DashboardPeriodPreset, from: Date, to: Date): DashboardPeriod {
+function buildPeriod(
+  preset: DashboardPeriodPreset,
+  from: Date,
+  to: Date,
+): DashboardPeriod {
   const normalizedFrom = startOfUtcDay(from);
   const normalizedTo = startOfUtcDay(to);
   const days = diffDaysInclusive(normalizedFrom, normalizedTo);
   const previousTo = addDays(normalizedFrom, -1);
   const previousFrom = addDays(previousTo, -(days - 1));
-  const comparison = buildComparisonPeriod(previousFrom, previousTo, "previous");
+  const comparison = buildComparisonPeriod(
+    previousFrom,
+    previousTo,
+    "previous",
+  );
 
   return {
     preset,
@@ -141,7 +155,10 @@ function buildComparisonPeriod(
   };
 }
 
-function withManualComparison(period: DashboardPeriod, params: PeriodParams): DashboardPeriod {
+function withManualComparison(
+  period: DashboardPeriod,
+  params: PeriodParams,
+): DashboardPeriod {
   const compareFrom = parseDateKey(firstParam(params.compareFrom));
   const compareTo = parseDateKey(firstParam(params.compareTo));
 
@@ -159,8 +176,16 @@ function withManualComparison(period: DashboardPeriod, params: PeriodParams): Da
   };
 }
 
-function normalizePreset(value: string | undefined): DashboardPeriodPreset | "legacy_30d" | null {
-  if (value === "real_time" || value === "day" || value === "week" || value === "month" || value === "custom") {
+function normalizePreset(
+  value: string | undefined,
+): DashboardPeriodPreset | "legacy_30d" | null {
+  if (
+    value === "real_time" ||
+    value === "day" ||
+    value === "week" ||
+    value === "month" ||
+    value === "custom"
+  ) {
     return value;
   }
 
@@ -215,7 +240,11 @@ export function getDashboardPeriod(
   }
 
   if (preset === "month") {
-    period = buildPeriod("month", new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1)), today);
+    period = buildPeriod(
+      "month",
+      new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1)),
+      today,
+    );
     return withManualComparison(period, params);
   }
 
@@ -234,13 +263,20 @@ export function getDashboardPeriod(
     }
   }
 
-  period = buildPeriod("month", new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1)), today);
+  period = buildPeriod(
+    "month",
+    new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1)),
+    today,
+  );
   return withManualComparison(period, params);
 }
 
 function splitProviderParam(value: string | string[] | undefined) {
   const values = Array.isArray(value) ? value : value ? [value] : [];
-  return values.flatMap((item) => item.split(",")).map((item) => item.trim()).filter(Boolean);
+  return values
+    .flatMap((item) => item.split(","))
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 function parseProviders<T extends ConnectorProvider>(
@@ -261,6 +297,10 @@ export function getDashboardFilters(
   return {
     period: getDashboardPeriod(params, now),
     trafficProviders: parseProviders(params.traffic, dashboardTrafficProviders),
-    commerceProviders: parseProviders(params.commerce, dashboardCommerceProviders),
+    commerceProviders: parseProviders(
+      params.commerce,
+      dashboardCommerceProviders,
+    ),
+    comparisonEnabled: false,
   };
 }

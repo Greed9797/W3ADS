@@ -1,7 +1,8 @@
-import { ConnectorProvider, ConnectorStatus } from "@prisma/client";
+import { ConnectorProvider, ConnectorStatus, Prisma } from "@prisma/client";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { logAudit } from "@/lib/audit/log";
+import { ecommerceDailyDedupeHash } from "@/lib/connectors/ecommerce-sync";
 import {
   buildShopifyConfigFromProviderConfig,
   getActiveProviderConfig,
@@ -11,11 +12,9 @@ import {
   normalizeShopDomain,
   verifyShopifyWebhookHmac,
 } from "@/lib/connectors/shopify/oauth";
-import {
-  dailyDedupeHash,
-  mapShopifyOrderToEcommerceOrder,
-} from "@/lib/connectors/shopify/sync";
+import { mapShopifyOrderToEcommerceOrder } from "@/lib/connectors/shopify/sync";
 import { prisma } from "@/lib/db/prisma";
+import { isApprovedOrderStatus } from "@/lib/metrics/order-status";
 
 export const runtime = "nodejs";
 
@@ -37,36 +36,44 @@ async function refreshShopifyDailyMetric(input: {
   placedAt: Date;
 }) {
   const bounds = dayBounds(input.placedAt);
-  const aggregate = await prisma.ecommerceOrder.aggregate({
+
+  // Re-aggregate only orders with approved financial status. Reading the rows
+  // is mandatory (status enum lives on the row, not on a column we could
+  // aggregate directly), but we keep the projection narrow.
+  const dayOrders = await prisma.ecommerceOrder.findMany({
     where: {
       connectorAccountId: input.connectorAccountId,
-      placedAt: {
-        gte: bounds.start,
-        lte: bounds.end,
-      },
+      placedAt: { gte: bounds.start, lte: bounds.end },
     },
-    _sum: { orderTotal: true },
-    _count: { _all: true },
+    select: { orderTotal: true, status: true },
   });
-  const dedupeHash = dailyDedupeHash({
+
+  const approved = dayOrders.filter((row) => isApprovedOrderStatus(row.status));
+  const revenue = approved
+    .reduce(
+      (sum, row) => sum.plus(new Prisma.Decimal(row.orderTotal ?? 0)),
+      new Prisma.Decimal(0),
+    )
+    .toFixed(2);
+  const orders = BigInt(approved.length);
+
+  const dedupeHash = ecommerceDailyDedupeHash({
     workspaceId: input.workspaceId,
     connectorAccountId: input.connectorAccountId,
+    provider: ConnectorProvider.SHOPIFY,
     date: bounds.day,
   });
 
   await prisma.dailyMetric.upsert({
     where: { dedupeHash },
-    update: {
-      revenue: aggregate._sum.orderTotal?.toString() ?? "0",
-      orders: BigInt(aggregate._count._all),
-    },
+    update: { revenue, orders },
     create: {
       workspaceId: input.workspaceId,
       connectorAccountId: input.connectorAccountId,
       date: bounds.start,
       source: ConnectorProvider.SHOPIFY,
-      revenue: aggregate._sum.orderTotal?.toString() ?? "0",
-      orders: BigInt(aggregate._count._all),
+      revenue,
+      orders,
       dedupeHash,
     },
   });
@@ -79,7 +86,10 @@ export async function POST(request: NextRequest) {
   const shopHeader = request.headers.get("x-shopify-shop-domain");
 
   if (!shopHeader) {
-    return NextResponse.json({ error: "Missing Shopify shop domain" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Missing Shopify shop domain" },
+      { status: 400 },
+    );
   }
   const shop = normalizeShopDomain(shopHeader);
   const candidateConnectors = await prisma.connectorAccount.findMany({
@@ -91,7 +101,13 @@ export async function POST(request: NextRequest) {
   });
 
   if (candidateConnectors.length === 0) {
-    return NextResponse.json({ error: "Shopify connector is not configured" }, { status: 503 });
+    // Uniform 401 — identical to a bad-signature response below — so an
+    // unauthenticated caller can't enumerate which shop domains are registered
+    // by distinguishing 503 (unknown shop) from 401 (known shop, bad HMAC).
+    return NextResponse.json(
+      { error: "Invalid Shopify webhook signature" },
+      { status: 401 },
+    );
   }
 
   const verifiedConnectors = [];
@@ -111,12 +127,32 @@ export async function POST(request: NextRequest) {
   }
 
   if (verifiedConnectors.length === 0) {
-    return NextResponse.json({ error: "Invalid Shopify webhook signature" }, { status: 401 });
+    return NextResponse.json(
+      { error: "Invalid Shopify webhook signature" },
+      { status: 401 },
+    );
+  }
+
+  // Two workspaces sharing the same `apiSecret` for the same shop would let
+  // one workspace's webhook leak into the other. Treat that as a config error
+  // and refuse to fan out — operator must rotate one of the secrets.
+  if (verifiedConnectors.length > 1) {
+    console.error(
+      `[shopify-webhook] ambiguous shop=${shop} matched ${verifiedConnectors.length} connectors; refusing fan-out`,
+    );
+    return NextResponse.json(
+      { error: "Ambiguous Shopify connector — secret collision" },
+      { status: 409 },
+    );
   }
 
   if (topic === "app/uninstalled") {
+    // Scope to the workspace whose secret verified the HMAC. The same shop
+    // domain can be connected in more than one workspace; an uninstall from one
+    // must not revoke the others' connectors.
     await prisma.connectorAccount.updateMany({
       where: {
+        workspaceId: verifiedConnectors[0].workspaceId,
         provider: ConnectorProvider.SHOPIFY,
         externalAccountId: shop,
       },

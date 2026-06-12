@@ -7,7 +7,7 @@ const config = {
   clientId: "app-id",
   clientSecret: "app-secret",
   redirectUri: "http://localhost:3000/api/connectors/nuvemshop/callback",
-  apiBaseUrl: "https://api.tiendanube.com/v1",
+  apiBaseUrl: "https://api.nuvemshop.com.br/v1",
 };
 
 describe("Nuvemshop OAuth", () => {
@@ -15,7 +15,7 @@ describe("Nuvemshop OAuth", () => {
     const url = buildNuvemshopOAuthUrl({ state: "csrf-state", config });
 
     expect(url.toString()).toBe(
-      "https://www.tiendanube.com/apps/app-id/authorize?state=csrf-state",
+      "https://www.nuvemshop.com.br/apps/app-id/authorize?state=csrf-state",
     );
   });
 
@@ -45,8 +45,11 @@ describe("Nuvemshop OAuth", () => {
       storeId: "2093261",
     });
 
-    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
-    expect(url).toBe("https://www.tiendanube.com/apps/authorize/token");
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
+    expect(url).toBe("https://www.nuvemshop.com.br/apps/authorize/token");
     expect(init.method).toBe("POST");
     expect(init.headers).toEqual({ "Content-Type": "application/json" });
     expect(JSON.parse(String(init.body))).toEqual({
@@ -61,14 +64,19 @@ describe("Nuvemshop OAuth", () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
-        Response.json([{ id: 1, total: "100.00", created_at: "2026-05-01T10:00:00Z" }], {
-          headers: {
-            Link: '<https://api.tiendanube.com/v1/2093261/orders?page=2>; rel="next"',
+        Response.json(
+          [{ id: 1, total: "100.00", created_at: "2026-05-01T10:00:00Z" }],
+          {
+            headers: {
+              Link: '<https://api.nuvemshop.com.br/v1/2093261/orders?page=2>; rel="next"',
+            },
           },
-        }),
+        ),
       )
       .mockResolvedValueOnce(
-        Response.json([{ id: 2, total: "50.00", created_at: "2026-05-02T10:00:00Z" }]),
+        Response.json([
+          { id: 2, total: "50.00", created_at: "2026-05-02T10:00:00Z" },
+        ]),
       );
     const client = new NuvemshopClient({
       config,
@@ -90,7 +98,7 @@ describe("Nuvemshop OAuth", () => {
     });
     expect(firstInit.headers).not.toHaveProperty("Authorization");
     expect(String(fetchMock.mock.calls[1][0])).toBe(
-      "https://api.tiendanube.com/v1/2093261/orders?page=2",
+      "https://api.nuvemshop.com.br/v1/2093261/orders?page=2",
     );
   });
 });

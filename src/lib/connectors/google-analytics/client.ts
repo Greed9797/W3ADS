@@ -42,7 +42,11 @@ export type GoogleAnalyticsSessionMetric = {
   sessions: string;
 };
 
-async function fetchJson<T>(url: string, fetchImpl: FetchImpl, init: RequestInit): Promise<T> {
+async function fetchJson<T>(
+  url: string,
+  fetchImpl: FetchImpl,
+  init: RequestInit,
+): Promise<T> {
   const response = await fetchImpl(url, init);
   const body = await response.text();
   const json = body ? JSON.parse(body) : null;
@@ -87,11 +91,15 @@ export class GoogleAnalyticsClient {
       redirect_uri: this.config.redirectUri,
     });
 
-    return fetchJson<GoogleTokenResponse>("https://oauth2.googleapis.com/token", this.fetchImpl, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: params.toString(),
-    });
+    return fetchJson<GoogleTokenResponse>(
+      "https://oauth2.googleapis.com/token",
+      this.fetchImpl,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: params.toString(),
+      },
+    );
   }
 
   async refreshAccessToken(refreshToken: string) {
@@ -102,14 +110,20 @@ export class GoogleAnalyticsClient {
       grant_type: "refresh_token",
     });
 
-    return fetchJson<GoogleTokenResponse>("https://oauth2.googleapis.com/token", this.fetchImpl, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: params.toString(),
-    });
+    return fetchJson<GoogleTokenResponse>(
+      "https://oauth2.googleapis.com/token",
+      this.fetchImpl,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: params.toString(),
+      },
+    );
   }
 
-  async listProperties(accessToken: string): Promise<GoogleAnalyticsProperty[]> {
+  async listProperties(
+    accessToken: string,
+  ): Promise<GoogleAnalyticsProperty[]> {
     const response = await fetchJson<AccountSummariesResponse>(
       "https://analyticsadmin.googleapis.com/v1beta/accountSummaries",
       this.fetchImpl,
@@ -121,14 +135,18 @@ export class GoogleAnalyticsClient {
     return (response.accountSummaries ?? []).flatMap((account) =>
       (account.propertySummaries ?? []).flatMap((property) => {
         const propertyId = propertyIdFromResourceName(property.property);
-        if (!propertyId || property.propertyType === "PROPERTY_TYPE_UNIVERSAL_ANALYTICS") {
+        if (
+          !propertyId ||
+          property.propertyType === "PROPERTY_TYPE_UNIVERSAL_ANALYTICS"
+        ) {
           return [];
         }
 
         return [
           {
             propertyId,
-            propertyResourceName: property.property ?? `properties/${propertyId}`,
+            propertyResourceName:
+              property.property ?? `properties/${propertyId}`,
             accountResourceName: account.account ?? null,
             accountName: account.displayName ?? "Conta Google Analytics",
             propertyName: property.displayName ?? `Propriedade ${propertyId}`,
@@ -151,7 +169,15 @@ export class GoogleAnalyticsClient {
         method: "POST",
         headers: bearerHeaders(input.accessToken),
         body: JSON.stringify({
-          dateRanges: [{ startDate: input.since, endDate: input.until }],
+          // GA4 Data API requires YYYY-MM-DD; full ISO timestamps trigger
+          // INVALID_ARGUMENT "startDate must be YYYY-MM-DD, NdaysAgo,
+          // yesterday, or today."
+          dateRanges: [
+            {
+              startDate: input.since.slice(0, 10),
+              endDate: input.until.slice(0, 10),
+            },
+          ],
           dimensions: [{ name: "date" }, { name: "sessionSourceMedium" }],
           metrics: [{ name: "sessions" }],
           limit: 100000,

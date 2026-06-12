@@ -1,10 +1,15 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { ConnectorProvider } from "@prisma/client";
 
-import { getCurrentUserContext } from "@/lib/auth/current";
+import {
+  getCurrentUserContext,
+  resolveConnectorWorkspaceAccess,
+} from "@/lib/auth/current";
 import { canOperateWorkspaceConnectors } from "@/lib/auth/platform-permissions";
 import { buildGoogleAdsOAuthUrl } from "@/lib/connectors/google-ads/oauth";
 import { GOOGLE_ADS_OAUTH_STATE_COOKIE } from "@/lib/connectors/google-ads/state";
+import { syntheticProviderConfigFromDefaults } from "@/lib/connectors/global-defaults";
+import { isNextControlFlowError } from "@/lib/connectors/oauth-route-error";
 import { createConnectorOAuthState } from "@/lib/connectors/oauth-state";
 import {
   buildGoogleAdsConfigFromProviderConfig,
@@ -13,7 +18,10 @@ import {
 
 export const runtime = "nodejs";
 
-function redirectToConnectors(request: NextRequest, params: Record<string, string>) {
+function redirectToConnectors(
+  request: NextRequest,
+  params: Record<string, string>,
+) {
   const url = new URL("/connectors", request.nextUrl.origin);
 
   for (const [key, value] of Object.entries(params)) {
@@ -24,41 +32,81 @@ function redirectToConnectors(request: NextRequest, params: Record<string, strin
 }
 
 export async function GET(request: NextRequest) {
-  const context = await getCurrentUserContext();
+  try {
+    const context = await getCurrentUserContext();
 
-  if (context.isDemoMode) {
-    return redirectToConnectors(request, { provider: "google-ads", connected: "demo" });
-  }
-  if (!canOperateWorkspaceConnectors(context.user, context.currentMembership.role)) {
-    return redirectToConnectors(request, { provider: "google-ads", error: "forbidden" });
-  }
+    // The target workspace is carried EXPLICITLY in the `ws` query param (set by
+    // the connectors page from the workspace shown in the "Conectando para…"
+    // banner). This removes any dependency on the request cookie, which can
+    // drift/drop and otherwise fall back to the oldest workspace (W3 Dev). The
+    // requested workspace is always re-validated against the user's access.
+    const requestedWorkspaceId = request.nextUrl.searchParams.get("ws");
+    let targetWorkspaceId = context.currentWorkspace.id;
+    let targetRole = context.currentMembership.role;
+    if (requestedWorkspaceId && requestedWorkspaceId !== targetWorkspaceId) {
+      const access = await resolveConnectorWorkspaceAccess({
+        userId: context.user.id,
+        workspaceId: requestedWorkspaceId,
+      });
+      if (!access) {
+        return redirectToConnectors(request, {
+          provider: "google-ads",
+          error: "forbidden",
+        });
+      }
+      targetWorkspaceId = requestedWorkspaceId;
+      targetRole = access.role;
+    }
 
-  const providerConfig = await getActiveProviderConfig({
-    workspaceId: context.currentWorkspace.id,
-    provider: ConnectorProvider.GOOGLE_ADS,
-  });
-  if (!providerConfig) {
+    if (!canOperateWorkspaceConnectors(context.user, targetRole)) {
+      return redirectToConnectors(request, {
+        provider: "google-ads",
+        error: "forbidden",
+      });
+    }
+
+    const providerConfig =
+      (await getActiveProviderConfig({
+        workspaceId: targetWorkspaceId,
+        provider: ConnectorProvider.GOOGLE_ADS,
+      })) ??
+      syntheticProviderConfigFromDefaults(
+        targetWorkspaceId,
+        ConnectorProvider.GOOGLE_ADS,
+      );
+    if (!providerConfig) {
+      return redirectToConnectors(request, {
+        provider: "google-ads",
+        error: "missing-provider-config",
+      });
+    }
+    const config = await buildGoogleAdsConfigFromProviderConfig(providerConfig);
+
+    const state = createConnectorOAuthState({
+      provider: "GOOGLE_ADS",
+      userId: context.user.id,
+      workspaceId: targetWorkspaceId,
+    });
+    const response = NextResponse.redirect(
+      buildGoogleAdsOAuthUrl({ state, config }),
+    );
+
+    response.cookies.set(GOOGLE_ADS_OAUTH_STATE_COOKIE, state, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+      maxAge: 60 * 10,
+    });
+
+    return response;
+  } catch (error: unknown) {
+    if (isNextControlFlowError(error)) throw error;
+    const message = error instanceof Error ? error.message : "unknown";
+    console.error(`[google-ads/connect] start failed: ${message}`);
     return redirectToConnectors(request, {
       provider: "google-ads",
-      error: "missing-provider-config",
+      error: "oauth-failed",
     });
   }
-  const config = await buildGoogleAdsConfigFromProviderConfig(providerConfig);
-
-  const state = createConnectorOAuthState({
-    provider: "GOOGLE_ADS",
-    userId: context.user.id,
-    workspaceId: context.currentWorkspace.id,
-  });
-  const response = NextResponse.redirect(buildGoogleAdsOAuthUrl({ state, config }));
-
-  response.cookies.set(GOOGLE_ADS_OAUTH_STATE_COOKIE, state, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    maxAge: 60 * 10,
-  });
-
-  return response;
 }

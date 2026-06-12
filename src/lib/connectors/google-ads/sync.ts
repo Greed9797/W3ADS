@@ -11,9 +11,16 @@ import {
   getActiveProviderConfig,
 } from "@/lib/connectors/provider-config";
 import { prisma } from "@/lib/db/prisma";
-import { buildSyncJobCreateInput, type ProductionSyncType } from "@/lib/jobs/sync-operations";
+import {
+  buildSyncJobCreateInput,
+  type ProductionSyncType,
+} from "@/lib/jobs/sync-operations";
 
-import { GoogleAdsClient, type GoogleAdsCampaignMetric } from "./client";
+import {
+  GoogleAdsApiError,
+  GoogleAdsClient,
+  type GoogleAdsCampaignMetric,
+} from "./client";
 
 export type GoogleAdsSyncRange = {
   since: string;
@@ -23,7 +30,9 @@ export type GoogleAdsSyncRange = {
 const tokenRefreshSkewMs = 5 * 60 * 1000;
 
 function tokenExpiresAt(expiresInSeconds: number | undefined) {
-  return expiresInSeconds ? new Date(Date.now() + expiresInSeconds * 1000) : null;
+  return expiresInSeconds
+    ? new Date(Date.now() + expiresInSeconds * 1000)
+    : null;
 }
 
 export function googleAdsTokenNeedsRefresh(
@@ -76,12 +85,15 @@ export function mapGoogleAdsMetricToDailyMetric(input: {
     source: ConnectorProvider.GOOGLE_ADS,
     campaignId: metric.campaignId,
     campaignName: metric.campaignName,
+    campaignStatus: metric.campaignStatus,
+    campaignObjective: metric.campaignObjective,
     adsetId: null,
     adsetName: null,
     adId: null,
     spend: metric.spend,
     impressions: asBigInt(metric.impressions),
     clicks: asBigInt(metric.clicks),
+    addToCart: null,
     conversions: metric.conversions,
     conversionsValue: metric.conversionsValue,
     sessions: null,
@@ -167,23 +179,30 @@ export async function syncGoogleAdsDailyMetrics(input: {
       since: input.range.since,
       until: input.range.until,
       loginCustomerId:
-        connector.metadata && typeof connector.metadata === "object" && "loginCustomerId" in connector.metadata
+        connector.metadata &&
+        typeof connector.metadata === "object" &&
+        "loginCustomerId" in connector.metadata
           ? String(connector.metadata.loginCustomerId)
           : undefined,
     });
 
-    for (const metric of metrics) {
-      const payload = mapGoogleAdsMetricToDailyMetric({
+    const payloads = metrics.map((metric) =>
+      mapGoogleAdsMetricToDailyMetric({
         workspaceId: connector.workspaceId,
         connectorAccountId: connector.id,
         metric,
-      });
-
-      await prisma.dailyMetric.upsert({
-        where: { dedupeHash: payload.dedupeHash },
-        update: payload,
-        create: payload,
-      });
+      }),
+    );
+    if (payloads.length > 0) {
+      await prisma.$transaction(
+        payloads.map((payload) =>
+          prisma.dailyMetric.upsert({
+            where: { dedupeHash: payload.dedupeHash },
+            update: payload,
+            create: payload,
+          }),
+        ),
+      );
     }
 
     await prisma.connectorAccount.update({
@@ -205,8 +224,20 @@ export async function syncGoogleAdsDailyMetrics(input: {
 
     return { rowsUpserted: metrics.length };
   } catch (caught) {
-    const message = caught instanceof Error ? caught.message : "Unknown Google Ads sync error";
-    const status = message.includes("refresh token") ? ConnectorStatus.TOKEN_EXPIRED : ConnectorStatus.ERROR;
+    let message =
+      caught instanceof Error
+        ? caught.message
+        : "Unknown Google Ads sync error";
+    if (
+      caught instanceof GoogleAdsApiError &&
+      caught.body &&
+      !message.includes(":")
+    ) {
+      message = `${message} | body: ${caught.body.slice(0, 200)}`;
+    }
+    const status = message.includes("refresh token")
+      ? ConnectorStatus.TOKEN_EXPIRED
+      : ConnectorStatus.ERROR;
 
     await prisma.connectorAccount.update({
       where: { id: input.connectorAccountId },

@@ -9,22 +9,24 @@ import { prisma } from "@/lib/db/prisma";
 export async function bootstrapW3AdminAction() {
   const context = await getCurrentUserContext();
 
-  if (context.isDemoMode) {
-    redirect("/connectors/settings?bootstrapped=demo");
-  }
+  // Atomic conditional elevation: a single UPDATE that promotes this user to
+  // ADMIN_MASTER only if NO platform admin exists yet. Two concurrent requests
+  // can no longer both observe zero admins and both elevate (TOCTOU). The
+  // string literals are implicitly cast to the PlatformRole enum by Postgres.
+  const affected = await prisma.$executeRaw`
+    UPDATE "w3ads"."User"
+    SET "platformRole" = 'ADMIN_MASTER'
+    WHERE "id" = ${context.user.id}
+      AND NOT EXISTS (
+        SELECT 1 FROM "w3ads"."User" existing
+        WHERE existing."platformRole" IN ('ADMIN_MASTER', 'W3_ADMIN')
+      )
+  `;
 
-  const existingAdmins = await prisma.user.count({
-    where: { platformRole: { in: ["ADMIN_MASTER", "W3_ADMIN"] } },
-  });
-
-  if (existingAdmins > 0) {
+  if (affected === 0) {
+    // An admin already exists (or another concurrent bootstrap won the race).
     redirect("/connectors");
   }
-
-  await prisma.user.update({
-    where: { id: context.user.id },
-    data: { platformRole: "ADMIN_MASTER" },
-  });
 
   await logAudit({
     action: "connector.provider_config.update",

@@ -57,12 +57,17 @@ model Account {
 }
 
 model Session {
-  id           String   @id @default(cuid())
+  id           String    @id @default(cuid())
   userId       String
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   expires      DateTime
-  sessionToken String   @unique
-  createdAt    DateTime @default(now())
+  sessionToken String    @unique
+  createdAt    DateTime  @default(now())
+  /// Sliding-window activity marker. Updated lazily on each request once per
+  /// `SESSION_TOUCH_INTERVAL_MS`. Sessions idle for more than
+  /// `SESSION_IDLE_INVALIDATE_MS` are rejected even when `expires` is in the
+  /// future.
+  lastSeenAt   DateTime?
 }
 
 model VerificationToken {
@@ -86,9 +91,28 @@ model Workspace {
   connectorProviderConfigs ConnectorProviderConfig[]
   dashboards               Dashboard[]
   dailyMetrics             DailyMetric[]
+  ecommerceOrders          EcommerceOrder[]
+  ecommerceOrderItems      EcommerceOrderItem[]
   auditLogs                AuditLog[]
   invites                  WorkspaceInvite[]
   betaFeedbacks            BetaFeedback[]
+  syncJobs                 SyncJob[]
+  syncState                WorkspaceSyncState?
+}
+
+model WorkspaceSyncState {
+  id                String    @id @default(cuid())
+  workspaceId       String    @unique
+  workspace         Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  lastSyncedAt      DateTime?
+  lastSyncStartedAt DateTime?
+  lastSyncStatus    String?
+  lastSyncError     String?
+  syncCount         Int       @default(0)
+  triggeredBy       String?
+  updatedAt         DateTime  @updatedAt
+
+  @@index([lastSyncedAt])
 }
 
 enum WorkspacePlan {
@@ -116,7 +140,10 @@ model WorkspaceInvite {
   workspace   Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   email       String
   role        MemberRole
-  token       String     @unique
+  // Legacy plaintext token — kept nullable for backwards-compatibility with
+  // invites issued before tokenHash existed. New invites set only `tokenHash`.
+  token       String?    @unique
+  tokenHash   String?    @unique
   invitedById String
   invitedBy   User       @relation("WorkspaceInviteInviter", fields: [invitedById], references: [id], onDelete: Cascade)
   acceptedAt  DateTime?
@@ -135,26 +162,32 @@ enum MemberRole {
 }
 
 model ConnectorAccount {
-  id                        String            @id @default(cuid())
+  id                        String               @id @default(cuid())
   workspaceId               String
-  workspace                 Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspace                 Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   provider                  ConnectorProvider
   externalAccountId         String
   accountName               String
-  status                    ConnectorStatus   @default(ACTIVE)
+  status                    ConnectorStatus      @default(ACTIVE)
   accessTokenCiphertext     String
   refreshTokenCiphertext    String?
   tokenIv                   String
   tokenAuthTag              String
-  tokenKeyVersion           String            @default("v1")
+  tokenKeyVersion           String               @default("v1")
   credentialSecretId        String?
   refreshCredentialSecretId String?
   tokenExpiresAt            DateTime?
   metadata                  Json?
   lastSyncedAt              DateTime?
   lastSyncError             String?
-  createdAt                 DateTime          @default(now())
-  updatedAt                 DateTime          @updatedAt
+  historicalSyncedAt        DateTime?
+  historicalBackfillUntil   DateTime?
+  createdAt                 DateTime             @default(now())
+  updatedAt                 DateTime             @updatedAt
+  dailyMetrics              DailyMetric[]
+  ecommerceOrders           EcommerceOrder[]
+  ecommerceOrderItems       EcommerceOrderItem[]
+  syncJobs                  SyncJob[]
 
   @@unique([workspaceId, provider, externalAccountId])
   @@index([workspaceId, provider])
@@ -221,7 +254,6 @@ enum ConnectorProvider {
   GOOGLE_SHEETS
   GA4
   SEARCH_CONSOLE
-  TIKTOK_ADS
 }
 
 enum ConnectorStatus {
@@ -236,18 +268,24 @@ model DailyMetric {
   workspaceId        String
   workspace          Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   connectorAccountId String
+  connectorAccount   ConnectorAccount  @relation(fields: [connectorAccountId], references: [id], onDelete: Cascade)
   date               DateTime          @db.Date
   source             ConnectorProvider
   campaignId         String?
   campaignName       String?
+  campaignStatus     String?
+  campaignObjective  String?
   adsetId            String?
   adsetName          String?
   adId               String?
   spend              Decimal?          @db.Decimal(14, 2)
   impressions        BigInt?
   clicks             BigInt?
+  addToCart          BigInt?
   conversions        Decimal?          @db.Decimal(14, 2)
   conversionsValue   Decimal?          @db.Decimal(14, 2)
+  leads              BigInt?
+  scheduledEvents    BigInt?
   sessions           BigInt?
   orders             BigInt?
   revenue            Decimal?          @db.Decimal(14, 2)
@@ -261,15 +299,17 @@ model DailyMetric {
 }
 
 model EcommerceOrder {
-  id                 String            @id @default(cuid())
+  id                 String               @id @default(cuid())
   workspaceId        String
+  workspace          Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   connectorAccountId String
+  connectorAccount   ConnectorAccount     @relation(fields: [connectorAccountId], references: [id], onDelete: Cascade)
   externalOrderId    String
   platform           ConnectorProvider
   orderNumber        String?
   customerEmail      String?
-  orderTotal         Decimal           @db.Decimal(14, 2)
-  orderCurrency      String            @default("BRL")
+  orderTotal         Decimal              @db.Decimal(14, 2)
+  orderCurrency      String               @default("BRL")
   itemsCount         Int
   status             String
   shippingState      String?
@@ -277,29 +317,33 @@ model EcommerceOrder {
   utmMedium          String?
   utmCampaign        String?
   placedAt           DateTime
-  createdAt          DateTime          @default(now())
+  createdAt          DateTime             @default(now())
   items              EcommerceOrderItem[]
 
   @@unique([connectorAccountId, externalOrderId])
   @@index([workspaceId, placedAt])
+  @@index([workspaceId, platform, placedAt])
 }
 
 model EcommerceOrderItem {
-  id                 String          @id @default(cuid())
+  id                 String           @id @default(cuid())
   workspaceId        String
+  workspace          Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   connectorAccountId String
+  connectorAccount   ConnectorAccount @relation(fields: [connectorAccountId], references: [id], onDelete: Cascade)
   ecommerceOrderId   String
-  ecommerceOrder     EcommerceOrder  @relation(fields: [ecommerceOrderId], references: [id], onDelete: Cascade)
+  ecommerceOrder     EcommerceOrder   @relation(fields: [ecommerceOrderId], references: [id], onDelete: Cascade)
   externalOrderId    String
   productName        String
   sku                String?
   quantity           Int
-  total              Decimal?        @db.Decimal(14, 2)
+  total              Decimal?         @db.Decimal(14, 2)
   placedAt           DateTime
-  createdAt          DateTime        @default(now())
+  createdAt          DateTime         @default(now())
 
   @@index([workspaceId, placedAt])
   @@index([connectorAccountId, externalOrderId])
+  @@index([ecommerceOrderId])
 }
 
 model Dashboard {
@@ -378,17 +422,19 @@ model PasswordResetToken {
 }
 
 model SyncJob {
-  id                 String     @id @default(cuid())
+  id                 String            @id @default(cuid())
   connectorAccountId String
-  workspaceId         String
-  provider            ConnectorProvider
-  syncType            SyncType   @default(BACKFILL)
-  cursor              String?
+  connectorAccount   ConnectorAccount  @relation(fields: [connectorAccountId], references: [id], onDelete: Cascade)
+  workspaceId        String
+  workspace          Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  provider           ConnectorProvider
+  syncType           SyncType          @default(BACKFILL)
+  cursor             String?
   status             SyncStatus
-  startedAt          DateTime   @default(now())
+  startedAt          DateTime          @default(now())
   finishedAt         DateTime?
-  rowsInserted       Int        @default(0)
-  rowsUpdated        Int        @default(0)
+  rowsInserted       Int               @default(0)
+  rowsUpdated        Int               @default(0)
   errorMessage       String?
   metadata           Json?
 

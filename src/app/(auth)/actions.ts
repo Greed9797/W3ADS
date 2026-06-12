@@ -6,6 +6,10 @@ import { redirect } from "next/navigation";
 
 import { signIn } from "@/lib/auth/auth";
 import {
+  getAuthSessionCookieName,
+  getLaxCookieOptions,
+} from "@/lib/auth/cookies";
+import {
   forgotPasswordSchema,
   loginSchema,
   resetPasswordSchema,
@@ -14,7 +18,6 @@ import {
 import {
   AuthServiceError,
   createDatabaseSessionForUser,
-  getAuthSessionCookieName,
   getUserByCredentials,
   registerUserWithWorkspace,
   requestPasswordReset,
@@ -36,7 +39,10 @@ export async function loginAction(formData: FormData) {
     redirect("/login?error=invalid");
   }
 
-  const user = await getUserByCredentials(parsed.data.email, parsed.data.password);
+  const user = await getUserByCredentials(
+    parsed.data.email,
+    parsed.data.password,
+  );
 
   if (!user) {
     redirect("/login?error=credentials");
@@ -46,18 +52,21 @@ export async function loginAction(formData: FormData) {
   const cookieStore = await cookies();
 
   cookieStore.set(getAuthSessionCookieName(), session.sessionToken, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    expires: session.expires,
+    // `lax`, NOT `strict`: a strict session cookie is dropped when an OAuth
+    // provider redirects back to our connector callback (top-level cross-site
+    // GET), causing an infinite /login loop. `lax` survives it and still blocks
+    // cross-site POST/CSRF.
+    ...getLaxCookieOptions({ expires: session.expires }),
   });
 
   redirect("/dashboard");
 }
 
 export async function googleSignInAction() {
-  if (!process.env.GOOGLE_OAUTH_CLIENT_ID || !process.env.GOOGLE_OAUTH_CLIENT_SECRET) {
+  if (
+    !process.env.GOOGLE_OAUTH_CLIENT_ID ||
+    !process.env.GOOGLE_OAUTH_CLIENT_SECRET
+  ) {
     redirect("/login?error=google-not-configured");
   }
 
@@ -81,14 +90,18 @@ export async function signUpAction(formData: FormData) {
 
   if (
     !parsed.data.inviteToken &&
-    (process.env.NODE_ENV === "production" || process.env.VERCEL_ENV === "production")
+    (process.env.NODE_ENV === "production" ||
+      process.env.VERCEL_ENV === "production")
   ) {
     redirect("/login?error=signup-closed");
   }
 
   try {
     await registerUserWithWorkspace(parsed.data);
-    const user = await getUserByCredentials(parsed.data.email, parsed.data.password);
+    const user = await getUserByCredentials(
+      parsed.data.email,
+      parsed.data.password,
+    );
 
     if (!user) {
       redirect("/login?error=credentials");
@@ -98,11 +111,9 @@ export async function signUpAction(formData: FormData) {
     const cookieStore = await cookies();
 
     cookieStore.set(getAuthSessionCookieName(), session.sessionToken, {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      path: "/",
-      expires: session.expires,
+      // `lax` (not `strict`) so the session survives the OAuth provider's
+      // cross-site redirect back to our connector callback — see signInAction.
+      ...getLaxCookieOptions({ expires: session.expires }),
     });
 
     redirect("/dashboard");

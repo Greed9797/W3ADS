@@ -1,10 +1,15 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { ConnectorProvider } from "@prisma/client";
 
-import { getCurrentUserContext } from "@/lib/auth/current";
+import {
+  getCurrentUserContext,
+  resolveConnectorWorkspaceAccess,
+} from "@/lib/auth/current";
 import { canOperateWorkspaceConnectors } from "@/lib/auth/platform-permissions";
 import { buildGoogleAnalyticsOAuthUrl } from "@/lib/connectors/google-analytics/oauth";
 import { GOOGLE_ANALYTICS_OAUTH_STATE_COOKIE } from "@/lib/connectors/google-analytics/state";
+import { syntheticProviderConfigFromDefaults } from "@/lib/connectors/global-defaults";
+import { isNextControlFlowError } from "@/lib/connectors/oauth-route-error";
 import { createConnectorOAuthState } from "@/lib/connectors/oauth-state";
 import {
   buildGoogleAnalyticsConfigFromProviderConfig,
@@ -13,7 +18,10 @@ import {
 
 export const runtime = "nodejs";
 
-function redirectToConnectors(request: NextRequest, params: Record<string, string>) {
+function redirectToConnectors(
+  request: NextRequest,
+  params: Record<string, string>,
+) {
   const url = new URL("/connectors", request.nextUrl.origin);
 
   for (const [key, value] of Object.entries(params)) {
@@ -24,41 +32,82 @@ function redirectToConnectors(request: NextRequest, params: Record<string, strin
 }
 
 export async function GET(request: NextRequest) {
-  const context = await getCurrentUserContext();
+  try {
+    const context = await getCurrentUserContext();
 
-  if (context.isDemoMode) {
-    return redirectToConnectors(request, { provider: "google-analytics", connected: "demo" });
-  }
-  if (!canOperateWorkspaceConnectors(context.user, context.currentMembership.role)) {
-    return redirectToConnectors(request, { provider: "google-analytics", error: "forbidden" });
-  }
+    // The target workspace is carried EXPLICITLY in the `ws` query param (set by
+    // the connectors page from the workspace shown in the "Conectando para…"
+    // banner). This removes any dependency on the request cookie, which can
+    // drift/drop and otherwise fall back to the oldest workspace (W3 Dev). The
+    // requested workspace is always re-validated against the user's access.
+    const requestedWorkspaceId = request.nextUrl.searchParams.get("ws");
+    let targetWorkspaceId = context.currentWorkspace.id;
+    let targetRole = context.currentMembership.role;
+    if (requestedWorkspaceId && requestedWorkspaceId !== targetWorkspaceId) {
+      const access = await resolveConnectorWorkspaceAccess({
+        userId: context.user.id,
+        workspaceId: requestedWorkspaceId,
+      });
+      if (!access) {
+        return redirectToConnectors(request, {
+          provider: "google-analytics",
+          error: "forbidden",
+        });
+      }
+      targetWorkspaceId = requestedWorkspaceId;
+      targetRole = access.role;
+    }
 
-  const providerConfig = await getActiveProviderConfig({
-    workspaceId: context.currentWorkspace.id,
-    provider: ConnectorProvider.GA4,
-  });
-  if (!providerConfig) {
+    if (!canOperateWorkspaceConnectors(context.user, targetRole)) {
+      return redirectToConnectors(request, {
+        provider: "google-analytics",
+        error: "forbidden",
+      });
+    }
+
+    const providerConfig =
+      (await getActiveProviderConfig({
+        workspaceId: targetWorkspaceId,
+        provider: ConnectorProvider.GA4,
+      })) ??
+      syntheticProviderConfigFromDefaults(
+        targetWorkspaceId,
+        ConnectorProvider.GA4,
+      );
+    if (!providerConfig) {
+      return redirectToConnectors(request, {
+        provider: "google-analytics",
+        error: "missing-provider-config",
+      });
+    }
+    const config =
+      await buildGoogleAnalyticsConfigFromProviderConfig(providerConfig);
+
+    const state = createConnectorOAuthState({
+      provider: "GA4",
+      userId: context.user.id,
+      workspaceId: targetWorkspaceId,
+    });
+    const response = NextResponse.redirect(
+      buildGoogleAnalyticsOAuthUrl({ state, config }),
+    );
+
+    response.cookies.set(GOOGLE_ANALYTICS_OAUTH_STATE_COOKIE, state, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+      maxAge: 60 * 10,
+    });
+
+    return response;
+  } catch (error: unknown) {
+    if (isNextControlFlowError(error)) throw error;
+    const message = error instanceof Error ? error.message : "unknown";
+    console.error(`[google-analytics/connect] start failed: ${message}`);
     return redirectToConnectors(request, {
       provider: "google-analytics",
-      error: "missing-provider-config",
+      error: "oauth-failed",
     });
   }
-  const config = await buildGoogleAnalyticsConfigFromProviderConfig(providerConfig);
-
-  const state = createConnectorOAuthState({
-    provider: "GA4",
-    userId: context.user.id,
-    workspaceId: context.currentWorkspace.id,
-  });
-  const response = NextResponse.redirect(buildGoogleAnalyticsOAuthUrl({ state, config }));
-
-  response.cookies.set(GOOGLE_ANALYTICS_OAUTH_STATE_COOKIE, state, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    maxAge: 60 * 10,
-  });
-
-  return response;
 }

@@ -1,6 +1,5 @@
 "use server";
 
-import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { logAudit } from "@/lib/audit/log";
@@ -14,26 +13,6 @@ export async function submitFeedbackAction(formData: FormData) {
 
   if (!parsed.success) {
     redirect("/feedback?error=invalid");
-  }
-
-  if (context.isDemoMode) {
-    const cookieStore = await cookies();
-    cookieStore.set(
-      "adstart_demo_feedback_last",
-      JSON.stringify({
-        type: parsed.data.type,
-        pagePath: parsed.data.pagePath,
-        submittedAt: new Date().toISOString(),
-      }),
-      {
-        httpOnly: true,
-        sameSite: "lax",
-        secure: process.env.NODE_ENV === "production",
-        path: "/",
-        maxAge: 60 * 60 * 24,
-      },
-    );
-    redirect("/feedback?sent=1");
   }
 
   const feedback = await prisma.betaFeedback.create({

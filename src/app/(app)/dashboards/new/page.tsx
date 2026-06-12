@@ -8,12 +8,22 @@ import { HydratedSubmitButton } from "@/components/ui/hydrated-submit-button";
 import { Input } from "@/components/ui/input";
 import { getCurrentUserContext } from "@/lib/auth/current";
 import { canManagePlatformUsers } from "@/lib/auth/platform-permissions";
-import { dashboardWidgetCatalog, defaultWidgetIds } from "@/lib/metrics/kpi-catalog";
+import { canEditDashboards } from "@/lib/auth/permissions";
+import {
+  dashboardWidgetCatalog,
+  defaultWidgetIds,
+} from "@/lib/metrics/kpi-catalog";
 
 export default async function NewDashboardPage() {
   const context = await getCurrentUserContext();
 
-  if (!canManagePlatformUsers(context.user)) {
+  // Mirror createDashboardAction's gate (platform admin AND edit-dashboards).
+  // Without the second check a VIEWER could render+submit the form and the
+  // action would throw an uncaught error instead of redirecting.
+  if (
+    !canManagePlatformUsers(context.user) ||
+    !canEditDashboards(context.currentMembership.role)
+  ) {
     redirect("/dashboards");
   }
 
@@ -21,7 +31,9 @@ export default async function NewDashboardPage() {
     <div className="mx-auto max-w-5xl space-y-6">
       <div>
         <p className="text-caption text-[var(--text-tertiary)]">Marcas</p>
-        <h2 className="mt-2 text-2xl font-semibold tracking-[-0.02em]">Novo painel interno</h2>
+        <h2 className="mt-2 text-2xl font-semibold tracking-[-0.02em]">
+          Novo painel interno
+        </h2>
       </div>
 
       <form action={createDashboardAction} className="space-y-6">
@@ -30,7 +42,12 @@ export default async function NewDashboardPage() {
             <CardTitle>Identificação</CardTitle>
           </CardHeader>
           <CardContent>
-            <Input label="Nome" name="name" placeholder="Performance paga" required />
+            <Input
+              label="Nome"
+              name="name"
+              placeholder="Performance paga"
+              required
+            />
           </CardContent>
         </Card>
 
@@ -57,7 +74,9 @@ export default async function NewDashboardPage() {
                   value={widget.id}
                 />
                 <span>
-                  <span className="block text-sm font-semibold">{widget.label}</span>
+                  <span className="block text-sm font-semibold">
+                    {widget.label}
+                  </span>
                   <span className="mt-1 block text-sm text-[var(--text-secondary)]">
                     {widget.description}
                   </span>

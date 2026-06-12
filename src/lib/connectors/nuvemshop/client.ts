@@ -50,6 +50,27 @@ export type NuvemshopToken = {
   storeId: string;
 };
 
+function summarizeNuvemshopErrorBody(body: string): string | null {
+  if (!body) return null;
+  try {
+    const parsed = JSON.parse(body) as {
+      code?: string;
+      description?: string;
+      message?: string;
+      error?: string;
+      error_description?: string;
+    };
+    const parts = [
+      parsed.code,
+      parsed.description ?? parsed.message ?? parsed.error_description,
+      parsed.error,
+    ].filter(Boolean) as string[];
+    return parts.length > 0 ? parts.join(" | ") : body.slice(0, 220);
+  } catch {
+    return body.slice(0, 220);
+  }
+}
+
 export class NuvemshopApiError extends Error {
   status: number;
   body: string;
@@ -59,7 +80,12 @@ export class NuvemshopApiError extends Error {
   };
 
   constructor(status: number, body: string, headers = new Headers()) {
-    super(`Nuvemshop API request failed with status ${status}`);
+    const summary = summarizeNuvemshopErrorBody(body);
+    super(
+      summary
+        ? `Nuvemshop API ${status}: ${summary}`
+        : `Nuvemshop API request failed with status ${status}`,
+    );
     this.name = "NuvemshopApiError";
     this.status = status;
     this.body = body;
@@ -67,7 +93,11 @@ export class NuvemshopApiError extends Error {
   }
 }
 
-async function fetchJson<T>(url: URL | string, fetchImpl: FetchLike, init?: RequestInit): Promise<T> {
+async function fetchJson<T>(
+  url: URL | string,
+  fetchImpl: FetchLike,
+  init?: RequestInit,
+): Promise<T> {
   const response = await fetchImpl(url, init);
   const body = await response.text();
 
@@ -98,6 +128,29 @@ async function fetchJsonWithHeaders<T>(
 
 function asString(value: string | number | undefined | null) {
   return value === undefined || value === null ? null : String(value);
+}
+
+/**
+ * Returns the first input that parses as a real Date, in ISO string form.
+ * Nuvemshop sometimes returns empty strings or malformed timestamps for
+ * `paid_at`/`completed_at` on voided/refunded orders; `??` only filters
+ * null/undefined, so we explicitly probe with Date.parse to avoid feeding
+ * `Invalid Date` into Prisma.
+ */
+function pickValidIsoDate(
+  ...candidates: Array<string | null | undefined>
+): string {
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const ts = Date.parse(candidate);
+    if (Number.isFinite(ts)) {
+      return new Date(ts).toISOString();
+    }
+  }
+  // No valid date: return "" so the downstream parsePlacedAt guard SKIPS the
+  // order. Falling back to now() silently attributed date-less orders to today,
+  // inflating the current day's revenue with phantom rows.
+  return "";
 }
 
 function normalizeNuvemshopOrder(order: NuvemshopOrderPayload): ShopifyOrder {
@@ -135,7 +188,11 @@ function normalizeNuvemshopOrder(order: NuvemshopOrderPayload): ShopifyOrder {
       order.shipping_address?.state ??
       order.shipping_address?.province ??
       null,
-    placedAt: order.paid_at ?? order.completed_at ?? order.created_at ?? new Date().toISOString(),
+    placedAt: pickValidIsoDate(
+      order.paid_at,
+      order.completed_at,
+      order.created_at,
+    ),
     utmSource: order.utm_source ?? null,
     utmMedium: order.utm_medium ?? null,
     utmCampaign: order.utm_campaign ?? null,
@@ -160,7 +217,7 @@ export class NuvemshopClient {
     });
     const response = await callWithRetry(() =>
       fetchJson<NuvemshopTokenResponse>(
-        "https://www.tiendanube.com/apps/authorize/token",
+        "https://www.nuvemshop.com.br/apps/authorize/token",
         this.fetchImpl,
         {
           method: "POST",
@@ -178,7 +235,12 @@ export class NuvemshopClient {
     };
   }
 
-  private ordersUrl(input: { storeId: string; since: string; until: string; page: number }) {
+  private ordersUrl(input: {
+    storeId: string;
+    since: string;
+    until: string;
+    page: number;
+  }) {
     const url = new URL(`${this.config.apiBaseUrl}/${input.storeId}/orders`);
     url.searchParams.set("created_at_min", `${input.since}T00:00:00Z`);
     url.searchParams.set("created_at_max", `${input.until}T23:59:59Z`);
@@ -189,50 +251,79 @@ export class NuvemshopClient {
     return url;
   }
 
-  private nextLink(headers: Headers) {
-    const link = headers.get("Link") ?? headers.get("link");
-    if (!link) {
-      return null;
-    }
-
-    for (const part of link.split(",")) {
-      const match = part.match(/<([^>]+)>;\s*rel="?next"?/i);
-      if (match?.[1]) {
-        return match[1];
-      }
-    }
-
-    return null;
-  }
-
   async listOrders(input: {
     storeId: string;
     accessToken: string;
     since: string;
     until: string;
-  }) {
-    const orders: ShopifyOrder[] = [];
-    let page = 1;
-    let nextUrl: URL | string | null = this.ordersUrl({ ...input, page });
+    /**
+     * Absolute epoch-ms wall-clock budget. When provided, pagination stops
+     * before this time and returns `complete: false` so a high-volume store
+     * can't overrun the serverless function limit (Hobby: 300s) and be killed
+     * mid-flight (orphaned job, 0 orders persisted). The caller resumes the
+     * remainder from `nextPage`.
+     */
+    deadlineMs?: number;
+    /** Resume pagination from this 1-based page (defaults to page 1). */
+    startPage?: number;
+    /**
+     * Per-page persistence callback. When provided, each page's orders are
+     * handed to it AS THEY ARE FETCHED and NOT accumulated in memory (returned
+     * `orders` stays empty), so a mid-window kill loses at most one page.
+     */
+    onPage?: (orders: ShopifyOrder[]) => Promise<void>;
+  }): Promise<{
+    orders: ShopifyOrder[];
+    complete: boolean;
+    /** 1-based page to resume from when `complete` is false. */
+    nextPage: number;
+  }> {
+    const out: ShopifyOrder[] = [];
+    const onPage = input.onPage;
+    // Page explicitly (ignore the Link rel=next header) so resume-by-page is
+    // deterministic across runs; past windows are stable so the same page
+    // returns the same rows.
+    let page = Math.max(1, Math.trunc(input.startPage ?? 1));
+    const MAX_PAGES = 1000; // safety cap: 1000 * 200 = 200k orders per window
 
-    while (nextUrl) {
+    for (let i = 0; i < MAX_PAGES; i += 1) {
+      if (input.deadlineMs && Date.now() >= input.deadlineMs) {
+        return { orders: out, complete: false, nextPage: page };
+      }
+      const url = this.ordersUrl({
+        storeId: input.storeId,
+        since: input.since,
+        until: input.until,
+        page,
+      });
       const response = await callWithRetry(() =>
-        fetchJsonWithHeaders<NuvemshopOrderPayload[]>(nextUrl as URL | string, this.fetchImpl, {
+        fetchJsonWithHeaders<NuvemshopOrderPayload[]>(url, this.fetchImpl, {
           headers: {
             Authentication: `bearer ${input.accessToken}`,
             "User-Agent": "W3ADS (integracoes@w3educacao.com.br)",
           },
+          // Fail a slow page fast so the wall-clock budget can stop cleanly
+          // before the function limit (matches the iSET per-page timeout).
+          signal: AbortSignal.timeout(15_000),
         }),
       );
 
-      orders.push(...response.data.map(normalizeNuvemshopOrder));
+      const pageOrders = response.data.map(normalizeNuvemshopOrder);
+      if (onPage) {
+        if (pageOrders.length > 0) {
+          await onPage(pageOrders);
+        }
+      } else {
+        out.push(...pageOrders);
+      }
 
       page += 1;
-      nextUrl =
-        this.nextLink(response.headers) ??
-        (response.data.length === 200 ? this.ordersUrl({ ...input, page }) : null);
+      if (response.data.length < 200) {
+        return { orders: out, complete: true, nextPage: page };
+      }
     }
 
-    return orders;
+    // Hit the MAX_PAGES safety cap without exhausting the window.
+    return { orders: out, complete: false, nextPage: page };
   }
 }

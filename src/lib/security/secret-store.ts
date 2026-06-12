@@ -19,9 +19,13 @@ export interface SecretStore {
   deleteSecret(id: string): Promise<void>;
 }
 
-export function serializeSecretRefs(refs: Record<string, string | null | undefined>): SecretRefMap {
+export function serializeSecretRefs(
+  refs: Record<string, string | null | undefined>,
+): SecretRefMap {
   return Object.fromEntries(
-    Object.entries(refs).filter((entry): entry is [string, string] => Boolean(entry[1])),
+    Object.entries(refs).filter((entry): entry is [string, string] =>
+      Boolean(entry[1]),
+    ),
   );
 }
 
@@ -64,8 +68,22 @@ export class SupabaseVaultSecretStore implements SecretStore {
   constructor(private readonly client: PrismaClient = prisma) {}
 
   async createSecret(input: SecretStoreCreateInput) {
+    const description = input.description ?? input.name;
+
+    const existing = await this.client.$queryRaw<Array<{ id: string }>>(
+      Prisma.sql`
+        SELECT id::text AS id FROM vault.secrets WHERE name = ${input.name} LIMIT 1
+      `,
+    );
+    if (existing[0]?.id) {
+      await this.client.$executeRaw(Prisma.sql`
+        SELECT vault.update_secret(${existing[0].id}::uuid, ${input.value}, ${input.name}, ${description})
+      `);
+      return existing[0].id;
+    }
+
     const rows = await this.client.$queryRaw<Array<{ id: string }>>(Prisma.sql`
-      SELECT vault.create_secret(${input.value}, ${input.name}, ${input.description ?? null})::text AS id
+      SELECT vault.create_secret(${input.value}, ${input.name}, ${description})::text AS id
     `);
     const id = rows[0]?.id;
     if (!id) {
@@ -76,13 +94,18 @@ export class SupabaseVaultSecretStore implements SecretStore {
   }
 
   async updateSecret(id: string, input: SecretStoreCreateInput) {
-    await this.client.$queryRaw(Prisma.sql`
-      SELECT vault.update_secret(${id}::uuid, ${input.value}, ${input.name}, ${input.description ?? null})
+    const description = input.description ?? input.name;
+    // vault.update_secret returns void; $queryRaw rejects void columns so we
+    // use $executeRaw instead.
+    await this.client.$executeRaw(Prisma.sql`
+      SELECT vault.update_secret(${id}::uuid, ${input.value}, ${input.name}, ${description})
     `);
   }
 
   async getSecret(id: string) {
-    const rows = await this.client.$queryRaw<Array<{ decrypted_secret: string }>>(Prisma.sql`
+    const rows = await this.client.$queryRaw<
+      Array<{ decrypted_secret: string }>
+    >(Prisma.sql`
       SELECT decrypted_secret
       FROM vault.decrypted_secrets
       WHERE id = ${id}::uuid

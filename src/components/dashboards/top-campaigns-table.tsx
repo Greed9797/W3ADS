@@ -1,5 +1,6 @@
 import { ConnectorProvider } from "@prisma/client";
 
+import { GoogleAdsLogo, MetaAdsLogo } from "@/components/providers/provider-logo";
 import type { DashboardSnapshot } from "@/lib/metrics/aggregator";
 import { formatCurrencyBR, formatRoasBR } from "@/lib/utils/format-br";
 
@@ -7,9 +8,7 @@ function ProviderBadge({ source }: { source: ConnectorProvider }) {
   if (source === ConnectorProvider.META_ADS) {
     return (
       <span className="inline-flex items-center gap-1 rounded-[var(--radius-pill)] bg-[var(--info-bg)] px-2 py-1 text-[0.6875rem] font-semibold uppercase text-[var(--info)]">
-        <span className="grid size-4 place-items-center rounded-full border border-current text-[0.6rem]">
-          ∞
-        </span>
+        <MetaAdsLogo className="size-4 rounded-[5px] shadow-none" />
         Meta ROAS
       </span>
     );
@@ -18,9 +17,7 @@ function ProviderBadge({ source }: { source: ConnectorProvider }) {
   if (source === ConnectorProvider.GOOGLE_ADS) {
     return (
       <span className="inline-flex items-center gap-1 rounded-[var(--radius-pill)] bg-[var(--success-bg)] px-2 py-1 text-[0.6875rem] font-semibold uppercase text-[var(--success)]">
-        <span className="grid size-4 place-items-center rounded-full border border-current text-[0.6rem]">
-          G
-        </span>
+        <GoogleAdsLogo className="size-4 shadow-none" />
         Valor conv./custo
       </span>
     );

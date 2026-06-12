@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import { ConnectorProvider } from "@prisma/client";
 
-import { getDashboardFilters, getDashboardPeriod, toDateKey } from "@/lib/metrics/period";
+import {
+  getDashboardFilters,
+  getDashboardPeriod,
+  toDateKey,
+} from "@/lib/metrics/period";
 
 describe("dashboard period", () => {
   it("builds the last 7 days range with previous period", () => {
@@ -68,5 +72,14 @@ describe("dashboard period", () => {
       ConnectorProvider.SHOPIFY,
       ConnectorProvider.NUVEMSHOP,
     ]);
+  });
+
+  it("always reports comparison disabled (feature removed)", () => {
+    const defaultFilters = getDashboardFilters(
+      { period: "month" },
+      new Date("2026-05-16T12:00:00.000Z"),
+    );
+
+    expect(defaultFilters.comparisonEnabled).toBe(false);
   });
 });

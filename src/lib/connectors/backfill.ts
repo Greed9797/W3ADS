@@ -71,6 +71,7 @@ function eventNameForProvider(provider: ConnectorProvider): ConnectorBackfillEve
     case ConnectorProvider.TRAY:
     case ConnectorProvider.WBUY:
     case ConnectorProvider.MAGAZORD:
+    case ConnectorProvider.GOOGLE_SHEETS:
       return "connector.ecommerce.backfill";
     default:
       throw new Error(`Provider ${provider} does not support MVP backfill`);

@@ -30,7 +30,7 @@ function checkAuthMode(env: HealthEnv): HealthCheck {
     return { ok: false, status: "auth_disabled" };
   }
 
-  return { ok: true, status: env.AUTH_DISABLED === "true" ? "demo" : "enabled" };
+  return { ok: true, status: "enabled" };
 }
 
 function checkConfigured(env: HealthEnv, keys: string[]): HealthCheck {

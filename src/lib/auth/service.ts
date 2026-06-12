@@ -24,21 +24,45 @@ export class AuthServiceError extends Error {
   }
 }
 
-export function getAuthSessionCookieName() {
-  return process.env.NODE_ENV === "production"
-    ? "__Secure-authjs.session-token"
-    : "authjs.session-token";
+/**
+ * Resolves an invite from the plaintext token the user pasted in the URL.
+ * Prefers the hashed lookup (new invites) and falls back to the legacy
+ * plaintext column (invites issued before tokenHash existed).
+ */
+async function findInviteByToken(plainToken: string) {
+  const tokenHash = hashToken(plainToken);
+  const select = {
+    id: true,
+    workspaceId: true,
+    role: true,
+    email: true,
+    acceptedAt: true,
+    expiresAt: true,
+  } as const;
+
+  const byHash = await prisma.workspaceInvite.findUnique({
+    where: { tokenHash },
+    select,
+  });
+  if (byHash) return byHash;
+
+  return prisma.workspaceInvite.findUnique({
+    where: { token: plainToken },
+    select,
+  });
 }
 
 export async function createDatabaseSessionForUser(userId: string) {
   const sessionToken = createSecureToken();
-  const expires = addMinutes(new Date(), 60 * 24 * 30);
+  const now = new Date();
+  const expires = addMinutes(now, 60 * 24 * 30);
 
   await prisma.session.create({
     data: {
       userId,
       sessionToken,
       expires,
+      lastSeenAt: now,
     },
   });
 
@@ -135,23 +159,32 @@ export async function registerUserWithWorkspace(input: SignUpInput) {
 
   const passwordHash = await hashPassword(input.password);
   const invite = input.inviteToken
-    ? await prisma.workspaceInvite.findUnique({
-        where: { token: input.inviteToken },
-        select: {
-          id: true,
-          workspaceId: true,
-          role: true,
-          acceptedAt: true,
-          expiresAt: true,
-        },
-      })
+    ? await findInviteByToken(input.inviteToken)
     : null;
 
-  if (input.inviteToken && (!invite || invite.acceptedAt || invite.expiresAt < new Date())) {
-    throw new AuthServiceError("Convite invalido ou expirado.", "INVALID_TOKEN");
+  if (
+    input.inviteToken &&
+    (!invite || invite.acceptedAt || invite.expiresAt < new Date())
+  ) {
+    throw new AuthServiceError(
+      "Convite invalido ou expirado.",
+      "INVALID_TOKEN",
+    );
   }
 
-  const workspaceSlug = invite ? null : await createUniqueWorkspaceSlug(input.workspaceName);
+  // Bind the invite to its intended recipient: a leaked/forwarded invite URL
+  // must NOT let someone register under a different email and inherit the
+  // invite's role (workspace takeover). Same opaque error as above.
+  if (invite && invite.email.toLowerCase() !== input.email.toLowerCase()) {
+    throw new AuthServiceError(
+      "Convite invalido ou expirado.",
+      "INVALID_TOKEN",
+    );
+  }
+
+  const workspaceSlug = invite
+    ? null
+    : await createUniqueWorkspaceSlug(input.workspaceName);
 
   return prisma.$transaction(async (tx) => {
     if (invite) {
@@ -289,8 +322,10 @@ export async function getUserByCredentials(email: string, password: string) {
 }
 
 export async function requestPasswordReset(input: ForgotPasswordInput) {
-  const user = await prisma.user.findUnique({
-    where: { email: input.email },
+  const user = await prisma.user.findFirst({
+    // Ignore soft-deleted accounts: a tombstoned account must not be
+    // resurrectable via a fresh reset token.
+    where: { email: input.email, deletedAt: null },
     select: { id: true, email: true, name: true },
   });
 
@@ -349,6 +384,12 @@ export async function resetPassword(input: ResetPasswordInput) {
       where: { id: resetToken.id },
       data: { usedAt: new Date() },
     }),
+    // Revoke every existing session on password reset: if an attacker holds a
+    // stolen cookie, the victim's reset must lock them out (credential-rotation
+    // hygiene). The user re-logs in with the new password.
+    prisma.session.deleteMany({
+      where: { userId: resetToken.userId },
+    }),
     prisma.auditLog.create({
       data: {
         action: "auth.password_reset.complete",
@@ -366,6 +407,7 @@ export async function createWorkspaceInvite(input: {
   values: WorkspaceInviteInput;
 }) {
   const token = createSecureToken();
+  const tokenHash = hashToken(token);
   const expiresAt = addMinutes(new Date(), 60 * 24 * 7);
 
   const invite = await prisma.workspaceInvite.create({
@@ -374,7 +416,9 @@ export async function createWorkspaceInvite(input: {
       invitedById: input.invitedById,
       email: input.values.email,
       role: input.values.role,
-      token,
+      // `token` (plaintext) stays null for new invites. Hash only.
+      token: null,
+      tokenHash,
       expiresAt,
     },
     include: {
@@ -385,7 +429,8 @@ export async function createWorkspaceInvite(input: {
   });
 
   const appUrl = process.env.NEXTAUTH_URL ?? "http://localhost:3000";
-  const inviteUrl = `${appUrl}/sign-up?invite=${invite.token}`;
+  // Email the plaintext token; only the hash lives in the database.
+  const inviteUrl = `${appUrl}/sign-up?invite=${token}`;
 
   await sendTransactionalEmail({
     to: invite.email,

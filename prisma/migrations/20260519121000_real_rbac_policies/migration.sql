@@ -6,7 +6,7 @@ CREATE OR REPLACE FUNCTION enforce_single_client_workspace()
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = w3ads, public
 AS $$
 BEGIN
   IF EXISTS (

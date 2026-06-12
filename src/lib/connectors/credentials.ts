@@ -8,8 +8,16 @@ import {
 } from "@/lib/crypto/token-vault";
 import { getSecretStore, type SecretStore } from "@/lib/security/secret-store";
 
-export type ConnectorCredentialValue = string | number | boolean | null | undefined;
-export type ConnectorCredentialPayload = Record<string, ConnectorCredentialValue>;
+export type ConnectorCredentialValue =
+  | string
+  | number
+  | boolean
+  | null
+  | undefined;
+export type ConnectorCredentialPayload = Record<
+  string,
+  ConnectorCredentialValue
+>;
 
 export function encryptConnectorCredentials(
   credentials: ConnectorCredentialPayload,
@@ -22,7 +30,9 @@ export function decryptConnectorCredentials(
   encrypted: EncryptedToken,
   options: { key?: string; keyVersion?: string } = {},
 ) {
-  return JSON.parse(decryptToken(encrypted, options)) as ConnectorCredentialPayload;
+  return JSON.parse(
+    decryptToken(encrypted, options),
+  ) as ConnectorCredentialPayload;
 }
 
 export function connectorCredentialsFromAccount(account: {
@@ -52,6 +62,24 @@ function parseCredentialSecret(value: string): ConnectorCredentialPayload {
   return { accessToken: value };
 }
 
+export class CredentialUnavailableError extends Error {
+  readonly code: "vault_unavailable" | "no_credentials";
+  constructor(message: string, code: "vault_unavailable" | "no_credentials") {
+    super(message);
+    this.name = "CredentialUnavailableError";
+    this.code = code;
+  }
+}
+
+function hasInlineCredentials(account: {
+  accessTokenCiphertext: string;
+  tokenIv: string;
+}): boolean {
+  return (
+    account.tokenIv !== "vault" && account.accessTokenCiphertext !== "vault"
+  );
+}
+
 export async function connectorCredentialsFromAccountVaultAware(
   account: {
     credentialSecretId?: string | null;
@@ -63,7 +91,27 @@ export async function connectorCredentialsFromAccountVaultAware(
   store: SecretStore = getSecretStore(),
 ) {
   if (account.credentialSecretId) {
-    return parseCredentialSecret(await store.getSecret(account.credentialSecretId));
+    try {
+      return parseCredentialSecret(
+        await store.getSecret(account.credentialSecretId),
+      );
+    } catch (caught) {
+      if (hasInlineCredentials(account)) {
+        return connectorCredentialsFromAccount(account);
+      }
+      const message =
+        caught instanceof Error
+          ? `Vault credential unavailable: ${caught.message}`
+          : "Vault credential unavailable";
+      throw new CredentialUnavailableError(message, "vault_unavailable");
+    }
+  }
+
+  if (!hasInlineCredentials(account)) {
+    throw new CredentialUnavailableError(
+      "Credentials missing: no vault secret and no inline ciphertext",
+      "no_credentials",
+    );
   }
 
   return connectorCredentialsFromAccount(account);
@@ -79,7 +127,10 @@ export async function connectorAccessTokenFromAccount(
   },
   store: SecretStore = getSecretStore(),
 ) {
-  const credentials = await connectorCredentialsFromAccountVaultAware(account, store);
+  const credentials = await connectorCredentialsFromAccountVaultAware(
+    account,
+    store,
+  );
   const accessToken = credentials.accessToken;
   if (typeof accessToken !== "string" || !accessToken) {
     throw new Error("Connector access token is missing");

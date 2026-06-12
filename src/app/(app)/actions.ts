@@ -5,12 +5,15 @@ import { redirect } from "next/navigation";
 
 import { logAudit } from "@/lib/audit/log";
 import { auth, signOut } from "@/lib/auth/auth";
+import { getLaxCookieOptions } from "@/lib/auth/cookies";
 import { getCurrentUserContext } from "@/lib/auth/current";
 import {
   assertCanChangeMemberRole,
-  assertCanManageMembers,
-  assertCanManageWorkspaceSettings,
   assertCanRemoveMember,
+  canCreateWorkspace,
+  canDeleteWorkspace,
+  canManageMembers,
+  canManageWorkspaceSettings,
 } from "@/lib/auth/permissions";
 import {
   workspaceCreateSchema,
@@ -19,13 +22,50 @@ import {
   workspaceMemberRoleSchema,
   workspaceSettingsSchema,
 } from "@/lib/auth/schemas";
-import { createWorkspaceForUser, createWorkspaceInvite } from "@/lib/auth/service";
-import { isInternalW3User, isTrafficManager } from "@/lib/auth/platform-permissions";
+import {
+  createWorkspaceForUser,
+  createWorkspaceInvite,
+} from "@/lib/auth/service";
+import {
+  isAdminMaster,
+  isInternalW3User,
+} from "@/lib/auth/platform-permissions";
 import { prisma } from "@/lib/db/prisma";
 
 function getString(formData: FormData, key: string) {
   const value = formData.get(key);
   return typeof value === "string" ? value : "";
+}
+
+/**
+ * Member-management gate for the ACTIVE workspace, resolved from a REAL
+ * membership row (or platform Admin Master). `context.currentMembership.role`
+ * can be a synthetic OWNER injected for internal admins on the cookie-selected
+ * workspace — trusting it would let a non-Master internal admin manage members
+ * in a brand they don't belong to. Redirects to members?error=forbidden when
+ * unauthorized. Returns the real MemberRole (or null for Admin Master without a
+ * membership) so callers can feed accurate actor rules downstream.
+ */
+async function requireRealMemberManagement(
+  context: Awaited<ReturnType<typeof getCurrentUserContext>>,
+) {
+  const realMembership = await prisma.membership.findUnique({
+    where: {
+      userId_workspaceId: {
+        userId: context.user.id,
+        workspaceId: context.currentWorkspace.id,
+      },
+    },
+    select: { role: true },
+  });
+  const isMaster = isAdminMaster(context.user);
+  if (
+    !isMaster &&
+    !(realMembership != null && canManageMembers(realMembership.role))
+  ) {
+    redirect("/workspace/members?error=forbidden");
+  }
+  return realMembership?.role ?? null;
 }
 
 export async function switchWorkspaceAction(formData: FormData) {
@@ -37,7 +77,9 @@ export async function switchWorkspaceAction(formData: FormData) {
 
   const workspaceId = getString(formData, "workspaceId");
   const context = await getCurrentUserContext();
-  const membership = context.memberships.find((item) => item.workspaceId === workspaceId);
+  const membership = context.memberships.find(
+    (item) => item.workspaceId === workspaceId,
+  );
 
   if (!membership && !isInternalW3User(context.user)) {
     redirect("/dashboard");
@@ -60,11 +102,7 @@ export async function switchWorkspaceAction(formData: FormData) {
 
   const cookieStore = await cookies();
   cookieStore.set("adstart_workspace_id", workspaceId, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    maxAge: 60 * 60 * 24 * 180,
+    ...getLaxCookieOptions({ maxAge: 60 * 60 * 24 * 180 }),
   });
 
   await logAudit({
@@ -84,7 +122,8 @@ export async function logoutAction() {
 
 export async function inviteMemberAction(formData: FormData) {
   const context = await getCurrentUserContext();
-  assertCanManageMembers(context.currentMembership.role);
+  // null = platform Admin Master (no real membership); a role = real OWNER/ADMIN.
+  const actorRole = await requireRealMemberManagement(context);
 
   const parsed = workspaceInviteSchema.safeParse({
     email: getString(formData, "email"),
@@ -93,6 +132,16 @@ export async function inviteMemberAction(formData: FormData) {
 
   if (!parsed.success) {
     redirect("/workspace/members?error=invalid");
+  }
+
+  // Only OWNER (or platform Admin Master) may grant ADMIN — an ADMIN must not
+  // mint another ADMIN at their own level (peer privilege escalation).
+  if (
+    parsed.data.role === "ADMIN" &&
+    actorRole !== null &&
+    actorRole !== "OWNER"
+  ) {
+    redirect("/workspace/members?error=forbidden");
   }
 
   await createWorkspaceInvite({
@@ -106,7 +155,7 @@ export async function inviteMemberAction(formData: FormData) {
 
 export async function createWorkspaceAction(formData: FormData) {
   const context = await getCurrentUserContext();
-  if (context.currentMembership.role === "CLIENT" || isTrafficManager(context.user)) {
+  if (!canCreateWorkspace(context.user)) {
     redirect("/workspace/settings?error=forbidden");
   }
 
@@ -118,10 +167,6 @@ export async function createWorkspaceAction(formData: FormData) {
     redirect("/workspace/settings?error=invalid-workspace");
   }
 
-  if (context.isDemoMode) {
-    redirect("/workspace/settings?created=demo");
-  }
-
   const workspace = await createWorkspaceForUser({
     userId: context.user.id,
     values: parsed.data,
@@ -129,19 +174,44 @@ export async function createWorkspaceAction(formData: FormData) {
 
   const cookieStore = await cookies();
   cookieStore.set("adstart_workspace_id", workspace.id, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    maxAge: 60 * 60 * 24 * 180,
+    ...getLaxCookieOptions({ maxAge: 60 * 60 * 24 * 180 }),
   });
 
-  redirect("/dashboard?workspaceCreated=1");
+  // Return to settings with a confirmation the page actually renders (it checks
+  // ?created). The new workspace is now the active one (cookie set above).
+  redirect("/workspace/settings?created=1");
 }
 
 export async function updateWorkspaceSettingsAction(formData: FormData) {
   const context = await getCurrentUserContext();
-  assertCanManageWorkspaceSettings(context.currentMembership.role);
+
+  // Per-row edit passes the target workspaceId; the current-workspace form
+  // omits it and falls back to the active workspace.
+  const targetWorkspaceId =
+    getString(formData, "workspaceId") || context.currentWorkspace.id;
+
+  // Authorize against a REAL membership row for the TARGET workspace, queried
+  // directly from the DB. We deliberately do NOT use context.memberships: that
+  // set is augmented with SYNTHETIC platform-admin memberships (e.g. a fake
+  // OWNER row for the cookie-selected workspace), which would let a non-Master
+  // internal admin (Gestor de Contas) edit any workspace. Only the platform
+  // Admin Master gets a blanket override.
+  const realMembership = await prisma.membership.findUnique({
+    where: {
+      userId_workspaceId: {
+        userId: context.user.id,
+        workspaceId: targetWorkspaceId,
+      },
+    },
+    select: { role: true },
+  });
+  const authorized =
+    isAdminMaster(context.user) ||
+    (realMembership != null && canManageWorkspaceSettings(realMembership.role));
+
+  if (!authorized) {
+    redirect("/workspace/settings?error=forbidden");
+  }
 
   const parsed = workspaceSettingsSchema.safeParse({
     name: getString(formData, "name"),
@@ -151,12 +221,8 @@ export async function updateWorkspaceSettingsAction(formData: FormData) {
     redirect("/workspace/settings?error=invalid-workspace");
   }
 
-  if (context.isDemoMode) {
-    redirect("/workspace/settings?saved=demo");
-  }
-
   const workspace = await prisma.workspace.update({
-    where: { id: context.currentWorkspace.id },
+    where: { id: targetWorkspaceId },
     data: {
       name: parsed.data.name,
     },
@@ -176,9 +242,92 @@ export async function updateWorkspaceSettingsAction(formData: FormData) {
   redirect("/workspace/settings?saved=1");
 }
 
+export async function deleteWorkspaceAction(formData: FormData) {
+  const context = await getCurrentUserContext();
+
+  const targetWorkspaceId = getString(formData, "workspaceId");
+  const confirmName = getString(formData, "confirmName").trim();
+
+  if (!targetWorkspaceId) {
+    redirect("/workspace/settings?error=invalid-workspace");
+  }
+
+  // Authorize against a REAL membership row (OWNER/ADMIN) for the TARGET
+  // workspace, or platform Admin Master. context.memberships is NOT used — it
+  // carries synthetic platform-admin OWNER rows that would let a non-Master
+  // internal admin delete any workspace. Deleting CASCADES away every
+  // connector, order, metric, member, invite and sync row — irreversible.
+  const isMaster = isAdminMaster(context.user);
+  const realMembership = await prisma.membership.findUnique({
+    where: {
+      userId_workspaceId: {
+        userId: context.user.id,
+        workspaceId: targetWorkspaceId,
+      },
+    },
+    select: { role: true },
+  });
+  const authorized =
+    isMaster ||
+    (realMembership != null && canDeleteWorkspace(realMembership.role));
+
+  if (!authorized) {
+    redirect("/workspace/settings?error=forbidden");
+  }
+
+  // Orphan guard: a non-Master user must not delete their last workspace and
+  // lock themselves out (the cascade also drops their membership). Admin Master
+  // is exempt — they manage brands without belonging to them.
+  if (!isMaster) {
+    const membershipCount = await prisma.membership.count({
+      where: { userId: context.user.id },
+    });
+    if (membershipCount <= 1) {
+      redirect("/workspace/settings?error=last-workspace");
+    }
+  }
+
+  const workspace = await prisma.workspace.findUnique({
+    where: { id: targetWorkspaceId },
+    select: { id: true, name: true },
+  });
+
+  if (!workspace) {
+    redirect("/workspace/settings?error=invalid-workspace");
+  }
+
+  // Typed-name confirmation guard: the submitted name must match exactly.
+  if (confirmName !== workspace.name) {
+    redirect("/workspace/settings?error=confirm-mismatch");
+  }
+
+  // Audit BEFORE the row (and its cascade children) disappear.
+  await logAudit({
+    action: "workspace.delete",
+    userId: context.user.id,
+    workspaceId: workspace.id,
+    resourceType: "workspace",
+    resourceId: workspace.id,
+    metadata: {
+      name: workspace.name,
+    },
+  });
+
+  await prisma.workspace.delete({ where: { id: workspace.id } });
+
+  // If the active workspace was the one deleted, drop the cookie so the next
+  // request re-resolves to a workspace the user still belongs to.
+  if (context.currentWorkspace.id === workspace.id) {
+    const cookieStore = await cookies();
+    cookieStore.delete("adstart_workspace_id");
+  }
+
+  redirect("/workspace/settings?deleted=1");
+}
+
 export async function updateMemberRoleAction(formData: FormData) {
   const context = await getCurrentUserContext();
-  assertCanManageMembers(context.currentMembership.role);
+  await requireRealMemberManagement(context);
 
   const parsed = workspaceMemberRoleSchema.safeParse({
     membershipId: getString(formData, "membershipId"),
@@ -187,10 +336,6 @@ export async function updateMemberRoleAction(formData: FormData) {
 
   if (!parsed.success) {
     redirect("/workspace/members?error=invalid");
-  }
-
-  if (context.isDemoMode) {
-    redirect("/workspace/members?updated=demo");
   }
 
   const target = await prisma.membership.findFirst({
@@ -246,7 +391,7 @@ export async function updateMemberRoleAction(formData: FormData) {
 
 export async function removeMemberAction(formData: FormData) {
   const context = await getCurrentUserContext();
-  assertCanManageMembers(context.currentMembership.role);
+  await requireRealMemberManagement(context);
 
   const parsed = workspaceMemberRemoveSchema.safeParse({
     membershipId: getString(formData, "membershipId"),
@@ -254,10 +399,6 @@ export async function removeMemberAction(formData: FormData) {
 
   if (!parsed.success) {
     redirect("/workspace/members?error=invalid");
-  }
-
-  if (context.isDemoMode) {
-    redirect("/workspace/members?removed=demo");
   }
 
   const target = await prisma.membership.findFirst({
@@ -306,4 +447,23 @@ export async function removeMemberAction(formData: FormData) {
   });
 
   redirect("/workspace/members?removed=1");
+}
+
+export async function manualSyncAction(): Promise<{
+  ok: boolean;
+  reason: string;
+}> {
+  const context = await getCurrentUserContext();
+  const { triggerWorkspaceSyncIfStale } =
+    await import("@/lib/workspace/sync-orchestrator");
+  const outcome = await triggerWorkspaceSyncIfStale({
+    workspaceId: context.currentWorkspace.id,
+    triggeredBy: `manual:${context.user.id}`,
+    // Manual sync also drives the historical backfill so each click pulls more
+    // of the account's history (multiple 3-month batches per run, until the
+    // 3-year window is covered).
+    includeBackfill: true,
+    thresholdMs: 0,
+  });
+  return { ok: outcome.triggered, reason: outcome.reason };
 }

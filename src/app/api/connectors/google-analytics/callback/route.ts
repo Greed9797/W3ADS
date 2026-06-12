@@ -2,8 +2,13 @@ import { ConnectorProvider } from "@prisma/client";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { logAudit } from "@/lib/audit/log";
-import { getCurrentUserContext } from "@/lib/auth/current";
+import { getLaxCookieOptions } from "@/lib/auth/cookies";
+import {
+  getCurrentUserContext,
+  resolveConnectorWorkspaceAccess,
+} from "@/lib/auth/current";
 import { canOperateWorkspaceConnectors } from "@/lib/auth/platform-permissions";
+import { isNextControlFlowError } from "@/lib/connectors/oauth-route-error";
 import { GoogleAnalyticsClient } from "@/lib/connectors/google-analytics/client";
 import { GOOGLE_ANALYTICS_OAUTH_STATE_COOKIE } from "@/lib/connectors/google-analytics/state";
 import { verifyConnectorOAuthState } from "@/lib/connectors/oauth-state";
@@ -15,7 +20,14 @@ import { createConnectorSelectionSession } from "@/lib/connectors/selection";
 
 export const runtime = "nodejs";
 
-function redirectToConnectors(request: NextRequest, params: Record<string, string>) {
+function redirectToConnectors(
+  request: NextRequest,
+  params: Record<string, string>,
+  // When the signed state has already been verified, pass its workspaceId so
+  // the active workspace is re-asserted even on error — otherwise the dropped
+  // OAuth cookie reverts the user to the agency's most-connected workspace.
+  workspaceId?: string,
+) {
   const url = new URL("/connectors", request.nextUrl.origin);
 
   for (const [key, value] of Object.entries(params)) {
@@ -30,70 +42,123 @@ function redirectToConnectors(request: NextRequest, params: Record<string, strin
     path: "/",
     maxAge: 0,
   });
+  if (workspaceId) {
+    response.cookies.set(
+      "adstart_workspace_id",
+      workspaceId,
+      getLaxCookieOptions({ maxAge: 60 * 60 * 24 * 180 }),
+    );
+  }
 
   return response;
 }
 
 function tokenExpiresAt(expiresInSeconds: number | undefined) {
-  return expiresInSeconds ? new Date(Date.now() + expiresInSeconds * 1000) : null;
+  return expiresInSeconds
+    ? new Date(Date.now() + expiresInSeconds * 1000)
+    : null;
 }
 
 export async function GET(request: NextRequest) {
+  try {
+    return await runGoogleAnalyticsCallback(request);
+  } catch (error: unknown) {
+    if (isNextControlFlowError(error)) throw error;
+    const message = error instanceof Error ? error.message : "unknown";
+    console.error(`[google-analytics/callback] unexpected failure: ${message}`);
+    return redirectToConnectors(request, {
+      provider: "google-analytics",
+      error: "oauth-failed",
+    });
+  }
+}
+
+async function runGoogleAnalyticsCallback(request: NextRequest) {
   const state = request.nextUrl.searchParams.get("state");
-  const storedState = request.cookies.get(GOOGLE_ANALYTICS_OAUTH_STATE_COOKIE)?.value;
   const context = await getCurrentUserContext();
 
-  if (!state || !storedState || state !== storedState) {
-    return redirectToConnectors(request, { provider: "google-analytics", error: "invalid-state" });
+  if (!state) {
+    return redirectToConnectors(request, {
+      provider: "google-analytics",
+      error: "invalid-state",
+      debug: "no-state-param",
+    });
   }
 
   const verifiedState = verifyConnectorOAuthState(state, {
     expectedProvider: "GA4",
     expectedUserId: context.user.id,
-    expectedWorkspaceId: context.currentWorkspace.id,
+    // workspaceId read from signed payload below — cookie unreliable on return.
   });
 
   if (!verifiedState.valid) {
-    return redirectToConnectors(request, { provider: "google-analytics", error: "invalid-state" });
+    return redirectToConnectors(request, {
+      provider: "google-analytics",
+      error: "invalid-state",
+      debug: `hmac-${verifiedState.reason}`,
+    });
+  }
+
+  const workspaceId = verifiedState.payload.workspaceId;
+  const access = await resolveConnectorWorkspaceAccess({
+    userId: context.user.id,
+    workspaceId,
+  });
+  if (!access) {
+    return redirectToConnectors(
+      request,
+      { provider: "google-analytics", error: "forbidden" },
+      workspaceId,
+    );
   }
 
   const error = request.nextUrl.searchParams.get("error");
   if (error) {
-    return redirectToConnectors(request, { provider: "google-analytics", error: "provider-denied" });
+    return redirectToConnectors(
+      request,
+      { provider: "google-analytics", error: "provider-denied" },
+      workspaceId,
+    );
   }
 
   const code = request.nextUrl.searchParams.get("code");
   if (!code) {
-    return redirectToConnectors(request, { provider: "google-analytics", error: "missing-code" });
+    return redirectToConnectors(
+      request,
+      { provider: "google-analytics", error: "missing-code" },
+      workspaceId,
+    );
   }
-
-  if (context.isDemoMode) {
-    return redirectToConnectors(request, { provider: "google-analytics", connected: "demo" });
-  }
-  if (!canOperateWorkspaceConnectors(context.user, context.currentMembership.role)) {
-    return redirectToConnectors(request, { provider: "google-analytics", error: "forbidden" });
+  if (!canOperateWorkspaceConnectors(access.user, access.role)) {
+    return redirectToConnectors(
+      request,
+      { provider: "google-analytics", error: "forbidden" },
+      workspaceId,
+    );
   }
 
   const providerConfig = await getActiveProviderConfig({
-    workspaceId: context.currentWorkspace.id,
+    workspaceId,
     provider: ConnectorProvider.GA4,
   });
   if (!providerConfig) {
-    return redirectToConnectors(request, {
-      provider: "google-analytics",
-      error: "missing-provider-config",
-    });
+    return redirectToConnectors(
+      request,
+      { provider: "google-analytics", error: "oauth-providerconfig-missing" },
+      workspaceId,
+    );
   }
 
   try {
     const client = new GoogleAnalyticsClient({
-      config: await buildGoogleAnalyticsConfigFromProviderConfig(providerConfig),
+      config:
+        await buildGoogleAnalyticsConfigFromProviderConfig(providerConfig),
     });
     const token = await client.exchangeCodeForTokens(code);
     const properties = await client.listProperties(token.access_token);
     const expiresAt = tokenExpiresAt(token.expires_in);
     const selection = await createConnectorSelectionSession({
-      workspaceId: context.currentWorkspace.id,
+      workspaceId,
       userId: context.user.id,
       provider: ConnectorProvider.GA4,
       accounts: properties.map((property) => ({
@@ -114,7 +179,7 @@ export async function GET(request: NextRequest) {
     await logAudit({
       action: "connector.google_analytics.selection_created",
       userId: context.user.id,
-      workspaceId: context.currentWorkspace.id,
+      workspaceId,
       resourceType: "connector_selection_session",
       resourceId: selection.id,
       metadata: {
@@ -126,13 +191,40 @@ export async function GET(request: NextRequest) {
     const url = new URL("/connectors/select", request.nextUrl.origin);
     url.searchParams.set("session", selection.id);
 
-    return NextResponse.redirect(url);
+    const redirectResponse = NextResponse.redirect(url);
+    // Re-assert the workspace from the signed OAuth state. The selection cookie
+    // is commonly dropped on the cross-site OAuth return, which would otherwise
+    // leave the sidebar/context on the agency's default workspace (the one with
+    // the most connectors) instead of the client this connection targets.
+    redirectResponse.cookies.set(
+      "adstart_workspace_id",
+      workspaceId,
+      getLaxCookieOptions({ maxAge: 60 * 60 * 24 * 180 }),
+    );
+
+    return redirectResponse;
   } catch (caught) {
     const message = caught instanceof Error ? caught.message : "unknown";
-    const errorCode = message.includes("Secret not found")
-      ? "missing-provider-config"
-      : "google-analytics-api";
+    const isVaultMissing =
+      message.includes("Secret not found") ||
+      message.includes("Vault credential unavailable") ||
+      message.includes("Credentials missing");
+    const errorCode = isVaultMissing ? "oauth-vault-missing" : "oauth-failed";
 
-    return redirectToConnectors(request, { provider: "google-analytics", error: errorCode });
+    console.error(`[google-analytics/callback] ${errorCode}: ${message}`);
+
+    return redirectToConnectors(
+      request,
+      {
+        provider: "google-analytics",
+        error: errorCode,
+        // Don't leak internal/upstream error text into the browser URL,
+        // history or referrer in production — it's already logged above.
+        ...(process.env.NODE_ENV === "production"
+          ? {}
+          : { debug: message.slice(0, 200) }),
+      },
+      workspaceId,
+    );
   }
 }

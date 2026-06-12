@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getCurrentUserContext } from "@/lib/auth/current";
+import { getWorkspaceRoleDefinition } from "@/lib/auth/permissions";
 
 export default async function ProfilePage() {
   const context = await getCurrentUserContext();
@@ -12,7 +13,9 @@ export default async function ProfilePage() {
     <div className="space-y-6">
       <section>
         <p className="text-caption text-[var(--text-tertiary)]">Perfil</p>
-        <h2 className="mt-2 text-2xl font-semibold tracking-[-0.02em]">Conta e privacidade</h2>
+        <h2 className="mt-2 text-2xl font-semibold tracking-[-0.02em]">
+          Conta e privacidade
+        </h2>
       </section>
 
       <Card>
@@ -23,21 +26,29 @@ export default async function ProfilePage() {
         <CardContent className="grid gap-4 text-sm text-[var(--text-secondary)] sm:grid-cols-2">
           <div>
             <p className="text-caption text-[var(--text-tertiary)]">Nome</p>
-            <p className="mt-1 font-medium text-[var(--text-primary)]">{context.user.name ?? "-"}</p>
+            <p className="mt-1 font-medium text-[var(--text-primary)]">
+              {context.user.name ?? "-"}
+            </p>
           </div>
           <div>
             <p className="text-caption text-[var(--text-tertiary)]">Email</p>
-            <p className="mt-1 font-medium text-[var(--text-primary)]">{context.user.email}</p>
+            <p className="mt-1 font-medium text-[var(--text-primary)]">
+              {context.user.email}
+            </p>
           </div>
           <div>
-            <p className="text-caption text-[var(--text-tertiary)]">Workspace atual</p>
+            <p className="text-caption text-[var(--text-tertiary)]">
+              Workspace atual
+            </p>
             <p className="mt-1 font-medium text-[var(--text-primary)]">
               {context.currentWorkspace.name}
             </p>
           </div>
           <div>
             <p className="text-caption text-[var(--text-tertiary)]">Papel</p>
-            <p className="mt-1 font-mono text-[var(--text-primary)]">{context.currentMembership.role}</p>
+            <p className="mt-1 font-medium text-[var(--text-primary)]">
+              {getWorkspaceRoleDefinition(context.currentMembership.role).label}
+            </p>
           </div>
         </CardContent>
       </Card>
@@ -49,7 +60,9 @@ export default async function ProfilePage() {
             <Download aria-hidden className="size-5 text-[var(--info)]" />
           </CardHeader>
           <CardContent className="space-y-4 text-sm text-[var(--text-secondary)]">
-            <p>Baixe um JSON com os dados da sua conta e vínculo com workspaces.</p>
+            <p>
+              Baixe um JSON com os dados da sua conta e vínculo com workspaces.
+            </p>
             <Button asChild variant="secondary">
               <Link href="/profile/data-export">Abrir exportação</Link>
             </Button>
@@ -62,7 +75,10 @@ export default async function ProfilePage() {
             <Trash2 aria-hidden className="size-5 text-[var(--danger)]" />
           </CardHeader>
           <CardContent className="space-y-4 text-sm text-[var(--text-secondary)]">
-            <p>Solicite a exclusão com confirmação por email. Em produção, a conta fica marcada para purge.</p>
+            <p>
+              Solicite a exclusão com confirmação por email. Em produção, a
+              conta fica marcada para purge.
+            </p>
             <Button asChild variant="secondary">
               <Link href="/profile/delete-account">Solicitar exclusão</Link>
             </Button>

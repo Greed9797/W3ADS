@@ -61,14 +61,14 @@ Antes do primeiro deploy com banco real, rode `supabase/bootstrap/w3ads-shared-p
 - Google OAuth fica configurado via Auth.js + Prisma Adapter quando `GOOGLE_OAUTH_CLIENT_ID` e `GOOGLE_OAUTH_CLIENT_SECRET` existirem.
 - Signup cria `User`, `Workspace`, `Membership(OWNER)` e dashboard padrao em transacao.
 - Convites de workspace ficam em `WorkspaceInvite`; envio por email e no-op local enquanto `RESEND_API_KEY` nao estiver definida.
-- RLS Supabase esta versionado em `prisma/migrations/20260516221000_auth_multi_tenant/migration.sql` como placeholder para um futuro JWT compativel com `auth.uid()`.
+- RLS Supabase esta versionado nas migrations, com reforcos em `prisma/migrations/20260519121000_real_rbac_policies/migration.sql` para roles internos, `CLIENT` read-only e limite de um workspace por cliente. Em runtime, as rotas server-side tambem filtram explicitamente por `workspaceId`.
 
 ## Conector Meta Ads
 
 A Fase 2 ja tem a base local do OAuth da Meta sem exigir Supabase real:
 
 - `/api/connectors/meta/connect` gera `state` CSRF em cookie httpOnly e redireciona para o Facebook.
-- `/api/connectors/meta/callback` valida `state` assinado e amarrado ao usuario/workspace, protege modo demo e cria uma sessao temporaria de selecao para salvar apenas as contas de anuncio escolhidas.
+- `/api/connectors/meta/callback` valida `state` assinado e amarrado ao usuario/workspace e cria uma sessao temporaria de selecao para salvar apenas as contas de anuncio escolhidas.
 - `src/lib/connectors/retry.ts` aplica retry exponencial com jitter e respeita `Retry-After`.
 - `src/lib/connectors/meta/client.ts` troca `code` por token via POST, troca para long-lived token, lista ad accounts com `Authorization` header e pausa quando o header de uso da Meta passa do limite definido.
 - Quando `INNGEST_EVENT_KEY` estiver configurada, cada conta conectada dispara backfill automatico de 90 dias.
@@ -80,7 +80,7 @@ Para testar conexao real depois de criar Supabase/Auth:
 3. Acesse `/platform/bootstrap` para promover o primeiro usuario a `W3_ADMIN`.
 4. Acesse `/connectors/settings` e cadastre as credenciais dos provedores no app.
 
-Com `AUTH_DISABLED="true"`, a tela `/connectors` continua funcionando para demo e mostra os atalhos de configuracao no app. Em producao, deixe `AUTH_DISABLED` vazio ou `false`; o app nao desliga auth por padrao quando `NODE_ENV=production`.
+O app nao desliga auth em producao. Para QA local, rode `npm run db:seed` e use `DEV_AUTH_BYPASS_EMAIL` apontando para um usuario seed; `AUTH_DISABLED` deve permanecer vazio ou `false`.
 
 ## Conectores Google Ads e Shopify
 
@@ -132,7 +132,7 @@ A rota `/dashboard` usa `src/lib/metrics/aggregator.ts` para calcular:
 - Top 10 campanhas por ROAS
 - Funil de impressoes, cliques, sessoes e pedidos
 
-Com `AUTH_DISABLED="true"`, o dashboard usa dados demo deterministas para permitir QA visual sem Supabase. Com auth/banco ativos, os mesmos componentes passam a ler `EcommerceOrder` e `DailyMetric`.
+O dashboard nao inventa dados para preencher visual. Sem `EcommerceOrder`, `EcommerceOrderItem` e `DailyMetric` reais no periodo, a UI exibe empty states claros.
 
 ## Dashboards customizaveis
 
@@ -141,8 +141,7 @@ A rota `/dashboards` lista paineis do workspace e `/dashboards/new` cria dashboa
 - 12 widgets disponiveis: KPIs, grafico receita x investimento, tabela de campanhas, funil e distribuicao de fonte.
 - `/dashboards/[id]` permite adicionar, remover e ordenar widgets por botoes de subir/descer.
 - OWNER e ADMIN editam; VIEWER apenas consulta.
-- Com `AUTH_DISABLED="true"`, dashboards criados sao persistidos em cookie local para QA sem banco.
-- Com auth/banco ativos, a persistencia usa `Dashboard.layout` e `Dashboard.widgets` no Prisma.
+- Dashboards customizados persistem em `Dashboard.layout` e `Dashboard.widgets` no Prisma.
 
 ## LGPD e beta polish
 
@@ -151,14 +150,14 @@ A rota `/dashboards` lista paineis do workspace e `/dashboards/new` cria dashboa
 - `/profile/delete-account` exige confirmacao exata por email; em banco real marca `User.deletedAt` e encerra sessoes.
 - Cookie banner e onboarding de 3 passos rodam no client sem dependencia externa.
 - `/api/health` retorna health granular de auth, DB, Vault, Inngest e Redis.
-- `/feedback` coleta problemas, duvidas e sugestoes do beta; em demo salva apenas cookie,
+- `/feedback` coleta problemas, duvidas e sugestoes do beta com usuario autenticado,
   com banco ativo persiste em `BetaFeedback` e grava audit log.
 - `NEXT_PUBLIC_POSTHOG_KEY` habilita envio opcional para a Capture API do PostHog.
 - `SENTRY_DSN` e `NEXT_PUBLIC_SENTRY_DSN` ativam o SDK oficial `@sentry/nextjs` para front, back e edge.
-- Erros capturados no client sao enviados para `/api/observability/client-error`; em demo a rota
+- Erros capturados no client sao enviados para `/api/observability/client-error`; quando o banco
   responde sem tocar no banco, com Supabase ativo grava `AuditLog`.
 - `NEXT_PUBLIC_POSTHOG_KEY` habilita dispatch local de eventos seguros, sem PII.
 
 ## Design system W3
 
-Os tokens centrais ficam em `src/app/globals.css`. Componentes React devem consumir CSS variables, evitando hexadecimais hardcoded fora de assets como `public/logo-w3.svg`.
+Os tokens centrais ficam em `src/app/globals.css`. Componentes React devem consumir CSS variables, evitando hexadecimais fixos fora de assets como `public/logo-w3.svg`.

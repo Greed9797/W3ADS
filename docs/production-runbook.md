@@ -2,7 +2,7 @@
 
 Dominio inicial: `https://w3ads.vercel.app`.
 
-Este runbook fecha a ordem operacional para sair de demo/local e abrir producao publica com Supabase, Vault, auth real, jobs e conectores configuraveis no app.
+Este runbook fecha a ordem operacional para sair do ambiente local e abrir producao publica com Supabase, Vault, auth real, jobs e conectores configuraveis no app.
 
 ## 1. Supabase production compartilhado
 

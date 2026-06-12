@@ -1,9 +1,14 @@
 import { ArrowLeft, Cable } from "lucide-react";
 import Link from "next/link";
 
+import { ProviderLogo } from "@/components/providers/provider-logo";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { getCurrentUserContext } from "@/lib/auth/current";
+import {
+  getCurrentUserContext,
+  resolveConnectorWorkspaceAccess,
+} from "@/lib/auth/current";
+import { canOperateWorkspaceConnectors } from "@/lib/auth/platform-permissions";
 import { getConnectorDefinition } from "@/lib/connectors/registry";
 import { parseSelectableAccounts } from "@/lib/connectors/selection";
 import { prisma } from "@/lib/db/prisma";
@@ -16,12 +21,14 @@ function firstParam(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
 }
 
-export default async function ConnectorSelectPage({ searchParams }: ConnectorSelectPageProps) {
+export default async function ConnectorSelectPage({
+  searchParams,
+}: ConnectorSelectPageProps) {
   const context = await getCurrentUserContext();
   const params = await searchParams;
   const sessionId = firstParam(params.session);
 
-  if (!sessionId || context.isDemoMode) {
+  if (!sessionId) {
     return (
       <div className="space-y-4">
         <Button asChild variant="secondary">
@@ -39,18 +46,39 @@ export default async function ConnectorSelectPage({ searchParams }: ConnectorSel
     );
   }
 
+  // The selection row carries the authoritative target workspace (signed into
+  // the OAuth state at connect time). Do NOT scope by the request cookie — it
+  // is dropped on the cross-site OAuth return and would point at the agency's
+  // default workspace, hiding a session that targets a client workspace.
   const selection = await prisma.connectorSelectionSession.findFirst({
     where: {
       id: sessionId,
-      workspaceId: context.currentWorkspace.id,
       userId: context.user.id,
       status: "PENDING",
     },
   });
+  const rawAccess = selection
+    ? await resolveConnectorWorkspaceAccess({
+        userId: context.user.id,
+        workspaceId: selection.workspaceId,
+      })
+    : null;
+  // Mirror the POST gate in /api/connectors/select so the UI never renders a
+  // selection the user can't actually submit.
+  const access =
+    rawAccess && canOperateWorkspaceConnectors(rawAccess.user, rawAccess.role)
+      ? rawAccess
+      : null;
   const accounts = parseSelectableAccounts(selection?.accounts);
-  const definition = selection ? getConnectorDefinition(selection.provider) : null;
+  const definition =
+    selection && access ? getConnectorDefinition(selection.provider) : null;
 
-  if (!selection || selection.expiresAt.getTime() < Date.now() || !definition) {
+  if (
+    !selection ||
+    !access ||
+    selection.expiresAt.getTime() < Date.now() ||
+    !definition
+  ) {
     return (
       <div className="space-y-4">
         <Button asChild variant="secondary">
@@ -78,10 +106,18 @@ export default async function ConnectorSelectPage({ searchParams }: ConnectorSel
       </Button>
 
       <div>
-        <p className="text-caption text-[var(--text-tertiary)]">Selecionar conta</p>
-        <h2 className="mt-2 text-2xl font-semibold tracking-[-0.02em]">{definition.name}</h2>
+        <p className="text-caption text-[var(--text-tertiary)]">
+          Selecionar conta
+        </p>
+        <div className="mt-2 flex items-center gap-3">
+          <ProviderLogo provider={definition.provider} />
+          <h2 className="text-2xl font-semibold tracking-[-0.02em]">
+            {definition.name}
+          </h2>
+        </div>
         <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--text-secondary)]">
-          Vincule somente a {definition.accountUnitLabel.toLowerCase()} do cliente.
+          Vincule somente a {definition.accountUnitLabel.toLowerCase()} do
+          cliente.
           {definition.provider === "GA4"
             ? " Contas do Analytics servem apenas como origem de permissao."
             : " BMs e MCCs servem apenas como origem de permissao."}

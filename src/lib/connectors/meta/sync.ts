@@ -7,9 +7,18 @@ import {
   getActiveProviderConfig,
 } from "@/lib/connectors/provider-config";
 import { prisma } from "@/lib/db/prisma";
-import { buildSyncJobCreateInput, type ProductionSyncType } from "@/lib/jobs/sync-operations";
+import {
+  buildSyncJobCreateInput,
+  type ProductionSyncType,
+} from "@/lib/jobs/sync-operations";
 
-import { MetaMarketingClient, type MetaCampaignInsight } from "./client";
+import {
+  MetaApiError,
+  MetaMarketingClient,
+  type MetaCampaignInsight,
+  type MetaPixelEventIds,
+} from "./client";
+import { META_DEFAULT_API_VERSION } from "./oauth";
 
 export type MetaSyncRange = {
   since: string;
@@ -58,14 +67,19 @@ export function mapMetaInsightToDailyMetric(input: {
     source: ConnectorProvider.META_ADS,
     campaignId: insight.campaignId,
     campaignName: insight.campaignName,
+    campaignStatus: insight.campaignStatus,
+    campaignObjective: insight.campaignObjective,
     adsetId: null,
     adsetName: null,
     adId: null,
     spend: insight.spend,
     impressions: asBigInt(insight.impressions),
     clicks: asBigInt(insight.clicks),
+    addToCart: asBigInt(insight.addToCart),
     conversions: insight.conversions,
     conversionsValue: insight.conversionsValue,
+    leads: asBigInt(insight.leads),
+    scheduledEvents: asBigInt(insight.scheduledEvents),
     sessions: null,
     orders: null,
     revenue: null,
@@ -77,6 +91,40 @@ export function mapMetaInsightToDailyMetric(input: {
       campaignId: insight.campaignId,
     }),
   };
+}
+
+function isMetaTokenExpiredError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const message = error.message;
+  if (!message) return false;
+  if (message.includes('"code":190')) return true;
+  if (message.toLowerCase().includes("token expired")) return true;
+  if (message.toLowerCase().includes("oauth")) {
+    return message.includes("190");
+  }
+  return false;
+}
+
+function readPixelEventIds(
+  publicCredentials: Record<string, string> | null | undefined,
+): MetaPixelEventIds {
+  return {
+    leadEventId: publicCredentials?.leadEventId?.trim() || null,
+    scheduledEventId: publicCredentials?.scheduledEventId?.trim() || null,
+  };
+}
+
+function isSystemUserConnector(metadata: unknown): boolean {
+  if (!metadata || typeof metadata !== "object") return false;
+  const mode = (metadata as Record<string, unknown>).credentialMode;
+  return mode === "system-user";
+}
+
+function readMetadataAdAccountId(metadata: unknown): string | null {
+  if (!metadata || typeof metadata !== "object") return null;
+  const raw = (metadata as Record<string, unknown>).adAccountId;
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  return raw.trim();
 }
 
 export async function syncMetaDailyMetrics(input: {
@@ -100,40 +148,76 @@ export async function syncMetaDailyMetrics(input: {
       workspaceId: connector.workspaceId,
       provider: ConnectorProvider.META_ADS,
     });
-    if (!providerConfig) {
+    const systemUser = isSystemUserConnector(connector.metadata);
+
+    if (!providerConfig && !systemUser) {
       throw new Error("Meta provider config is missing");
     }
+
     const accessToken = await connectorAccessTokenFromAccount(connector);
-    const client = new MetaMarketingClient({
-      config: await buildMetaConfigFromProviderConfig(providerConfig),
-    });
-    const insights = await client.getCampaignInsights({
+    const apiVersion =
+      providerConfig?.apiVersion?.trim() || META_DEFAULT_API_VERSION;
+    const client = providerConfig
+      ? new MetaMarketingClient({
+          config: await buildMetaConfigFromProviderConfig(providerConfig),
+        })
+      : new MetaMarketingClient({
+          config: {
+            appId: "system-user",
+            appSecret: "system-user",
+            redirectUri: "system-user",
+            apiVersion,
+          },
+        });
+    const pixelEventIds = readPixelEventIds(
+      providerConfig?.publicCredentials as Record<string, string> | undefined,
+    );
+
+    const adAccountId = systemUser
+      ? (readMetadataAdAccountId(connector.metadata) ??
+        connector.externalAccountId)
+      : connector.externalAccountId;
+
+    const { insights, truncated } = await client.getCampaignInsights({
       accessToken,
-      adAccountId: connector.externalAccountId,
+      adAccountId,
       since: input.range.since,
       until: input.range.until,
+      pixelEventIds,
     });
 
-    for (const insight of insights) {
-      const metric = mapMetaInsightToDailyMetric({
+    // Batch all per-day upserts into a single transaction round-trip. With
+    // 500+ rows per backfill batch this drops ~2.5s of sequential DB latency.
+    const metrics = insights.map((insight) =>
+      mapMetaInsightToDailyMetric({
         workspaceId: connector.workspaceId,
         connectorAccountId: connector.id,
         insight,
-      });
-
-      await prisma.dailyMetric.upsert({
-        where: { dedupeHash: metric.dedupeHash },
-        update: metric,
-        create: metric,
-      });
+      }),
+    );
+    if (metrics.length > 0) {
+      await prisma.$transaction(
+        metrics.map((metric) =>
+          prisma.dailyMetric.upsert({
+            where: { dedupeHash: metric.dedupeHash },
+            update: metric,
+            create: metric,
+          }),
+        ),
+      );
     }
 
     await prisma.connectorAccount.update({
       where: { id: connector.id },
       data: {
         lastSyncedAt: new Date(),
-        lastSyncError: null,
+        lastSyncError: truncated
+          ? "Sincronizando histórico em segundo plano — aguarde os próximos ciclos."
+          : null,
         status: ConnectorStatus.ACTIVE,
+        // historicalSyncedAt / historicalBackfillUntil are managed by the
+        // orchestrator (see sync-orchestrator.ts) to keep this layer
+        // agnostic of the foreground/backfill split.
       },
     });
     await prisma.syncJob.update({
@@ -147,12 +231,23 @@ export async function syncMetaDailyMetrics(input: {
 
     return { rowsUpserted: insights.length };
   } catch (caught) {
-    const message = caught instanceof Error ? caught.message : "Unknown Meta sync error";
+    let message =
+      caught instanceof Error ? caught.message : "Unknown Meta sync error";
+    if (
+      caught instanceof MetaApiError &&
+      caught.body &&
+      !message.includes(":")
+    ) {
+      message = `${message} | body: ${caught.body.slice(0, 200)}`;
+    }
+    const tokenExpired = isMetaTokenExpiredError(caught);
 
     await prisma.connectorAccount.update({
       where: { id: input.connectorAccountId },
       data: {
-        status: ConnectorStatus.ERROR,
+        status: tokenExpired
+          ? ConnectorStatus.TOKEN_EXPIRED
+          : ConnectorStatus.ERROR,
         lastSyncError: message,
       },
     });

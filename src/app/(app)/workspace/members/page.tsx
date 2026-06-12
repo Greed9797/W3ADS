@@ -1,8 +1,11 @@
 import {
-  inviteMemberAction,
   removeMemberAction,
   updateMemberRoleAction,
 } from "@/app/(app)/actions";
+import {
+  consumeMemberCreatedFlash,
+  createMemberAction,
+} from "@/app/(app)/workspace/members/actions";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -26,39 +29,54 @@ export default async function MembersPage({ searchParams }: MembersPageProps) {
   const canInvite = canManageMembers(context.currentMembership.role);
   const roleOptions = getWorkspaceRoleOptions();
   const assignableRoles = roleOptions.filter((role) => role.role !== "OWNER");
-  const workspaceMembers = context.isDemoMode
-    ? context.memberships.map((membership) => ({
-        ...membership,
-        user: {
-          id: context.user.id,
-          name: context.user.name,
-          email: context.user.email,
+  const createdFlash = canInvite ? await consumeMemberCreatedFlash() : null;
+  const workspaceMembers = await prisma.membership.findMany({
+    where: { workspaceId: context.currentWorkspace.id },
+    orderBy: { createdAt: "asc" },
+    include: {
+      user: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
         },
-      }))
-    : await prisma.membership.findMany({
-        where: { workspaceId: context.currentWorkspace.id },
-        orderBy: { createdAt: "asc" },
-        include: {
-          user: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-            },
-          },
-        },
-      });
+      },
+    },
+  });
 
   return (
     <div className="space-y-6">
       <div>
         <p className="text-caption text-[var(--text-tertiary)]">Workspace</p>
-        <h2 className="mt-2 text-2xl font-semibold tracking-[-0.02em]">Membros</h2>
+        <h2 className="mt-2 text-2xl font-semibold tracking-[-0.02em]">
+          Membros
+        </h2>
       </div>
-      {params.invited ? (
-        <p className="rounded-md bg-[var(--success-bg)] px-4 py-3 text-sm text-[var(--success)]">
-          Convite criado. O envio por email fica ativo quando `RESEND_API_KEY` estiver configurada.
-        </p>
+      {createdFlash ? (
+        <div className="rounded-md border border-[var(--success)] bg-[var(--success-bg)] px-4 py-3 text-sm text-[var(--success)]">
+          <p className="font-semibold">
+            Usuário criado. Compartilhe o acesso abaixo (visível apenas uma
+            vez):
+          </p>
+          <dl className="mt-2 grid gap-1 font-mono text-xs">
+            <div>
+              <span className="text-[var(--text-secondary)]">email: </span>
+              {createdFlash.email}
+            </div>
+            <div>
+              <span className="text-[var(--text-secondary)]">senha: </span>
+              {createdFlash.password}
+            </div>
+            <div>
+              <span className="text-[var(--text-secondary)]">papel: </span>
+              {createdFlash.role}
+            </div>
+          </dl>
+          <p className="mt-2 text-xs text-[var(--text-secondary)]">
+            O usuário pode trocar a senha em <code>/profile</code> após o
+            primeiro login.
+          </p>
+        </div>
       ) : null}
       {params.updated ? (
         <p className="rounded-md bg-[var(--success-bg)] px-4 py-3 text-sm text-[var(--success)]">
@@ -72,7 +90,8 @@ export default async function MembersPage({ searchParams }: MembersPageProps) {
       ) : null}
       {params.error ? (
         <p className="rounded-md bg-[var(--danger-bg)] px-4 py-3 text-sm text-[var(--danger)]">
-          Não conseguimos concluir a alteração. Confira seu papel e tente novamente.
+          Não conseguimos concluir a alteração. Confira seu papel e tente
+          novamente.
         </p>
       ) : null}
       <Card>
@@ -85,7 +104,9 @@ export default async function MembersPage({ searchParams }: MembersPageProps) {
               className="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4"
               key={role.role}
             >
-              <p className="font-semibold text-[var(--text-primary)]">{role.label}</p>
+              <p className="font-semibold text-[var(--text-primary)]">
+                {role.label}
+              </p>
               <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
                 {role.description}
               </p>
@@ -110,13 +131,16 @@ export default async function MembersPage({ searchParams }: MembersPageProps) {
             </thead>
             <tbody>
               {workspaceMembers.map((membership) => {
-                const roleDefinition = getWorkspaceRoleDefinition(membership.role);
+                const roleDefinition = getWorkspaceRoleDefinition(
+                  membership.role,
+                );
                 const canChange = canChangeMemberRole({
                   actorRole: context.currentMembership.role,
                   actorMembershipId: context.currentMembership.id,
                   targetMembershipId: membership.id,
                   targetCurrentRole: membership.role,
-                  targetNextRole: membership.role === "ADMIN" ? "VIEWER" : "ADMIN",
+                  targetNextRole:
+                    membership.role === "ADMIN" ? "VIEWER" : "ADMIN",
                 });
                 const canRemove = canRemoveMember({
                   actorRole: context.currentMembership.role,
@@ -126,8 +150,13 @@ export default async function MembersPage({ searchParams }: MembersPageProps) {
                 });
 
                 return (
-                  <tr className="border-b border-[var(--border-subtle)]" key={membership.id}>
-                    <td className="px-4 py-3 font-medium">{membership.user.name ?? "-"}</td>
+                  <tr
+                    className="border-b border-[var(--border-subtle)]"
+                    key={membership.id}
+                  >
+                    <td className="px-4 py-3 font-medium">
+                      {membership.user.name ?? "-"}
+                    </td>
                     <td className="px-4 py-3 text-[var(--text-secondary)]">
                       {membership.user.email}
                     </td>
@@ -142,8 +171,15 @@ export default async function MembersPage({ searchParams }: MembersPageProps) {
                     <td className="px-4 py-3">
                       <div className="flex justify-end gap-2">
                         {canChange ? (
-                          <form action={updateMemberRoleAction} className="flex items-center gap-2">
-                            <input name="membershipId" type="hidden" value={membership.id} />
+                          <form
+                            action={updateMemberRoleAction}
+                            className="flex items-center gap-2"
+                          >
+                            <input
+                              name="membershipId"
+                              type="hidden"
+                              value={membership.id}
+                            />
                             <select
                               className="h-9 rounded-md border border-[var(--border-strong)] bg-[var(--bg-surface)] px-2 text-sm"
                               defaultValue={membership.role}
@@ -162,7 +198,11 @@ export default async function MembersPage({ searchParams }: MembersPageProps) {
                         ) : null}
                         {canRemove ? (
                           <form action={removeMemberAction}>
-                            <input name="membershipId" type="hidden" value={membership.id} />
+                            <input
+                              name="membershipId"
+                              type="hidden"
+                              value={membership.id}
+                            />
                             <Button size="sm" type="submit" variant="ghost">
                               Remover
                             </Button>
@@ -185,13 +225,26 @@ export default async function MembersPage({ searchParams }: MembersPageProps) {
       {canInvite ? (
         <Card>
           <CardHeader>
-            <CardTitle>Convidar colaborador</CardTitle>
+            <CardTitle>Criar colaborador</CardTitle>
           </CardHeader>
           <CardContent>
-            <form action={inviteMemberAction} className="grid gap-4 md:grid-cols-[1fr_160px_auto]">
+            <form
+              action={createMemberAction}
+              className="grid gap-4 md:grid-cols-2 lg:grid-cols-[1fr_1fr_220px_160px_auto]"
+            >
+              <Input label="Nome" name="name" type="text" required />
               <Input label="Email" name="email" type="email" required />
+              <Input
+                label="Senha (opcional)"
+                name="password"
+                type="text"
+                autoComplete="off"
+                placeholder="Gerada automaticamente"
+              />
               <label className="grid gap-2">
-                <span className="text-caption text-[var(--text-tertiary)]">Papel</span>
+                <span className="text-caption text-[var(--text-tertiary)]">
+                  Papel
+                </span>
                 <select
                   className="h-10 rounded-md border border-[var(--border-strong)] bg-[var(--bg-surface)] px-3 text-sm"
                   name="role"
@@ -205,9 +258,13 @@ export default async function MembersPage({ searchParams }: MembersPageProps) {
                 </select>
               </label>
               <Button className="self-end" type="submit">
-                Convidar
+                Criar
               </Button>
             </form>
+            <p className="mt-3 text-xs text-[var(--text-secondary)]">
+              Se deixar a senha em branco, geramos uma temporária. O usuário
+              pode trocar depois em <code>/profile</code>.
+            </p>
           </CardContent>
         </Card>
       ) : null}

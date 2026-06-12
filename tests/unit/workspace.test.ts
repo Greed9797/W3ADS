@@ -61,8 +61,12 @@ describe("workspace helpers", () => {
     expect(() => assertCanManageConnectors("VIEWER")).toThrow("Sem permissao");
   });
 
-  it("allows any authenticated account to create a new workspace as owner", () => {
-    expect(canCreateWorkspace()).toBe(true);
+  it("limits workspace creation to internal account admins", () => {
+    expect(canCreateWorkspace({ platformRole: "ADMIN_MASTER" })).toBe(true);
+    expect(canCreateWorkspace({ platformRole: "W3_ADMIN" })).toBe(true);
+    expect(canCreateWorkspace({ platformRole: "ADMIN_LIMITED" })).toBe(true);
+    expect(canCreateWorkspace({ platformRole: "TRAFFIC_MANAGER" })).toBe(false);
+    expect(canCreateWorkspace({ platformRole: "USER" })).toBe(false);
   });
 
   it("limits workspace settings to owners", () => {

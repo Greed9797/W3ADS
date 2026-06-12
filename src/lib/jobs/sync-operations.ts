@@ -30,6 +30,7 @@ const ecommerceProviders = new Set<ConnectorProvider>([
   ConnectorProvider.TRAY,
   ConnectorProvider.WBUY,
   ConnectorProvider.MAGAZORD,
+  ConnectorProvider.GOOGLE_SHEETS,
 ]);
 
 function dateOnly(date: Date) {

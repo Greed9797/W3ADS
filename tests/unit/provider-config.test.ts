@@ -6,6 +6,7 @@ import {
   buildGoogleAnalyticsConfigFromProviderConfig,
   buildMetaConfigFromProviderConfig,
   buildShopifyConfigFromProviderConfig,
+  publicManualCredentialsFromProviderConfig,
   publicProviderConfig,
   validateProviderConfigInput,
 } from "@/lib/connectors/provider-config";
@@ -163,5 +164,26 @@ describe("connector provider config", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("client secret");
+  });
+
+  it("keeps legacy manual apiKey public credential available to WBuy client", async () => {
+    const credentials = await publicManualCredentialsFromProviderConfig(
+      {
+        provider: ConnectorProvider.WBUY,
+        baseUrl: "https://sistema.sistemawbuy.com.br/api/v1",
+        ordersPath: "/orders",
+        publicCredentials: {
+          apiKey: "Bearer legacy-token",
+        },
+        secretRefs: {},
+      },
+      new MemorySecretStore(),
+    );
+
+    expect(credentials).toMatchObject({
+      baseUrl: "https://sistema.sistemawbuy.com.br/api/v1",
+      ordersPath: "/order",
+      apiKey: "Bearer legacy-token",
+    });
   });
 });

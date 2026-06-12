@@ -33,12 +33,42 @@ function firstString(...values: unknown[]) {
   return null;
 }
 
+/**
+ * Some providers nest the order total in an object (WBuy:
+ * `valor_total: { total, subtotal, frete, ... }`). Pull a usable amount from
+ * the object, else treat the value as a scalar.
+ */
+function moneyFromMaybeObject(value: unknown): string | null {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const o = value as Record<string, unknown>;
+    return firstString(o.total, o.valor, o.value, o.amount, o.subtotal);
+  }
+
+  return asString(value);
+}
+
+/**
+ * Some providers send status as an object (WBuy: `status: { id, nome }`).
+ * Extract the human label, else treat as a scalar.
+ */
+function statusFromMaybeObject(value: unknown): string | null {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const o = value as Record<string, unknown>;
+    return firstString(o.nome, o.name, o.status, o.descricao, o.label);
+  }
+
+  return asString(value);
+}
+
 function normalizeMoney(value: string | null) {
   if (!value) {
     return null;
   }
   const cleaned = value.replace(/[^\d,.-]/g, "");
-  if (cleaned.includes(",") && cleaned.lastIndexOf(",") > cleaned.lastIndexOf(".")) {
+  if (
+    cleaned.includes(",") &&
+    cleaned.lastIndexOf(",") > cleaned.lastIndexOf(".")
+  ) {
     return cleaned.replace(/\./g, "").replace(",", ".");
   }
 
@@ -47,13 +77,17 @@ function normalizeMoney(value: string | null) {
 
 function normalizeBaseUrl(value: string) {
   const trimmed = value.trim().replace(/\/+$/, "");
-  const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  const withProtocol = /^https?:\/\//i.test(trimmed)
+    ? trimmed
+    : `https://${trimmed}`;
   const url = new URL(withProtocol);
 
   return `${url.protocol}//${url.host}${url.pathname.replace(/\/+$/, "")}`;
 }
 
-export function normalizeManualProviderCredentials(input: ManualProviderCredentials) {
+export function normalizeManualProviderCredentials(
+  input: ManualProviderCredentials,
+) {
   return {
     provider: input.provider,
     storeName: input.storeName.trim(),
@@ -79,10 +113,27 @@ function sumItemsCount(value: unknown) {
     }
 
     const record = item as Record<string, unknown>;
-    const quantity = Number(record.quantidade ?? record.quantity ?? record.qtd ?? 1);
+    const quantity = Number(
+      record.quantidade ?? record.quantity ?? record.qtd ?? 1,
+    );
 
     return sum + (Number.isFinite(quantity) ? quantity : 1);
   }, 0);
+}
+
+function firstFiniteInteger(...values: unknown[]) {
+  for (const value of values) {
+    if (value === undefined || value === null || value === "") {
+      continue;
+    }
+
+    const parsed = Number(String(value).replace(/[^\d-]/g, ""));
+    if (Number.isFinite(parsed)) {
+      return Math.max(0, Math.round(parsed));
+    }
+  }
+
+  return null;
 }
 
 function normalizeItems(value: unknown) {
@@ -96,22 +147,35 @@ function normalizeItems(value: unknown) {
     }
 
     const record = item as Record<string, unknown>;
-    const quantity = Number(record.quantidade ?? record.quantity ?? record.qtd ?? 1);
+    const quantity = Number(
+      record.quantidade ?? record.quantity ?? record.qtd ?? 1,
+    );
 
     return [
       {
         productName:
-          firstString(record.nome, record.name, record.product_name, record.title) ??
-          `Produto ${index + 1}`,
+          firstString(
+            record.nome,
+            record.name,
+            record.product_name,
+            record.title,
+          ) ?? `Produto ${index + 1}`,
         sku: firstString(record.sku, record.codigo_sku, record.reference),
         quantity: Number.isFinite(quantity) ? quantity : 1,
-        total: firstString(record.total, record.valor_total, record.price, record.preco),
+        total: firstString(
+          record.total,
+          record.valor_total,
+          record.price,
+          record.preco,
+        ),
       },
     ];
   });
 }
 
-export function normalizeManualCommerceOrder(payload: ManualCommerceOrderPayload): ShopifyOrder {
+export function normalizeManualCommerceOrder(
+  payload: ManualCommerceOrderPayload,
+): ShopifyOrder {
   const externalOrderId = firstString(
     payload.id,
     payload.order_id,
@@ -139,30 +203,57 @@ export function normalizeManualCommerceOrder(payload: ManualCommerceOrderPayload
       payload.criado_em,
       payload.date,
       payload.placed_at,
-    ) ?? new Date().toISOString();
+    ) ?? "";
+  // No parseable date → "" so the downstream parsePlacedAt guard SKIPS the
+  // order instead of attributing it to now() (which inflated today's revenue).
+
+  // WBuy nests line items under `produtos`.
+  const rawItems =
+    payload.itens ?? payload.items ?? payload.line_items ?? payload.produtos;
+  const items = normalizeItems(rawItems);
+  const itemsCount =
+    firstFiniteInteger(
+      payload.items_count,
+      payload.total_itens,
+      payload.qtd_vendas,
+      payload.quantidade_vendas,
+      payload.quantidade,
+      payload.qtd,
+    ) ?? sumItemsCount(rawItems);
 
   return {
     externalOrderId,
-    orderNumber: firstString(payload.numero, payload.pedido, payload.number, payload.order_number),
+    orderNumber: firstString(
+      payload.numero,
+      payload.pedido,
+      payload.number,
+      payload.order_number,
+    ),
     orderTotal:
       normalizeMoney(
         firstString(
-        payload.total,
-        payload.valor_total,
-        payload.total_price,
-        payload.valor,
-        payload.faturamento,
-        payload.receita,
-        payload.aprovado,
+          moneyFromMaybeObject(payload.valor_total),
+          payload.total,
+          payload.total_price,
+          payload.valor,
+          payload.faturamento,
+          payload.receita,
+          payload.aprovado,
         ),
       ) ?? "0",
-    orderCurrency: firstString(payload.moeda, payload.currency, payload.orderCurrency) ?? "BRL",
-    customerEmail: firstString(payload.email, payload.customer_email, payload.cliente_email),
-    itemsCount: sumItemsCount(payload.itens ?? payload.items ?? payload.line_items),
-    items: normalizeItems(payload.itens ?? payload.items ?? payload.line_items),
+    orderCurrency:
+      firstString(payload.moeda, payload.currency, payload.orderCurrency) ??
+      "BRL",
+    customerEmail: firstString(
+      payload.email,
+      payload.customer_email,
+      payload.cliente_email,
+    ),
+    itemsCount,
+    items,
     status:
       firstString(
-        payload.status,
+        statusFromMaybeObject(payload.status),
         payload.situacao,
         payload.payment_status,
         payload.status_pagamento,
@@ -174,12 +265,17 @@ export function normalizeManualCommerceOrder(payload: ManualCommerceOrderPayload
       payload.estado_uf,
       payload.state,
       payload.shipping_state,
-      (payload.shipping_address as Record<string, unknown> | undefined)?.province_code,
+      (payload.shipping_address as Record<string, unknown> | undefined)
+        ?.province_code,
       (payload.shipping_address as Record<string, unknown> | undefined)?.state,
     ),
     placedAt,
     utmSource: firstString(payload.utm_source, payload.origem, payload.source),
     utmMedium: firstString(payload.utm_medium, payload.midia, payload.medium),
-    utmCampaign: firstString(payload.utm_campaign, payload.campanha, payload.campaign),
+    utmCampaign: firstString(
+      payload.utm_campaign,
+      payload.campanha,
+      payload.campaign,
+    ),
   };
 }

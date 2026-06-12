@@ -8,15 +8,56 @@ type FetchLike = typeof fetch;
 const WBUY_API_BASE_URL = "https://sistema.sistemawbuy.com.br/api/v1";
 const DEFAULT_USER_AGENT = "W3ADS (integracoes@w3educacao.com.br)";
 
-function credentialString(credentials: ConnectorCredentialPayload, key: string) {
+function credentialString(
+  credentials: ConnectorCredentialPayload,
+  key: string,
+) {
   const value = credentials[key];
 
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
+function bearerToken(value: string | undefined) {
+  return value?.replace(/^(Authorization\s*:?\s*)?Bearer\s+/i, "").trim();
+}
+
+function basicBearerToken(
+  user: string | undefined,
+  password: string | undefined,
+) {
+  if (!user || !password) {
+    return undefined;
+  }
+
+  return Buffer.from(`${user}:${password}`).toString("base64");
+}
+
+function uniqueStrings(values: Array<string | undefined>) {
+  return Array.from(
+    new Set(values.filter((value): value is string => Boolean(value))),
+  );
+}
+
+function wbuyAuthorizationCandidates(credentials: ConnectorCredentialPayload) {
+  const apiKey = credentialString(credentials, "apiKey");
+  const apiSecret = credentialString(credentials, "apiSecret");
+  const apiUser = credentialString(credentials, "apiUser");
+  const apiPassword = credentialString(credentials, "apiPassword");
+  const basicToken = basicBearerToken(apiUser, apiPassword);
+
+  return uniqueStrings([
+    bearerToken(apiKey) ? `Bearer ${bearerToken(apiKey)}` : undefined,
+    bearerToken(apiSecret) ? `Bearer ${bearerToken(apiSecret)}` : undefined,
+    basicToken ? `Bearer ${basicToken}` : undefined,
+    basicToken ? `Basic ${basicToken}` : undefined,
+  ]);
+}
+
 function normalizeBaseUrl(baseUrl: string) {
   const trimmed = baseUrl.trim().replace(/\/+$/, "");
-  const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  const withProtocol = /^https?:\/\//i.test(trimmed)
+    ? trimmed
+    : `https://${trimmed}`;
   const url = new URL(withProtocol);
 
   return `${url.protocol}//${url.host}${url.pathname.replace(/\/+$/, "")}`;
@@ -38,7 +79,10 @@ function appendIsetBasePath(baseUrl: string) {
   return `${normalized}/ws/v1`;
 }
 
-function providerBaseUrl(provider: ConnectorProvider, credentials: ConnectorCredentialPayload) {
+function providerBaseUrl(
+  provider: ConnectorProvider,
+  credentials: ConnectorCredentialPayload,
+) {
   const configuredBaseUrl = credentialString(credentials, "baseUrl");
 
   if (provider === ConnectorProvider.GOOGLE_SHEETS) {
@@ -50,7 +94,9 @@ function providerBaseUrl(provider: ConnectorProvider, credentials: ConnectorCred
   }
 
   if (provider === ConnectorProvider.WBUY) {
-    return configuredBaseUrl ? normalizeBaseUrl(configuredBaseUrl) : WBUY_API_BASE_URL;
+    return configuredBaseUrl
+      ? normalizeBaseUrl(configuredBaseUrl)
+      : WBUY_API_BASE_URL;
   }
 
   if (!configuredBaseUrl) {
@@ -64,8 +110,20 @@ function providerBaseUrl(provider: ConnectorProvider, credentials: ConnectorCred
   return normalizeBaseUrl(configuredBaseUrl);
 }
 
-function providerOrdersPath(provider: ConnectorProvider, credentials: ConnectorCredentialPayload) {
+function providerOrdersPath(
+  provider: ConnectorProvider,
+  credentials: ConnectorCredentialPayload,
+) {
   const configuredPath = credentialString(credentials, "ordersPath");
+  if (provider === ConnectorProvider.WBUY && configuredPath) {
+    const normalized = configuredPath.replace(/\/+$/, "").toLowerCase();
+    if (normalized === "/orders") {
+      return "/order";
+    }
+
+    return configuredPath;
+  }
+
   if (configuredPath) {
     return configuredPath;
   }
@@ -74,14 +132,19 @@ function providerOrdersPath(provider: ConnectorProvider, credentials: ConnectorC
     case ConnectorProvider.WBUY:
       return "/order";
     case ConnectorProvider.ISET:
-    case ConnectorProvider.MAGAZORD:
       return "/pedidos";
+    case ConnectorProvider.MAGAZORD:
+      // Magazord OpenAPI: GET /api/v2/site/pedido (singular, with /api prefix).
+      return "/api/v2/site/pedido";
     default:
       return "/orders";
   }
 }
 
-function buildHeaders(provider: ConnectorProvider, credentials: ConnectorCredentialPayload) {
+function buildHeaders(
+  provider: ConnectorProvider,
+  credentials: ConnectorCredentialPayload,
+) {
   const headers: Record<string, string> = {
     Accept: "application/json",
     "User-Agent": DEFAULT_USER_AGENT,
@@ -100,13 +163,13 @@ function buildHeaders(provider: ConnectorProvider, credentials: ConnectorCredent
   }
 
   if (provider === ConnectorProvider.WBUY) {
-    if (apiUser && apiPassword) {
-      headers.Authorization = `Bearer ${Buffer.from(`${apiUser}:${apiPassword}`).toString(
-        "base64",
-      )}`;
-    } else if (apiKey) {
-      headers["x-token"] = apiKey;
+    // WBuy Postman docs (RWTsquyN): collection-level auth is `bearer` with a
+    // single token. The panel may show it as `Bearer base64(user:password)`.
+    const authorization = wbuyAuthorizationCandidates(credentials)[0];
+    if (authorization) {
+      headers.Authorization = authorization;
     }
+    headers["Content-Type"] = "application/json";
 
     return headers;
   }
@@ -122,9 +185,9 @@ function buildHeaders(provider: ConnectorProvider, credentials: ConnectorCredent
 
   if (provider === ConnectorProvider.MAGAZORD) {
     if (apiUser && apiPassword) {
-      headers.Authorization = `Basic ${Buffer.from(`${apiUser}:${apiPassword}`).toString(
-        "base64",
-      )}`;
+      headers.Authorization = `Basic ${Buffer.from(
+        `${apiUser}:${apiPassword}`,
+      ).toString("base64")}`;
     }
     if (apiKey) {
       headers["X-Api-Token"] = apiKey;
@@ -258,8 +321,111 @@ function normalizeHeader(value: string) {
     .replace(/^_+|_+$/g, "");
 }
 
-function extractGoogleSheetPayloads(csv: string): Record<string, unknown>[] {
+function parseSheetMoney(value: string) {
+  const cleaned = value.replace(/[^\d,.-]/g, "");
+  if (!cleaned) {
+    return 0;
+  }
+  const normalized =
+    cleaned.includes(",") && cleaned.lastIndexOf(",") > cleaned.lastIndexOf(".")
+      ? cleaned.replace(/\./g, "").replace(",", ".")
+      : cleaned;
+  const amount = Number(normalized);
+
+  return Number.isFinite(amount) ? amount : 0;
+}
+
+function parseSheetInteger(value: string) {
+  const normalized = value.replace(/[^\d-]/g, "");
+  const amount = Number(normalized);
+
+  return Number.isFinite(amount) ? Math.max(0, Math.round(amount)) : 0;
+}
+
+function parseSheetDateKey(value: string) {
+  const trimmed = value.trim();
+  const brMatch = trimmed.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (brMatch) {
+    return `${brMatch[3]}-${brMatch[2]}-${brMatch[1]}`;
+  }
+
+  const isoMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) {
+    return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+  }
+
+  return null;
+}
+
+function inRange(dateKey: string, range?: { since: string; until: string }) {
+  if (!range) {
+    return true;
+  }
+
+  return (
+    dateKey >= range.since.slice(0, 10) && dateKey <= range.until.slice(0, 10)
+  );
+}
+
+function extractDailyGoogleSheetPayloads(
+  rows: string[][],
+  range?: { since: string; until: string },
+) {
+  const headerIndex = rows.findIndex((row) => {
+    const headers = row.map(normalizeHeader);
+
+    return (
+      headers.includes("dia") &&
+      headers.includes("qtd_vendas") &&
+      headers.includes("valor_em_vendas")
+    );
+  });
+
+  if (headerIndex < 0) {
+    return null;
+  }
+
+  const headers = rows[headerIndex].map(normalizeHeader);
+  const dateIndex = headers.indexOf("dia");
+  const quantityIndex = headers.indexOf("qtd_vendas");
+  const revenueIndex = headers.indexOf("valor_em_vendas");
+
+  return rows.slice(headerIndex + 1).flatMap((cells) => {
+    const dateKey = parseSheetDateKey(cells[dateIndex] ?? "");
+    if (!dateKey || !inRange(dateKey, range)) {
+      return [];
+    }
+
+    const revenue = parseSheetMoney(cells[revenueIndex] ?? "");
+    const quantity = parseSheetInteger(cells[quantityIndex] ?? "");
+    if (revenue <= 0 || quantity <= 0) {
+      return [];
+    }
+
+    return [
+      {
+        pedido: `GOOGLE_SHEETS-${dateKey}`,
+        valor: cells[revenueIndex]?.trim() ?? "",
+        status: "APPROVED",
+        origem: "whatsapp",
+        data: `${dateKey}T00:00:00.000Z`,
+        qtd_vendas: String(quantity),
+        items_count: String(quantity),
+      },
+    ];
+  });
+}
+
+function extractGoogleSheetPayloads(
+  csv: string,
+  range?: { since: string; until: string },
+): Record<string, unknown>[] {
   const rows = parseCsvRows(csv);
+  const dailyPayloads = extractDailyGoogleSheetPayloads(rows, range);
+  if (dailyPayloads) {
+    return dailyPayloads;
+  }
+
   const [headers, ...dataRows] = rows;
   if (!headers?.length) {
     return [];
@@ -269,15 +435,22 @@ function extractGoogleSheetPayloads(csv: string): Record<string, unknown>[] {
   return dataRows
     .map((cells) =>
       Object.fromEntries(
-        normalizedHeaders.map((header, index) => [header, cells[index]?.trim() ?? ""]),
+        normalizedHeaders.map((header, index) => [
+          header,
+          cells[index]?.trim() ?? "",
+        ]),
       ),
     )
-    .filter((row) => Object.values(row).some((value) => String(value).trim().length > 0));
+    .filter((row) =>
+      Object.values(row).some((value) => String(value).trim().length > 0),
+    );
 }
 
 function extractOrderPayloads(value: unknown): Record<string, unknown>[] {
   if (Array.isArray(value)) {
-    return value.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"));
+    return value.filter((item): item is Record<string, unknown> =>
+      Boolean(item && typeof item === "object"),
+    );
   }
 
   if (!value || typeof value !== "object") {
@@ -289,7 +462,20 @@ function extractOrderPayloads(value: unknown): Record<string, unknown>[] {
   for (const key of ["orders", "pedidos", "data", "items", "results"]) {
     const nested = record[key];
     if (Array.isArray(nested)) {
-      return nested.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"));
+      return nested.filter((item): item is Record<string, unknown> =>
+        Boolean(item && typeof item === "object"),
+      );
+    }
+    // Magazord-style wrapper: `{ status: "success", data: { items: [...] } }`.
+    if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+      for (const inner of ["items", "orders", "pedidos", "results"]) {
+        const innerArr = (nested as Record<string, unknown>)[inner];
+        if (Array.isArray(innerArr)) {
+          return innerArr.filter((item): item is Record<string, unknown> =>
+            Boolean(item && typeof item === "object"),
+          );
+        }
+      }
     }
   }
 
@@ -323,10 +509,48 @@ export class ManualCommerceClient {
       ),
     );
 
+    if (this.provider === ConnectorProvider.WBUY) {
+      // WBuy pagination uses `?limit=<offset>,<size>` (max 100 per page) and
+      // does NOT support server-side date filters. Listing flow lives in
+      // listOrders() which loops with the WBuy-specific URL builder.
+      url.searchParams.set("limit", range ? "0,100" : "0,1");
+      return url;
+    }
+
+    if (this.provider === ConnectorProvider.MAGAZORD) {
+      // Magazord OpenAPI: `dataHora[gte]`/`dataHora[lt]` with YYYY-MM-DD,
+      // pagination via `page=<N>&limit=<size>` (max 100). Listing flow lives
+      // in listOrders() which loops with the Magazord-specific URL builder.
+      if (range) {
+        url.searchParams.set("dataHora[gte]", range.since.slice(0, 10));
+        url.searchParams.set("dataHora[lt]", range.until.slice(0, 10));
+        url.searchParams.set("limit", "100");
+        url.searchParams.set("page", "1");
+      } else {
+        url.searchParams.set("limit", "1");
+        url.searchParams.set("page", "1");
+      }
+      return url;
+    }
+
     if (range) {
-      url.searchParams.set("created_at_min", range.since);
-      url.searchParams.set("created_at_max", range.until);
-      url.searchParams.set("updated_at_min", range.since);
+      // Some providers reject ISO timestamps with timezone — slice to date-only.
+      const since = range.since.slice(0, 10);
+      const until = range.until.slice(0, 10);
+      const sinceParam =
+        credentialString(this.credentials, "dateSinceParam") ??
+        "created_at_min";
+      const untilParam =
+        credentialString(this.credentials, "dateUntilParam") ??
+        "created_at_max";
+      const updatedSinceParam =
+        credentialString(this.credentials, "dateUpdatedParam") ??
+        "updated_at_min";
+      url.searchParams.set(sinceParam, since);
+      url.searchParams.set(untilParam, until);
+      if (updatedSinceParam && updatedSinceParam !== "none") {
+        url.searchParams.set(updatedSinceParam, since);
+      }
       url.searchParams.set("limit", "200");
     } else {
       url.searchParams.set("limit", "1");
@@ -336,21 +560,208 @@ export class ManualCommerceClient {
     return url;
   }
 
+  private wbuyOrdersUrls(input: { offset: number; pageSize: number }) {
+    const configuredPath = providerOrdersPath(this.provider, this.credentials);
+    const cleanPath = configuredPath.replace(/\/+$/, "");
+    return uniqueStrings([cleanPath, `${cleanPath}/`]).map((path) => {
+      const url = new URL(
+        appendPath(providerBaseUrl(this.provider, this.credentials), path),
+      );
+      url.searchParams.set("limit", `${input.offset},${input.pageSize}`);
+      return url;
+    });
+  }
+
+  private async fetchWbuyResponse(urls: URL[]) {
+    const baseHeaders = buildHeaders(this.provider, this.credentials);
+    const authCandidates = wbuyAuthorizationCandidates(this.credentials);
+    const attempts = authCandidates.length > 0 ? authCandidates : [undefined];
+    let lastResponse: Response | null = null;
+
+    for (const url of urls) {
+      for (const authorization of attempts) {
+        const headers = authorization
+          ? { ...baseHeaders, Authorization: authorization }
+          : baseHeaders;
+        const response = await callWithRetry(() =>
+          this.fetchImpl(url, {
+            headers,
+            // WBuy lists orders via GET /order?limit=offset,size. POST on the
+            // same path is treated as *create order* and returns 400
+            // ("Existem campos obrigatórios..."), which broke every sync/probe.
+            method: "GET",
+          }),
+        );
+        if (response.ok || ![401, 403, 404].includes(response.status)) {
+          return response;
+        }
+        lastResponse = response;
+      }
+    }
+
+    return lastResponse ?? new Response(null, { status: 401 });
+  }
+
+  private async fetchWbuyOrders(range: { since: string; until: string }) {
+    const pageSize = 100;
+    const MAX_PAGES = 50;
+    const sinceKey = range.since.slice(0, 10);
+    const untilKey = range.until.slice(0, 10);
+    const collected: Record<string, unknown>[] = [];
+    let offset = 0;
+
+    for (let page = 0; page < MAX_PAGES; page += 1) {
+      const response = await this.fetchWbuyResponse(
+        this.wbuyOrdersUrls({ offset, pageSize }),
+      );
+
+      if (!response.ok) {
+        let body = "";
+        try {
+          body = (await response.text()).slice(0, 300);
+        } catch {
+          // body unreadable
+        }
+        const suffix = body ? ` | body: ${body}` : "";
+        throw new Error(
+          `${this.provider} orders failed with status ${response.status}${suffix}`,
+        );
+      }
+
+      const payload = extractOrderPayloads(await response.json());
+      if (payload.length === 0) {
+        break;
+      }
+
+      let oldestKey = "";
+      for (const order of payload) {
+        const created = String(
+          (order as Record<string, unknown>).data ??
+            (order as Record<string, unknown>).created_at ??
+            "",
+        ).slice(0, 10);
+        if (!created) {
+          // Date-less order: SKIP it. Including it unconditionally let an order
+          // with no date leak into every sync window and inflate revenue.
+          continue;
+        }
+        if (created >= sinceKey && created <= untilKey) {
+          collected.push(order);
+        }
+        if (!oldestKey || created < oldestKey) {
+          oldestKey = created;
+        }
+      }
+
+      // WBuy returns newest-first by default. Once the oldest record in this
+      // page is already before `since`, we can stop paginating.
+      if (oldestKey && oldestKey < sinceKey) {
+        break;
+      }
+      if (payload.length < pageSize) {
+        break;
+      }
+      offset += pageSize;
+    }
+
+    return collected;
+  }
+
+  private magazordOrdersUrl(input: {
+    range: { since: string; until: string };
+    page: number;
+    pageSize: number;
+  }) {
+    const url = new URL(
+      appendPath(
+        providerBaseUrl(this.provider, this.credentials),
+        providerOrdersPath(this.provider, this.credentials),
+      ),
+    );
+    url.searchParams.set("dataHora[gte]", input.range.since.slice(0, 10));
+    url.searchParams.set("dataHora[lt]", input.range.until.slice(0, 10));
+    url.searchParams.set("limit", String(input.pageSize));
+    url.searchParams.set("page", String(input.page));
+    return url;
+  }
+
+  private async fetchMagazordOrders(range: { since: string; until: string }) {
+    const pageSize = 100;
+    const MAX_PAGES = 50;
+    const collected: Record<string, unknown>[] = [];
+
+    for (let page = 1; page <= MAX_PAGES; page += 1) {
+      const response = await callWithRetry(() =>
+        this.fetchImpl(this.magazordOrdersUrl({ range, page, pageSize }), {
+          headers: buildHeaders(this.provider, this.credentials),
+        }),
+      );
+
+      if (!response.ok) {
+        let body = "";
+        try {
+          body = (await response.text()).slice(0, 300);
+        } catch {
+          // body unreadable
+        }
+        const suffix = body ? ` | body: ${body}` : "";
+        throw new Error(
+          `${this.provider} orders failed with status ${response.status}${suffix}`,
+        );
+      }
+
+      const payload = extractOrderPayloads(await response.json());
+      if (payload.length === 0) {
+        break;
+      }
+      collected.push(...payload);
+      if (payload.length < pageSize) {
+        break;
+      }
+    }
+
+    return collected;
+  }
+
   async healthCheck() {
+    if (this.provider === ConnectorProvider.WBUY) {
+      const response = await this.fetchWbuyResponse(
+        this.wbuyOrdersUrls({ offset: 0, pageSize: 1 }),
+      );
+
+      if (!response.ok) {
+        throw new Error(
+          `${this.provider} credentials failed with status ${response.status}`,
+        );
+      }
+
+      return { ok: true };
+    }
+
     const response = await callWithRetry(() =>
       this.fetchImpl(this.ordersUrl(), {
         headers: buildHeaders(this.provider, this.credentials),
+        method: "GET",
       }),
     );
 
     if (!response.ok) {
-      throw new Error(`${this.provider} credentials failed with status ${response.status}`);
+      throw new Error(
+        `${this.provider} credentials failed with status ${response.status}`,
+      );
     }
 
     return { ok: true };
   }
 
   async listOrders(range: { since: string; until: string }) {
+    if (this.provider === ConnectorProvider.WBUY) {
+      return this.fetchWbuyOrders(range);
+    }
+    if (this.provider === ConnectorProvider.MAGAZORD) {
+      return this.fetchMagazordOrders(range);
+    }
+
     const response = await callWithRetry(() =>
       this.fetchImpl(this.ordersUrl(range), {
         headers: buildHeaders(this.provider, this.credentials),
@@ -358,11 +769,20 @@ export class ManualCommerceClient {
     );
 
     if (!response.ok) {
-      throw new Error(`${this.provider} orders failed with status ${response.status}`);
+      let body = "";
+      try {
+        body = (await response.text()).slice(0, 300);
+      } catch {
+        // body unreadable; keep generic message
+      }
+      const suffix = body ? ` | body: ${body}` : "";
+      throw new Error(
+        `${this.provider} orders failed with status ${response.status}${suffix}`,
+      );
     }
 
     if (this.provider === ConnectorProvider.GOOGLE_SHEETS) {
-      return extractGoogleSheetPayloads(await response.text());
+      return extractGoogleSheetPayloads(await response.text(), range);
     }
 
     return extractOrderPayloads(await response.json());

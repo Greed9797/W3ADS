@@ -6,36 +6,29 @@ import { fileURLToPath } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const scriptSrc =
-  process.env.NODE_ENV === "development"
-    ? "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.posthog.com https://*.sentry.io"
-    : "script-src 'self' 'unsafe-inline' https://*.posthog.com https://*.sentry.io";
-
 const securityHeaders = [
   { key: "X-Frame-Options", value: "DENY" },
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-  { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+  {
+    key: "Permissions-Policy",
+    value: "camera=(), microphone=(), geolocation=()",
+  },
   {
     key: "Strict-Transport-Security",
     value: "max-age=63072000; includeSubDomains; preload",
-  },
-  {
-    key: "Content-Security-Policy",
-    value: [
-      "default-src 'self'",
-      scriptSrc,
-      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-      "img-src 'self' data: https: blob:",
-      "font-src 'self' https://fonts.gstatic.com",
-      "connect-src 'self' https://*.supabase.co https://*.posthog.com https://*.sentry.io",
-      "frame-ancestors 'none'",
-    ].join("; "),
   },
 ];
 
 const nextConfig: NextConfig = {
   outputFileTracingRoot: __dirname,
+  experimental: {
+    optimizePackageImports: [
+      "recharts",
+      "lucide-react",
+      "@radix-ui/react-slot",
+    ],
+  },
   async headers() {
     return [
       {
@@ -47,7 +40,9 @@ const nextConfig: NextConfig = {
 };
 
 const sentryConfig =
-  process.env.SENTRY_AUTH_TOKEN && process.env.SENTRY_ORG && process.env.SENTRY_PROJECT
+  process.env.SENTRY_AUTH_TOKEN &&
+  process.env.SENTRY_ORG &&
+  process.env.SENTRY_PROJECT
     ? {
         org: process.env.SENTRY_ORG,
         project: process.env.SENTRY_PROJECT,
@@ -63,4 +58,6 @@ const shouldWrapSentry =
   Boolean(process.env.NEXT_PUBLIC_SENTRY_DSN) ||
   Boolean(process.env.SENTRY_AUTH_TOKEN);
 
-export default shouldWrapSentry ? withSentryConfig(nextConfig, sentryConfig) : nextConfig;
+export default shouldWrapSentry
+  ? withSentryConfig(nextConfig, sentryConfig)
+  : nextConfig;

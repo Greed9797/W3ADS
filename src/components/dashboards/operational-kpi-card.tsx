@@ -15,6 +15,7 @@ type OperationalKpiCardProps = {
   icon: ReactNode;
   accent?: string;
   compact?: boolean;
+  showComparison?: boolean;
   chart?: {
     data: Array<{
       label: string;
@@ -33,6 +34,7 @@ export function OperationalKpiCard({
   kpi,
   label,
   previousValue,
+  showComparison = true,
   value,
 }: OperationalKpiCardProps) {
   const isPositive = kpi.deltaPercent >= 0;
@@ -41,7 +43,7 @@ export function OperationalKpiCard({
   return (
     <Card
       className={cn(
-        "relative overflow-hidden border-l-[3px] p-4",
+        "relative flex h-full flex-col overflow-hidden border-l-[3px] p-4",
         compact ? "min-h-[112px]" : "min-h-[132px]",
       )}
       style={{ borderLeftColor: accent }}
@@ -59,19 +61,30 @@ export function OperationalKpiCard({
         >
           {value}
         </p>
-        <p className="mt-1 text-xs text-[var(--text-tertiary)]">
-          / {previousValue}
-        </p>
-        <p
-          className={cn(
-            "mt-3 inline-flex items-center gap-1 font-mono text-[0.75rem] font-medium",
-            isPositive ? "text-[var(--success)]" : "text-[var(--danger)]",
-          )}
-        >
-          <DeltaIcon aria-hidden className="size-3.5" />
-          {formatPercentBR(Math.abs(kpi.deltaPercent))} vs. período anterior
-        </p>
-        {chart ? <KpiMiniChart accent={accent} data={chart.data} format={chart.format} /> : null}
+        {showComparison ? (
+          <>
+            <p className="mt-1 text-xs text-[var(--text-tertiary)]">
+              / {previousValue}
+            </p>
+            <p
+              className={cn(
+                "mt-3 inline-flex items-center gap-1 font-mono text-[0.75rem] font-medium",
+                isPositive ? "text-[var(--success)]" : "text-[var(--danger)]",
+              )}
+            >
+              <DeltaIcon aria-hidden className="size-3.5" />
+              {formatPercentBR(Math.abs(kpi.deltaPercent))} vs. período anterior
+            </p>
+          </>
+        ) : null}
+        {chart ? (
+          <KpiMiniChart
+            accent={accent}
+            data={chart.data}
+            format={chart.format}
+            showComparison={showComparison}
+          />
+        ) : null}
       </CardContent>
     </Card>
   );

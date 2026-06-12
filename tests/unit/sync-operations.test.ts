@@ -27,6 +27,10 @@ describe("sync operations", () => {
       since: "2026-05-15",
       until: "2026-05-18",
     });
+    expect(buildIncrementalSyncRange(ConnectorProvider.GOOGLE_SHEETS, now)).toEqual({
+      since: "2026-05-15",
+      until: "2026-05-18",
+    });
   });
 
   it("builds fan-out events for active connector accounts", () => {
@@ -54,6 +58,11 @@ describe("sync operations", () => {
             provider: ConnectorProvider.GA4,
             status: ConnectorStatus.ACTIVE,
           },
+          {
+            id: "sheets-1",
+            provider: ConnectorProvider.GOOGLE_SHEETS,
+            status: ConnectorStatus.ACTIVE,
+          },
         ],
       }),
     ).toEqual([
@@ -78,6 +87,14 @@ describe("sync operations", () => {
         data: {
           connectorAccountId: "ga4-1",
           range: { since: "2026-05-11", until: "2026-05-18" },
+          syncType: "INCREMENTAL",
+        },
+      },
+      {
+        name: "connector.ecommerce.backfill",
+        data: {
+          connectorAccountId: "sheets-1",
+          range: { since: "2026-05-15", until: "2026-05-18" },
           syncType: "INCREMENTAL",
         },
       },

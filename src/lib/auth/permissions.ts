@@ -1,4 +1,6 @@
-import type { MemberRole } from "@prisma/client";
+import type { MemberRole, PlatformRole } from "@prisma/client";
+
+import { isAdminLimited, isAdminMaster } from "@/lib/auth/platform-permissions";
 
 export type WorkspaceRoleCapability =
   | "view_dashboard"
@@ -31,13 +33,21 @@ const workspaceRoleDefinitions: Record<MemberRole, WorkspaceRoleDefinition> = {
   ADMIN: {
     role: "ADMIN",
     label: "Admin",
-    description: "Opera dashboards, conectores e membros, sem alterar a titularidade.",
-    capabilities: ["view_dashboard", "edit_dashboard", "manage_connectors", "manage_members"],
+    description:
+      "Opera dashboards, conectores, membros e ajustes do workspace, sem alterar a titularidade.",
+    capabilities: [
+      "view_dashboard",
+      "edit_dashboard",
+      "manage_connectors",
+      "manage_members",
+      "manage_workspace_settings",
+    ],
   },
   VIEWER: {
     role: "VIEWER",
     label: "Viewer",
-    description: "Consulta dashboards e status dos conectores em modo somente leitura.",
+    description:
+      "Consulta dashboards e status dos conectores em modo somente leitura.",
     capabilities: ["view_dashboard"],
   },
   CLIENT: {
@@ -120,8 +130,21 @@ export function assertCanManageWorkspaceSettings(role: MemberRole) {
   }
 }
 
-export function canCreateWorkspace() {
-  return true;
+export function canCreateWorkspace(user: { platformRole: PlatformRole }) {
+  return isAdminMaster(user) || isAdminLimited(user);
+}
+
+/**
+ * Workspace deletion (CASCADE wipes connectors, orders, metrics, members,
+ * invites, sync state — irreversible). Allowed to the workspace OWNER/ADMIN of
+ * the TARGET workspace, OR the platform Admin Master. Callers MUST resolve the
+ * actor's membership role for the SPECIFIC workspace being deleted (never the
+ * cookie-current one) before trusting `role`, and always require a typed-name
+ * confirmation. The platform-level override is applied separately at the action
+ * layer via `isAdminMaster`.
+ */
+export function canDeleteWorkspace(role: MemberRole) {
+  return role === "OWNER" || role === "ADMIN";
 }
 
 export function canAssignInviteRole(role: MemberRole) {

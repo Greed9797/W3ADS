@@ -1,10 +1,8 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { isAuthDisabled } from "@/lib/auth/mode";
 
 import { googleSignInAction, loginAction } from "../actions";
 
@@ -13,10 +11,6 @@ type LoginPageProps = {
 };
 
 export default async function LoginPage({ searchParams }: LoginPageProps) {
-  if (isAuthDisabled()) {
-    redirect("/dashboard");
-  }
-
   const params = await searchParams;
   const error = params.error;
   const reset = params.reset;

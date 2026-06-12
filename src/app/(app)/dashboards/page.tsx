@@ -1,18 +1,46 @@
-import { ArrowUpRight, BarChart3, BadgePercent, CircleDollarSign, Plus, Tag } from "lucide-react";
+import {
+  ArrowUpRight,
+  BarChart3,
+  BadgePercent,
+  CircleDollarSign,
+  Plus,
+  Tag,
+} from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
 import { ConnectorProvider } from "@prisma/client";
 
 import { switchWorkspaceAction } from "@/app/(app)/actions";
+import { DashboardFilterBar } from "@/components/dashboards/dashboard-filter-bar";
+import {
+  GoogleAdsLogo,
+  MetaAdsLogo,
+} from "@/components/providers/provider-logo";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getCurrentUserContext } from "@/lib/auth/current";
-import { canManagePlatformUsers, canViewBrands } from "@/lib/auth/platform-permissions";
+import {
+  canManagePlatformUsers,
+  canViewBrands,
+} from "@/lib/auth/platform-permissions";
 import { prisma } from "@/lib/db/prisma";
-import { calculateRatioPercent, calculateRoas } from "@/lib/metrics/aggregator";
-import { getDashboardPeriod } from "@/lib/metrics/period";
-import { formatCurrencyBR, formatPercentBR, formatRoasBR } from "@/lib/utils/format-br";
+import {
+  calculateRatioPercent,
+  calculateRoas,
+  isApprovedOrderStatus,
+} from "@/lib/metrics/aggregator";
+import {
+  dashboardTrafficProviders,
+  getDashboardFilters,
+  getDashboardPeriod,
+} from "@/lib/metrics/period";
+import {
+  formatCurrencyBR,
+  formatPercentBR,
+  formatRoasBR,
+} from "@/lib/utils/format-br";
+import { DashboardAutoRefresh } from "@/components/dashboard/dashboard-auto-refresh";
 
 type DashboardsPageProps = {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -30,43 +58,10 @@ type BrandRow = {
   googleRoas: number;
 };
 
-const demoBrands: BrandRow[] = [
-  {
-    workspaceId: "demo-workspace",
-    name: "The Greg's Parfums",
-    slug: "the-gregs-parfums",
-    revenue: 10842.54,
-    spend: 1511.6,
-    mediaRate: 13.94,
-    roas: 7.17,
-    metaRoas: 2.58,
-    googleRoas: 0,
-  },
-  {
-    workspaceId: "demo-workspace",
-    name: "GM Rosa do Deserto",
-    slug: "gm-rosa-do-deserto",
-    revenue: 1983.59,
-    spend: 492.56,
-    mediaRate: 24.83,
-    roas: 4.03,
-    metaRoas: 3.56,
-    googleRoas: 0,
-  },
-  {
-    workspaceId: "demo-workspace",
-    name: "Divinal Studio",
-    slug: "divinal-studio",
-    revenue: 1138.39,
-    spend: 302.79,
-    mediaRate: 26.6,
-    roas: 3.76,
-    metaRoas: 0,
-    googleRoas: 0,
-  },
-];
-
-function sum(items: BrandRow[], key: keyof Pick<BrandRow, "revenue" | "spend">) {
+function sum(
+  items: BrandRow[],
+  key: keyof Pick<BrandRow, "revenue" | "spend">,
+) {
   return items.reduce((total, item) => total + item[key], 0);
 }
 
@@ -142,20 +137,15 @@ function BrandMetric({
   );
 }
 
-function BrandCard({
-  brand,
-  isDemoMode,
-  rank,
-}: {
-  brand: BrandRow;
-  isDemoMode: boolean;
-  rank: number;
-}) {
+function BrandCard({ brand, rank }: { brand: BrandRow; rank: number }) {
   return (
     <Card className="overflow-hidden p-0">
       <div className="p-6">
         <div className="mb-8 flex items-start justify-between gap-4">
-          <Tag aria-hidden className="mt-1 size-5 text-[var(--text-tertiary)]" />
+          <Tag
+            aria-hidden
+            className="mt-1 size-5 text-[var(--text-tertiary)]"
+          />
           <span className="font-[var(--font-display)] text-2xl leading-none text-[var(--text-primary)]">
             {rank}°
           </span>
@@ -170,22 +160,13 @@ function BrandCard({
               {formatSlug(brand.slug)}
             </p>
           </div>
-          {isDemoMode ? (
-            <Button asChild size="sm" variant="secondary">
-              <Link href="/dashboard">
-                Dashboard
-                <ArrowUpRight aria-hidden className="size-4" />
-              </Link>
+          <form action={switchWorkspaceAction}>
+            <input name="workspaceId" type="hidden" value={brand.workspaceId} />
+            <Button size="sm" type="submit" variant="secondary">
+              Dashboard
+              <ArrowUpRight aria-hidden className="size-4" />
             </Button>
-          ) : (
-            <form action={switchWorkspaceAction}>
-              <input name="workspaceId" type="hidden" value={brand.workspaceId} />
-              <Button size="sm" type="submit" variant="secondary">
-                Dashboard
-                <ArrowUpRight aria-hidden className="size-4" />
-              </Button>
-            </form>
-          )}
+          </form>
         </div>
       </div>
 
@@ -215,15 +196,15 @@ function BrandCard({
           value={brand.mediaRate}
         />
         <BrandMetric
-          icon={<BarChart3 aria-hidden className="size-3.5" />}
+          icon={<MetaAdsLogo className="size-5 rounded-[6px] shadow-none" />}
           kind="roas"
           label="Meta ROAS"
           value={brand.metaRoas}
         />
         <BrandMetric
-          icon={<BarChart3 aria-hidden className="size-3.5" />}
+          icon={<GoogleAdsLogo className="size-5 shadow-none" />}
           kind="roas"
-          label="Google ROAS"
+          label="Conv./Custo"
           value={brand.googleRoas}
         />
       </div>
@@ -232,33 +213,54 @@ function BrandCard({
 }
 
 async function getRealBrands(from: Date, to: Date): Promise<BrandRow[]> {
-  const [workspaces, orders, metrics] = await Promise.all([
-    prisma.workspace.findMany({
-      orderBy: { createdAt: "asc" },
-      select: {
-        id: true,
-        name: true,
-        slug: true,
-      },
-    }),
+  // `to` is start-of-UTC-day (today at 00:00). Use an exclusive upper bound one
+  // day later so the FULL current day is included — matching the per-workspace
+  // dashboard (which uses dayAfter(to)). A bare `lte: to` dropped today's
+  // orders and made the Marcas card diverge from the brand dashboard.
+  const toExclusive = new Date(to);
+  toExclusive.setUTCDate(toExclusive.getUTCDate() + 1);
+
+  // Fetch the workspace set FIRST, then scope the order/metric reads by
+  // `workspaceId IN (...)`. Same result (this view aggregates every workspace),
+  // but the scoped queries hit the composite indexes ([workspaceId, placedAt] /
+  // [workspaceId, source, date]) instead of a cross-tenant full-table scan on
+  // the shared Postgres.
+  const workspaces = await prisma.workspace.findMany({
+    orderBy: { createdAt: "asc" },
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+    },
+  });
+  const workspaceIds = workspaces.map((workspace) => workspace.id);
+
+  const [orders, metrics] = await Promise.all([
     prisma.ecommerceOrder.findMany({
       where: {
+        workspaceId: { in: workspaceIds },
         placedAt: {
           gte: from,
-          lte: to,
+          lt: toExclusive,
         },
       },
       select: {
         workspaceId: true,
         orderTotal: true,
+        status: true,
       },
     }),
     prisma.dailyMetric.findMany({
       where: {
+        workspaceId: { in: workspaceIds },
         date: {
           gte: from,
-          lte: to,
+          lt: toExclusive,
         },
+        // Spend/ROAS only from traffic providers — same contract as the
+        // per-workspace dashboard. Without this, a future ad connector writing
+        // a new source would diverge the blended ROAS between the two views.
+        source: { in: [...dashboardTrafficProviders] },
       },
       select: {
         workspaceId: true,
@@ -287,7 +289,11 @@ async function getRealBrands(from: Date, to: Date): Promise<BrandRow[]> {
 
   for (const order of orders) {
     const row = rows.get(order.workspaceId);
-    if (row) {
+    // Count ONLY approved sales, identical to the per-workspace dashboard
+    // (buildDashboardSnapshot). Without this the Marcas card summed every
+    // order (incl. pending/cancelled) and diverged from the brand's own
+    // dashboard faturamento.
+    if (row && isApprovedOrderStatus(order.status)) {
       row.revenue += Number(order.orderTotal);
     }
   }
@@ -340,15 +346,48 @@ async function getRealBrands(from: Date, to: Date): Promise<BrandRow[]> {
         spend: Number(row.spend.toFixed(2)),
         mediaRate: calculateRatioPercent(row.spend, row.revenue),
         roas: calculateRoas(row.revenue, row.spend),
-        metaRoas: calculateRoas(provider?.metaValue ?? 0, provider?.metaSpend ?? 0),
-        googleRoas: calculateRoas(provider?.googleValue ?? 0, provider?.googleSpend ?? 0),
+        metaRoas: calculateRoas(
+          provider?.metaValue ?? 0,
+          provider?.metaSpend ?? 0,
+        ),
+        googleRoas: calculateRoas(
+          provider?.googleValue ?? 0,
+          provider?.googleSpend ?? 0,
+        ),
       };
     })
-    .filter((row) => row.revenue > 0 || row.spend > 0)
     .sort((a, b) => b.revenue - a.revenue);
 }
 
-export default async function DashboardsPage({ searchParams }: DashboardsPageProps) {
+const BRANDS_PER_PAGE = 20;
+
+function parsePage(raw: string | string[] | undefined): number {
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  const parsed = Number.parseInt(value ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+}
+
+function buildPageHref(
+  params: Record<string, string | string[] | undefined>,
+  page: number,
+): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (key === "page") continue;
+    if (Array.isArray(value)) {
+      for (const item of value) search.append(key, item);
+    } else if (value !== undefined) {
+      search.set(key, value);
+    }
+  }
+  if (page > 1) search.set("page", String(page));
+  const qs = search.toString();
+  return qs ? `/dashboards?${qs}` : "/dashboards";
+}
+
+export default async function DashboardsPage({
+  searchParams,
+}: DashboardsPageProps) {
   const context = await getCurrentUserContext();
 
   if (!canViewBrands(context.user)) {
@@ -357,11 +396,29 @@ export default async function DashboardsPage({ searchParams }: DashboardsPagePro
 
   const params = await searchParams;
   const period = getDashboardPeriod(params);
-  const brands = context.isDemoMode ? demoBrands : await getRealBrands(period.from, period.to);
+  const filters = getDashboardFilters(params);
+  const brands = await getRealBrands(period.from, period.to);
   const totals = summarizeBrands(brands);
+
+  // Baseline for the auto-refresh poller: when the layout `after()` background
+  // sync advances lastSyncedAt past this, the client calls router.refresh().
+  const syncState = await prisma.workspaceSyncState.findUnique({
+    where: { workspaceId: context.currentWorkspace.id },
+    select: { lastSyncedAt: true },
+  });
+
+  // Paginate: 20 brands per page, page 2 holds the next 20, and so on. Totals
+  // above still reflect ALL brands, not just the current page.
+  const totalPages = Math.max(1, Math.ceil(brands.length / BRANDS_PER_PAGE));
+  const currentPage = Math.min(parsePage(params.page), totalPages);
+  const pageStart = (currentPage - 1) * BRANDS_PER_PAGE;
+  const pageBrands = brands.slice(pageStart, pageStart + BRANDS_PER_PAGE);
 
   return (
     <div className="space-y-6">
+      <DashboardAutoRefresh
+        initialSyncedAt={syncState?.lastSyncedAt?.toISOString() ?? null}
+      />
       <section className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <p className="text-caption text-[var(--text-tertiary)]">Marcas</p>
@@ -369,7 +426,8 @@ export default async function DashboardsPage({ searchParams }: DashboardsPagePro
             Central de marcas
           </h2>
           <p className="mt-2 text-sm text-[var(--text-secondary)]">
-            Visão interna do Admin Master por marca, faturamento e mídia no período atual.
+            Visão interna do Admin Master por marca, faturamento e mídia no
+            período atual.
           </p>
         </div>
         {canManagePlatformUsers(context.user) ? (
@@ -382,30 +440,99 @@ export default async function DashboardsPage({ searchParams }: DashboardsPagePro
         ) : null}
       </section>
 
+      <DashboardFilterBar
+        actionPath="/dashboards"
+        filters={filters}
+        showProviderFilters={false}
+      />
+
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <SummaryCard kind="currency" label="Total faturado" value={totals.revenue} />
-        <SummaryCard kind="currency" label="Total investido" value={totals.spend} />
-        <SummaryCard kind="percent" label="% de mídia" value={totals.mediaRate} />
+        <SummaryCard
+          kind="currency"
+          label="Total faturado"
+          value={totals.revenue}
+        />
+        <SummaryCard
+          kind="currency"
+          label="Total investido"
+          value={totals.spend}
+        />
+        <SummaryCard
+          kind="percent"
+          label="% de mídia"
+          value={totals.mediaRate}
+        />
         <SummaryCard kind="roas" label="ROAS Global" value={totals.roas} />
       </section>
 
       {brands.length ? (
-        <section className="grid gap-4 xl:grid-cols-3">
-          {brands.map((brand, index) => (
-            <BrandCard
-              brand={brand}
-              isDemoMode={context.isDemoMode}
-              key={`${brand.workspaceId}-${brand.slug}`}
-              rank={index + 1}
-            />
-          ))}
-        </section>
+        <>
+          <section className="grid gap-4 xl:grid-cols-3">
+            {pageBrands.map((brand, index) => (
+              <BrandCard
+                brand={brand}
+                key={`${brand.workspaceId}-${brand.slug}`}
+                rank={pageStart + index + 1}
+              />
+            ))}
+          </section>
+
+          {totalPages > 1 ? (
+            <nav
+              aria-label="Paginação de marcas"
+              className="flex items-center justify-between gap-4 pt-2"
+            >
+              <p className="text-sm text-[var(--text-secondary)]">
+                Mostrando {pageStart + 1}–{pageStart + pageBrands.length} de{" "}
+                {brands.length} marcas
+              </p>
+              <div className="flex items-center gap-2">
+                {currentPage > 1 ? (
+                  <Button asChild variant="secondary" size="sm">
+                    <Link
+                      href={buildPageHref(params, currentPage - 1)}
+                      aria-label="Página anterior"
+                    >
+                      Anterior
+                    </Link>
+                  </Button>
+                ) : (
+                  <Button variant="secondary" size="sm" disabled>
+                    Anterior
+                  </Button>
+                )}
+                <span className="text-sm text-[var(--text-tertiary)]">
+                  Página {currentPage} de {totalPages}
+                </span>
+                {currentPage < totalPages ? (
+                  <Button asChild variant="secondary" size="sm">
+                    <Link
+                      href={buildPageHref(params, currentPage + 1)}
+                      aria-label="Próxima página"
+                    >
+                      Próxima
+                    </Link>
+                  </Button>
+                ) : (
+                  <Button variant="secondary" size="sm" disabled>
+                    Próxima
+                  </Button>
+                )}
+              </div>
+            </nav>
+          ) : null}
+        </>
       ) : (
         <Card>
           <CardContent className="grid min-h-64 place-items-center p-8 text-center">
             <div className="max-w-sm">
-              <Tag aria-hidden className="mx-auto mb-4 size-8 text-[var(--w3-red)]" />
-              <h3 className="text-lg font-semibold">Nenhuma marca com dados no período.</h3>
+              <Tag
+                aria-hidden
+                className="mx-auto mb-4 size-8 text-[var(--w3-red)]"
+              />
+              <h3 className="text-lg font-semibold">
+                Nenhuma marca com dados no período.
+              </h3>
               <p className="mt-2 text-sm text-[var(--text-secondary)]">
                 Conecte contas e lojas aos workspaces para alimentar esta visão.
               </p>

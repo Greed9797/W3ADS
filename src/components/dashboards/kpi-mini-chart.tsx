@@ -21,6 +21,7 @@ type KpiMiniChartProps = {
     previousValue: number;
   }>;
   format: "currency" | "percent";
+  showComparison?: boolean;
 };
 
 type TooltipPayload = {
@@ -70,10 +71,16 @@ function ChartTooltip({
   );
 }
 
-export function KpiMiniChart({ accent, data, format }: KpiMiniChartProps) {
+export function KpiMiniChart({
+  accent,
+  data,
+  format,
+  showComparison = true,
+}: KpiMiniChartProps) {
   const gradientId = `kpi-fill-${useId().replaceAll(":", "")}`;
   const hasCurrentData = data.some((item) => item.value !== 0);
-  const hasPreviousData = data.some((item) => item.previousValue !== 0);
+  const hasPreviousData =
+    showComparison && data.some((item) => item.previousValue !== 0);
 
   if (data.length < 2 || (!hasCurrentData && !hasPreviousData)) {
     return null;

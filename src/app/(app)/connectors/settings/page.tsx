@@ -1,8 +1,9 @@
 import { ConnectorProvider } from "@prisma/client";
-import { ChevronRight, Settings } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
+import { ProviderLogo } from "@/components/providers/provider-logo";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getCurrentUserContext } from "@/lib/auth/current";
@@ -32,12 +33,14 @@ function firstParam(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
 }
 
-export default async function ConnectorSettingsPage({ searchParams }: SettingsPageProps) {
+export default async function ConnectorSettingsPage({
+  searchParams,
+}: SettingsPageProps) {
   const context = await getCurrentUserContext();
   if (!canManageProviderConfigs(context.user)) {
-    const existingAdmins = context.isDemoMode
-      ? 0
-      : await prisma.user.count({ where: { platformRole: { in: ["ADMIN_MASTER", "W3_ADMIN"] } } });
+    const existingAdmins = await prisma.user.count({
+      where: { platformRole: { in: ["ADMIN_MASTER", "W3_ADMIN"] } },
+    });
     if (existingAdmins === 0) {
       redirect("/platform/bootstrap");
     }
@@ -48,22 +51,24 @@ export default async function ConnectorSettingsPage({ searchParams }: SettingsPa
   const params = await searchParams;
   const saved = firstParam(params.saved);
   const deleted = firstParam(params.deleted);
-  const configs = context.isDemoMode
-    ? []
-    : await listPublicProviderConfigs(context.currentWorkspace.id);
-  const configByProvider = new Map(configs.map((config) => [config.provider, config]));
+  const configs = await listPublicProviderConfigs(context.currentWorkspace.id);
+  const configByProvider = new Map(
+    configs.map((config) => [config.provider, config]),
+  );
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-caption text-[var(--text-tertiary)]">Configuração W3</p>
+          <p className="text-caption text-[var(--text-tertiary)]">
+            Configuração W3
+          </p>
           <h2 className="mt-2 text-2xl font-semibold tracking-[-0.02em]">
             Apps e APIs dos conectores
           </h2>
           <p className="mt-2 max-w-2xl text-sm text-[var(--text-secondary)]">
-            Credenciais de aplicativo ficam no Vault. Workspaces conectam contas usando estas
-            configurações sem depender de .env local.
+            Credenciais de aplicativo ficam no Vault. Workspaces conectam contas
+            usando estas configurações sem depender de .env local.
           </p>
         </div>
         <Button asChild variant="secondary">
@@ -88,16 +93,23 @@ export default async function ConnectorSettingsPage({ searchParams }: SettingsPa
                 <div>
                   <CardTitle>{definition.name}</CardTitle>
                   <p className="mt-1 text-sm text-[var(--text-secondary)]">
-                    {config?.status === "ACTIVE" ? "Ativo no workspace" : "Aguardando configuração"}
+                    {config?.status === "ACTIVE"
+                      ? "Ativo no workspace"
+                      : "Aguardando configuração"}
                   </p>
                 </div>
-                <Settings className="size-4 text-[var(--text-tertiary)]" aria-hidden />
+                <ProviderLogo provider={provider} />
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="text-xs text-[var(--text-tertiary)]">
-                  Segredos configurados: {config?.configuredSecretKeys.length ?? 0}
+                  Segredos configurados:{" "}
+                  {config?.configuredSecretKeys.length ?? 0}
                 </div>
-                <Button asChild size="sm" variant={config ? "secondary" : "primary"}>
+                <Button
+                  asChild
+                  size="sm"
+                  variant={config ? "secondary" : "primary"}
+                >
                   <Link href={`/connectors/settings/${provider.toLowerCase()}`}>
                     {config ? "Editar" : "Configurar"}
                     <ChevronRight size={15} aria-hidden />

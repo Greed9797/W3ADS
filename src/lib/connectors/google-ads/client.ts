@@ -21,6 +21,9 @@ type GoogleAdsMetricRow = {
   campaign?: {
     id?: string | number;
     name?: string;
+    status?: string;
+    advertisingChannelType?: string;
+    advertisingChannelSubType?: string;
   };
   metrics?: {
     costMicros?: string | number;
@@ -59,6 +62,8 @@ type GoogleAdsCustomerClientResponse = {
 export type GoogleAdsCampaignMetric = {
   campaignId: string | null;
   campaignName: string | null;
+  campaignStatus?: string | null;
+  campaignObjective?: string | null;
   spend: string | null;
   impressions: string | null;
   clicks: string | null;
@@ -83,6 +88,9 @@ export const GOOGLE_ADS_CAMPAIGN_METRICS_QUERY = `
 SELECT
   campaign.id,
   campaign.name,
+  campaign.status,
+  campaign.advertising_channel_type,
+  campaign.advertising_channel_sub_type,
   metrics.cost_micros,
   metrics.impressions,
   metrics.clicks,
@@ -106,6 +114,45 @@ FROM customer_client
 WHERE customer_client.level <= 1
 `;
 
+function summarizeGoogleAdsErrorBody(body: string): string | null {
+  if (!body) return null;
+  try {
+    const parsed = JSON.parse(body) as {
+      error?: {
+        code?: number;
+        status?: string;
+        message?: string;
+        details?: Array<{
+          "@type"?: string;
+          errors?: Array<{
+            errorCode?: Record<string, string>;
+            message?: string;
+          }>;
+        }>;
+      };
+    };
+    const err = parsed.error;
+    if (!err) return body.slice(0, 220);
+    const errorCodes = (err.details ?? [])
+      .flatMap((detail) => detail.errors ?? [])
+      .map((entry) => {
+        if (!entry.errorCode) return null;
+        const [key, value] = Object.entries(entry.errorCode)[0] ?? [];
+        return key && value ? `${key}=${value}` : null;
+      })
+      .filter((value): value is string => Boolean(value));
+    const parts = [
+      err.message,
+      err.code != null ? `code=${err.code}` : null,
+      err.status ? `status=${err.status}` : null,
+      errorCodes.length ? errorCodes.join(",") : null,
+    ].filter(Boolean) as string[];
+    return parts.length > 0 ? parts.join(" | ") : body.slice(0, 220);
+  } catch {
+    return body.slice(0, 220);
+  }
+}
+
 export class GoogleAdsApiError extends Error {
   status: number;
   body: string;
@@ -115,7 +162,12 @@ export class GoogleAdsApiError extends Error {
   };
 
   constructor(status: number, body: string, headers = new Headers()) {
-    super(`Google Ads API request failed with status ${status}`);
+    const summary = summarizeGoogleAdsErrorBody(body);
+    super(
+      summary
+        ? `Google Ads API ${status}: ${summary}`
+        : `Google Ads API request failed with status ${status}`,
+    );
     this.name = "GoogleAdsApiError";
     this.status = status;
     this.body = body;
@@ -123,8 +175,18 @@ export class GoogleAdsApiError extends Error {
   }
 }
 
-async function fetchJson<T>(url: URL | string, fetchImpl: FetchLike, init?: RequestInit): Promise<T> {
-  const response = await fetchImpl(url, init);
+async function fetchJson<T>(
+  url: URL | string,
+  fetchImpl: FetchLike,
+  init?: RequestInit,
+): Promise<T> {
+  // Hard 20s per-request budget so hung Google Ads connections do not consume
+  // the Vercel function until termination (~2 min default). Matches the Meta
+  // client policy.
+  const response = await fetchImpl(url, {
+    ...init,
+    signal: init?.signal ?? AbortSignal.timeout(20_000),
+  });
   const body = await response.text();
 
   if (!response.ok) {
@@ -138,7 +200,9 @@ function asString(value: string | number | undefined | null) {
   return value === undefined || value === null ? null : String(value);
 }
 
-export function costMicrosToCurrency(value: string | number | undefined | null) {
+export function costMicrosToCurrency(
+  value: string | number | undefined | null,
+) {
   if (value === undefined || value === null) {
     return null;
   }
@@ -146,10 +210,33 @@ export function costMicrosToCurrency(value: string | number | undefined | null) 
   return new Decimal(value).div(1_000_000).toDecimalPlaces(2).toString();
 }
 
-export function normalizeGoogleAdsMetricRow(row: GoogleAdsMetricRow): GoogleAdsCampaignMetric {
+function googleAdsCampaignObjective(campaign: GoogleAdsMetricRow["campaign"]) {
+  const channelType = campaign?.advertisingChannelType;
+  const channelSubType = campaign?.advertisingChannelSubType;
+
+  if (!channelType) {
+    return null;
+  }
+
+  if (
+    channelSubType &&
+    channelSubType !== "UNKNOWN" &&
+    channelSubType !== "UNSPECIFIED"
+  ) {
+    return `${channelType} / ${channelSubType}`;
+  }
+
+  return channelType;
+}
+
+export function normalizeGoogleAdsMetricRow(
+  row: GoogleAdsMetricRow,
+): GoogleAdsCampaignMetric {
   return {
     campaignId: asString(row.campaign?.id),
     campaignName: row.campaign?.name ?? null,
+    campaignStatus: row.campaign?.status ?? null,
+    campaignObjective: googleAdsCampaignObjective(row.campaign),
     spend: costMicrosToCurrency(row.metrics?.costMicros),
     impressions: asString(row.metrics?.impressions),
     clicks: asString(row.metrics?.clicks),
@@ -164,7 +251,9 @@ export function normalizeGoogleAdsCustomerClientRow(
   context: { rootCustomerId: string; loginCustomerId: string },
 ): GoogleAdsSelectableCustomer {
   const customerClient = row.customerClient ?? {};
-  const id = asString(customerClient.id) ?? customerClient.clientCustomer?.replace("customers/", "");
+  const id =
+    asString(customerClient.id) ??
+    customerClient.clientCustomer?.replace("customers/", "");
   if (!id) {
     throw new Error("Google Ads customer_client row is missing id");
   }
@@ -182,7 +271,9 @@ export function normalizeGoogleAdsCustomerClientRow(
   };
 }
 
-export function selectGoogleAdsAdvertiserAccounts(accounts: GoogleAdsSelectableCustomer[]) {
+export function selectGoogleAdsAdvertiserAccounts(
+  accounts: GoogleAdsSelectableCustomer[],
+) {
   const unique = new Map<string, GoogleAdsSelectableCustomer>();
 
   for (const account of accounts) {
@@ -205,14 +296,18 @@ export class GoogleAdsClient {
 
   private googleAdsHeaders(
     accessToken: string,
-    options: { includeLoginCustomerId?: boolean; loginCustomerId?: string } = {},
+    options: {
+      includeLoginCustomerId?: boolean;
+      loginCustomerId?: string;
+    } = {},
   ) {
     const headers: Record<string, string> = {
       Authorization: `Bearer ${accessToken}`,
       "developer-token": this.config.developerToken,
       "Content-Type": "application/json",
     };
-    const loginCustomerId = options.loginCustomerId ?? this.config.loginCustomerId;
+    const loginCustomerId =
+      options.loginCustomerId ?? this.config.loginCustomerId;
 
     if (options.includeLoginCustomerId !== false && loginCustomerId) {
       headers["login-customer-id"] = loginCustomerId;
@@ -231,11 +326,15 @@ export class GoogleAdsClient {
     });
 
     return callWithRetry(() =>
-      fetchJson<GoogleAdsTokenResponse>("https://oauth2.googleapis.com/token", this.fetchImpl, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body,
-      }),
+      fetchJson<GoogleAdsTokenResponse>(
+        "https://oauth2.googleapis.com/token",
+        this.fetchImpl,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body,
+        },
+      ),
     );
   }
 
@@ -248,11 +347,15 @@ export class GoogleAdsClient {
     });
 
     return callWithRetry(() =>
-      fetchJson<GoogleAdsTokenResponse>("https://oauth2.googleapis.com/token", this.fetchImpl, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body,
-      }),
+      fetchJson<GoogleAdsTokenResponse>(
+        "https://oauth2.googleapis.com/token",
+        this.fetchImpl,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body,
+        },
+      ),
     );
   }
 
@@ -260,7 +363,9 @@ export class GoogleAdsClient {
     const url = `https://googleads.googleapis.com/${this.config.apiVersion}/customers:listAccessibleCustomers`;
     const response = await callWithRetry(() =>
       fetchJson<AccessibleCustomersResponse>(url, this.fetchImpl, {
-        headers: this.googleAdsHeaders(accessToken, { includeLoginCustomerId: false }),
+        headers: this.googleAdsHeaders(accessToken, {
+          includeLoginCustomerId: false,
+        }),
       }),
     );
 
@@ -285,7 +390,9 @@ export class GoogleAdsClient {
       const response = await callWithRetry(() =>
         fetchJson<GoogleAdsCustomerClientResponse>(url, this.fetchImpl, {
           method: "POST",
-          headers: this.googleAdsHeaders(input.accessToken, { loginCustomerId }),
+          headers: this.googleAdsHeaders(input.accessToken, {
+            loginCustomerId,
+          }),
           body: JSON.stringify({
             query: GOOGLE_ADS_CUSTOMER_CLIENT_QUERY,
             pageToken,
@@ -371,10 +478,14 @@ export class GoogleAdsClient {
   }) {
     const metrics: GoogleAdsCampaignMetric[] = [];
     let pageToken: string | undefined;
-    const query = GOOGLE_ADS_CAMPAIGN_METRICS_QUERY.replace("{since}", input.since).replace(
-      "{until}",
-      input.until,
-    );
+    // Google Ads GAQL BETWEEN requires YYYY-MM-DD; full ISO timestamps trip
+    // INVALID_VALUE_WITH_BETWEEN_OPERATOR. Callers may pass either form.
+    const since = input.since.slice(0, 10);
+    const until = input.until.slice(0, 10);
+    const query = GOOGLE_ADS_CAMPAIGN_METRICS_QUERY.replace(
+      "{since}",
+      since,
+    ).replace("{until}", until);
     const url = `https://googleads.googleapis.com/${this.config.apiVersion}/customers/${input.customerId}/googleAds:search`;
 
     do {
@@ -391,7 +502,9 @@ export class GoogleAdsClient {
         }),
       );
 
-      metrics.push(...(response.results ?? []).map(normalizeGoogleAdsMetricRow));
+      metrics.push(
+        ...(response.results ?? []).map(normalizeGoogleAdsMetricRow),
+      );
       pageToken = response.nextPageToken;
     } while (pageToken);
 

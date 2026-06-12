@@ -5,6 +5,7 @@ import {
   normalizeManualCommerceOrder,
   normalizeManualProviderCredentials,
 } from "@/lib/connectors/manual-commerce";
+import { mapEcommerceOrdersToDailyMetricSummaries } from "@/lib/connectors/ecommerce-sync";
 
 describe("manual ecommerce connectors", () => {
   it("normalizes base urls and API credentials for manual providers", () => {
@@ -39,7 +40,10 @@ describe("manual ecommerce connectors", () => {
         status: "pago",
         email: "cliente@example.com",
         estado: "SC",
-        itens: [{ nome: "Produto A", quantidade: 1 }, { name: "Produto B", quantity: 2 }],
+        itens: [
+          { nome: "Produto A", quantidade: 1 },
+          { name: "Produto B", quantity: 2 },
+        ],
         data: "2026-05-18T10:00:00.000Z",
       }),
     ).toEqual({
@@ -90,5 +94,84 @@ describe("manual ecommerce connectors", () => {
       shippingState: "PR",
       utmSource: "whatsapp",
     });
+  });
+
+  it("maps daily Google Sheets WhatsApp aggregates into external sales", () => {
+    expect(
+      normalizeManualCommerceOrder({
+        pedido: "GOOGLE_SHEETS-2026-05-02",
+        valor: "R$ 2.848,75",
+        status: "APPROVED",
+        origem: "whatsapp",
+        data: "2026-05-02T00:00:00.000Z",
+        items_count: "11",
+      }),
+    ).toMatchObject({
+      externalOrderId: "GOOGLE_SHEETS-2026-05-02",
+      orderTotal: "2848.75",
+      itemsCount: 11,
+      status: "APPROVED",
+      placedAt: "2026-05-02T00:00:00.000Z",
+      utmSource: "whatsapp",
+    });
+  });
+
+  it("summarizes Google Sheets daily metrics by external sales quantity", () => {
+    const summaries = mapEcommerceOrdersToDailyMetricSummaries({
+      workspaceId: "workspace-1",
+      connectorAccountId: "sheets-1",
+      provider: ConnectorProvider.GOOGLE_SHEETS,
+      orders: [
+        {
+          externalOrderId: "GOOGLE_SHEETS-2026-05-02",
+          orderNumber: "GOOGLE_SHEETS-2026-05-02",
+          orderTotal: "2848.75",
+          orderCurrency: "BRL",
+          customerEmail: null,
+          itemsCount: 11,
+          items: [],
+          status: "APPROVED",
+          shippingState: null,
+          placedAt: "2026-05-02T00:00:00.000Z",
+          utmSource: "whatsapp",
+          utmMedium: null,
+          utmCampaign: null,
+        },
+      ],
+    });
+
+    expect(summaries[0]).toMatchObject({
+      revenue: "2848.75",
+      orders: BigInt(11),
+    });
+  });
+
+  it("normalizes WBuy orders with nested valor_total/status objects and produtos", () => {
+    const order = normalizeManualCommerceOrder({
+      id: "12638077",
+      data: "2026-06-03 10:06:18",
+      status: { id: "13", nome: "Em produção" },
+      total_itens: "2",
+      valor_total: {
+        subtotal: "378",
+        frete: "10.36",
+        total: "388.36",
+      },
+      produtos: [
+        { nome: "Adesivo A", quantidade: 1, total: "189" },
+        { nome: "Adesivo B", quantidade: 1, total: "189" },
+      ],
+    });
+
+    expect(order).toMatchObject({
+      externalOrderId: "12638077",
+      orderTotal: "388.36",
+      status: "Em produção",
+      itemsCount: 2,
+      placedAt: "2026-06-03 10:06:18",
+    });
+    const orderItems = order.items ?? [];
+    expect(orderItems).toHaveLength(2);
+    expect(orderItems[0]).toMatchObject({ productName: "Adesivo A" });
   });
 });

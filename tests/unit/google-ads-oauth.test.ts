@@ -4,7 +4,11 @@ import {
   GOOGLE_ADS_OAUTH_SCOPE,
   buildGoogleAdsOAuthUrl,
 } from "@/lib/connectors/google-ads/oauth";
-import { GoogleAdsApiError } from "@/lib/connectors/google-ads/client";
+import {
+  GOOGLE_ADS_CAMPAIGN_METRICS_QUERY,
+  GoogleAdsApiError,
+  normalizeGoogleAdsMetricRow,
+} from "@/lib/connectors/google-ads/client";
 
 const googleAdsConfig = {
   apiVersion: "v24",
@@ -34,5 +38,35 @@ describe("Google Ads OAuth helpers", () => {
 
     expect(error.response.status).toBe(429);
     expect(error.response.headers.get("retry-after")).toBe("3");
+  });
+
+  it("normalizes campaign status and objective fields for reporting", () => {
+    expect(GOOGLE_ADS_CAMPAIGN_METRICS_QUERY).toContain("campaign.status");
+    expect(GOOGLE_ADS_CAMPAIGN_METRICS_QUERY).toContain("campaign.advertising_channel_type");
+    expect(GOOGLE_ADS_CAMPAIGN_METRICS_QUERY).toContain("campaign.advertising_channel_sub_type");
+
+    const metric = normalizeGoogleAdsMetricRow({
+      campaign: {
+        id: "123",
+        name: "Performance Max",
+        status: "ENABLED",
+        advertisingChannelType: "PERFORMANCE_MAX",
+        advertisingChannelSubType: "UNKNOWN",
+      },
+      metrics: {
+        costMicros: "12340000",
+        impressions: "1000",
+        clicks: "100",
+        conversions: "4",
+        conversionsValue: "55.00",
+      },
+      segments: { date: "2026-05-20" },
+    });
+
+    expect(metric).toMatchObject({
+      campaignStatus: "ENABLED",
+      campaignObjective: "PERFORMANCE_MAX",
+      spend: "12.34",
+    });
   });
 });

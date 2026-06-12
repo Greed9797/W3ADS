@@ -28,7 +28,15 @@ type VerifyOptions = {
   secret?: string;
   expectedProvider: ConnectorOAuthProvider;
   expectedUserId: string;
-  expectedWorkspaceId: string;
+  /**
+   * Optional. workspaceId is HMAC-signed into the state at init, so it is
+   * already tamper-proof. Comparing it against a cookie-derived value in the
+   * callback breaks legit flows when the workspace cookie is dropped on the
+   * cross-site OAuth return. Prefer reading `payload.workspaceId` and
+   * validating DB access. Only pass when a genuinely trusted expected
+   * workspace is available (not the cookie).
+   */
+  expectedWorkspaceId?: string;
   expectedShop?: string;
   now?: number;
   maxAgeMs?: number;
@@ -44,11 +52,15 @@ function base64UrlDecode(value: string) {
   return Buffer.from(value, "base64url").toString("utf8");
 }
 
-export function getConnectorOAuthStateSecret(env: Record<string, string | undefined> = process.env) {
+export function getConnectorOAuthStateSecret(
+  env: Record<string, string | undefined> = process.env,
+) {
   const secret = env.AUTH_SECRET ?? env.NEXTAUTH_SECRET;
 
   if (!secret && env.NODE_ENV === "production") {
-    throw new Error("AUTH_SECRET or NEXTAUTH_SECRET is required for connector OAuth state");
+    throw new Error(
+      "AUTH_SECRET or NEXTAUTH_SECRET is required for connector OAuth state",
+    );
   }
 
   return secret ?? "adstart-w3-local-oauth-state-secret";
@@ -69,7 +81,10 @@ function safeEqual(left: string, right: string) {
   return timingSafeEqual(leftBuffer, rightBuffer);
 }
 
-export function createConnectorOAuthState(input: CreateStateInput, options: StateOptions = {}) {
+export function createConnectorOAuthState(
+  input: CreateStateInput,
+  options: StateOptions = {},
+) {
   const secret = options.secret ?? getConnectorOAuthStateSecret();
   const payload: ConnectorOAuthStatePayload = {
     ...input,
@@ -92,11 +107,16 @@ export function parseConnectorOAuthState(state: string) {
   return {
     encodedPayload,
     signature,
-    payload: JSON.parse(base64UrlDecode(encodedPayload)) as ConnectorOAuthStatePayload,
+    payload: JSON.parse(
+      base64UrlDecode(encodedPayload),
+    ) as ConnectorOAuthStatePayload,
   };
 }
 
-export function verifyConnectorOAuthState(state: string, options: VerifyOptions) {
+export function verifyConnectorOAuthState(
+  state: string,
+  options: VerifyOptions,
+) {
   try {
     const secret = options.secret ?? getConnectorOAuthStateSecret();
     const parsed = parseConnectorOAuthState(state);
@@ -116,7 +136,8 @@ export function verifyConnectorOAuthState(state: string, options: VerifyOptions)
     if (
       parsed.payload.provider !== options.expectedProvider ||
       parsed.payload.userId !== options.expectedUserId ||
-      parsed.payload.workspaceId !== options.expectedWorkspaceId ||
+      (options.expectedWorkspaceId !== undefined &&
+        parsed.payload.workspaceId !== options.expectedWorkspaceId) ||
       (options.expectedShop && parsed.payload.shop !== options.expectedShop)
     ) {
       return { valid: false as const, reason: "context-mismatch" as const };

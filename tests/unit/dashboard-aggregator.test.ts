@@ -19,7 +19,13 @@ describe("dashboard aggregator", () => {
     expect(calculateDeltaPercent(150, 100)).toBe(50);
     expect(calculateDeltaPercent(0, 0)).toBe(0);
     expect(isApprovedOrderStatus("pago")).toBe(true);
+    expect(isApprovedOrderStatus("paid")).toBe(true);
+    expect(isApprovedOrderStatus("completed")).toBe(true);
     expect(isApprovedOrderStatus("cancelado")).toBe(false);
+    expect(isApprovedOrderStatus("refunded")).toBe(false);
+    expect(isApprovedOrderStatus("pending")).toBe(false);
+    expect(isApprovedOrderStatus("authorized")).toBe(false);
+    expect(isApprovedOrderStatus("em separacao")).toBe(false);
   });
 
   it("builds KPI totals, line series, approved orders, state breakdowns and top campaigns", () => {
@@ -63,6 +69,17 @@ describe("dashboard aggregator", () => {
           utmMedium: "organic",
           placedAt: new Date("2026-05-04T10:00:00.000Z"),
         },
+        {
+          connectorAccountId: "shopify-1",
+          platform: ConnectorProvider.SHOPIFY,
+          orderTotal: "999.00",
+          itemsCount: 1,
+          status: "refunded",
+          shippingState: "SC",
+          utmSource: "email",
+          utmMedium: "crm",
+          placedAt: new Date("2026-05-12T11:00:00.000Z"),
+        },
       ],
       metrics: [
         {
@@ -71,6 +88,8 @@ describe("dashboard aggregator", () => {
           source: ConnectorProvider.META_ADS,
           campaignId: "c1",
           campaignName: "Marca",
+          campaignStatus: "ACTIVE",
+          campaignObjective: "OUTCOME_SALES",
           spend: "100.00",
           impressions: BigInt(1000),
           clicks: BigInt(100),
@@ -84,10 +103,13 @@ describe("dashboard aggregator", () => {
           source: ConnectorProvider.GOOGLE_ADS,
           campaignId: "c2",
           campaignName: "Performance Max",
+          campaignStatus: "ENABLED",
+          campaignObjective: "PERFORMANCE_MAX",
           spend: "50.00",
           impressions: BigInt(500),
           clicks: BigInt(40),
           sessions: BigInt(30),
+          addToCart: BigInt(5),
           conversions: "2",
           conversionsValue: "300.00",
         },
@@ -108,15 +130,26 @@ describe("dashboard aggregator", () => {
       orderItems: [
         {
           productName: "Produto A",
+          categoryName: "Acessórios",
           quantity: 2,
           total: "200.00",
           placedAt: new Date("2026-05-10T10:00:00.000Z"),
         },
         {
           productName: "Produto B",
+          categoryName: null,
           quantity: 1,
           total: "300.00",
+          status: "aprovado",
           placedAt: new Date("2026-05-12T10:00:00.000Z"),
+        },
+        {
+          productName: "Produto Cancelado",
+          categoryName: "Cancelados",
+          quantity: 1,
+          total: "999.00",
+          status: "refunded",
+          placedAt: new Date("2026-05-12T11:00:00.000Z"),
         },
       ],
       connectorAccounts: [
@@ -156,30 +189,57 @@ describe("dashboard aggregator", () => {
     expect(snapshot.kpis.conversionRate.value).toBe(1.82);
     expect(snapshot.kpis.costPerSession.value).toBe(1.36);
     expect(snapshot.kpis.sessions.value).toBe(110);
-    expect(snapshot.kpis.revenue.deltaPercent).toBe(400);
+    // Cancelado order in the previous period no longer counts toward
+    // previousRevenue, so previous=0 → delta capped at +100 (calculateDeltaPercent).
+    expect(snapshot.kpis.revenue.deltaPercent).toBe(100);
     expect(snapshot.funnel).toMatchObject({
       impressions: 1500,
       clicks: 140,
       sessions: 110,
+      addToCart: 5,
       purchases: 6,
       orders: 2,
     });
     expect(snapshot.funnel.stages).toHaveLength(5);
+    expect(
+      snapshot.funnel.stages.find((stage) => stage.id === "add_to_cart"),
+    ).toMatchObject({
+      value: 5,
+      available: true,
+    });
     expect(snapshot.topCampaigns[0]).toMatchObject({
       campaignId: "c2",
       campaignName: "Performance Max",
       source: ConnectorProvider.GOOGLE_ADS,
+      campaignStatus: "ENABLED",
+      campaignObjective: "PERFORMANCE_MAX",
+      impressions: 500,
+      clicks: 40,
+      conversions: 2,
+      ctr: 8,
+      cpc: 1.25,
+      costPerConversion: 25,
+      conversionsPerCost: 6,
+      addToCart: 5,
+      costPerAddToCart: 10,
       roas: 6,
     });
     expect(snapshot.lineSeries).toHaveLength(7);
-    expect(snapshot.lineSeries.find((item) => item.date === "2026-05-10")).toMatchObject({
+    expect(
+      snapshot.lineSeries.find((item) => item.date === "2026-05-10"),
+    ).toMatchObject({
       revenue: 200,
       orders: 1,
       averageOrderValue: 200,
       mediaRate: 50,
     });
-    expect(snapshot.lineSeries.find((item) => item.date === "2026-05-11")).toMatchObject({
-      previousMediaRate: 50,
+    // 2026-05-11 maps to previous-period day 2026-05-04 where the only order
+    // was cancelado — now filtered out of revenue, so previousMediaRate
+    // collapses to 0 (denominator is zero, no approved revenue).
+    expect(
+      snapshot.lineSeries.find((item) => item.date === "2026-05-11"),
+    ).toMatchObject({
+      previousMediaRate: 0,
     });
     expect(snapshot.originMedia[0]).toMatchObject({
       label: "meta / cpc",
@@ -205,8 +265,30 @@ describe("dashboard aggregator", () => {
       productName: "Produto B",
       quantitySold: 1,
       revenue: 300,
-      status: "available",
+      averagePrice: 300,
+      stockQuantity: null,
     });
+    expect(snapshot.products[1]).toMatchObject({
+      productName: "Produto A",
+      quantitySold: 2,
+      revenue: 200,
+      averagePrice: 100,
+      stockQuantity: null,
+    });
+    expect(snapshot.categories).toEqual([
+      {
+        categoryName: "Sem categoria",
+        quantitySold: 1,
+        revenue: 300,
+        percent: 60,
+      },
+      {
+        categoryName: "Acessórios",
+        quantitySold: 2,
+        revenue: 200,
+        percent: 40,
+      },
+    ]);
   });
 
   it("filters traffic and commerce providers before calculating blended ROAS", () => {
@@ -266,5 +348,118 @@ describe("dashboard aggregator", () => {
     expect(snapshot.kpis.spend.value).toBe(100);
     expect(snapshot.kpis.roas.value).toBe(5);
     expect(snapshot.kpis.mediaRate.value).toBe(20);
+  });
+
+  it("counts Google Sheets daily rows by external WhatsApp sales quantity", () => {
+    const period = getDashboardPeriod(
+      { period: "week" },
+      new Date("2026-05-16T12:00:00.000Z"),
+    );
+    const snapshot = buildDashboardSnapshot({
+      period,
+      orders: [
+        {
+          connectorAccountId: "sheets-1",
+          platform: ConnectorProvider.GOOGLE_SHEETS,
+          orderTotal: "2848.75",
+          itemsCount: 11,
+          status: "APPROVED",
+          utmSource: "whatsapp",
+          placedAt: new Date("2026-05-10T00:00:00.000Z"),
+        },
+      ],
+      metrics: [
+        {
+          connectorAccountId: "meta-1",
+          source: ConnectorProvider.META_ADS,
+          date: new Date("2026-05-10T00:00:00.000Z"),
+          campaignId: "meta",
+          campaignName: "Meta",
+          spend: "100.00",
+          impressions: BigInt(1000),
+          clicks: BigInt(100),
+          sessions: BigInt(500),
+          conversions: "11",
+          conversionsValue: "2848.75",
+        },
+      ],
+    });
+
+    expect(snapshot.kpis.revenue.value).toBe(2848.75);
+    expect(snapshot.kpis.orders.value).toBe(11);
+    expect(snapshot.kpis.approvedOrders.value).toBe(11);
+    expect(snapshot.kpis.averageOrderValue.value).toBe(258.98);
+    expect(snapshot.kpis.roas.value).toBe(28.49);
+    expect(
+      snapshot.lineSeries.find((item) => item.date === "2026-05-10"),
+    ).toMatchObject({
+      revenue: 2848.75,
+      orders: 11,
+      averageOrderValue: 258.98,
+    });
+  });
+
+  it("does not invent campaign costs when clicks or conversions are zero", () => {
+    const period = getDashboardPeriod(
+      { period: "week" },
+      new Date("2026-05-16T12:00:00.000Z"),
+    );
+    const snapshot = buildDashboardSnapshot({
+      period,
+      orders: [],
+      metrics: [
+        {
+          connectorAccountId: "meta-1",
+          source: ConnectorProvider.META_ADS,
+          date: new Date("2026-05-10T00:00:00.000Z"),
+          campaignId: "meta-zero",
+          campaignName: "Meta sem conversão",
+          spend: "100.00",
+          impressions: BigInt(1000),
+          clicks: BigInt(0),
+          sessions: BigInt(0),
+          conversions: "0",
+          conversionsValue: "0.00",
+        },
+      ],
+    });
+
+    expect(snapshot.topCampaigns[0]).toMatchObject({
+      campaignId: "meta-zero",
+      cpc: null,
+      costPerConversion: null,
+      costPerAddToCart: null,
+      conversionsPerCost: 0,
+    });
+  });
+
+  it("keeps category percentages safe when item revenue is zero", () => {
+    const period = getDashboardPeriod(
+      { period: "week" },
+      new Date("2026-05-16T12:00:00.000Z"),
+    );
+    const snapshot = buildDashboardSnapshot({
+      period,
+      orders: [],
+      metrics: [],
+      orderItems: [
+        {
+          productName: "Produto sem receita",
+          categoryName: null,
+          quantity: 2,
+          total: "0.00",
+          placedAt: new Date("2026-05-10T10:00:00.000Z"),
+        },
+      ],
+    });
+
+    expect(snapshot.categories).toEqual([
+      {
+        categoryName: "Sem categoria",
+        quantitySold: 2,
+        revenue: 0,
+        percent: 0,
+      },
+    ]);
   });
 });

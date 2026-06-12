@@ -3,6 +3,7 @@ import { Trash2 } from "lucide-react";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
+import { ConnectorSyncError } from "@/components/connectors/connector-sync-error";
 import { MetaProviderSettings } from "@/components/connectors/meta-provider-settings";
 import { SyncNowButton } from "@/components/connectors/sync-now-button";
 import { ProviderLogo } from "@/components/providers/provider-logo";
@@ -671,9 +672,10 @@ export default async function ConnectorProviderSettingsPage({
                       : "ainda não sincronizada"}
                   </p>
                   {googleSheetsAccount.lastSyncError ? (
-                    <p className="mt-1 text-xs text-[var(--danger)]">
-                      Último erro: {googleSheetsAccount.lastSyncError}
-                    </p>
+                    <ConnectorSyncError
+                      error={googleSheetsAccount.lastSyncError}
+                      provider={ConnectorProvider.GOOGLE_SHEETS}
+                    />
                   ) : null}
                 </div>
                 <SyncNowButton

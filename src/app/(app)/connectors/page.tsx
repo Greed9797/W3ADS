@@ -6,6 +6,7 @@ import { ConnectorProvider } from "@prisma/client";
 import { Cable, CircleAlert, Settings } from "lucide-react";
 import type { ReactNode } from "react";
 
+import { ConnectorSyncError } from "@/components/connectors/connector-sync-error";
 import { MetaSystemUserDialog } from "@/components/connectors/meta-system-user-dialog";
 import { ShopifyConnectDialog } from "@/components/connectors/shopify-connect-dialog";
 import { RemoveConnectorButton } from "@/components/connectors/remove-connector-button";
@@ -570,9 +571,10 @@ export default async function ConnectorsPage({
                             )
                           : "—"}
                         {account.lastSyncError ? (
-                          <p className="mt-1 text-[var(--danger)]">
-                            {account.lastSyncError}
-                          </p>
+                          <ConnectorSyncError
+                            error={account.lastSyncError}
+                            provider={account.provider}
+                          />
                         ) : null}
                         {!account.historicalSyncedAt &&
                         account.historicalBackfillUntil ? (

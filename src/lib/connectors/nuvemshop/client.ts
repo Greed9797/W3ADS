@@ -242,8 +242,19 @@ export class NuvemshopClient {
     page: number;
   }) {
     const url = new URL(`${this.config.apiBaseUrl}/${input.storeId}/orders`);
-    url.searchParams.set("created_at_min", `${input.since}T00:00:00Z`);
-    url.searchParams.set("created_at_max", `${input.until}T23:59:59Z`);
+    // `since`/`until` may arrive as a full ISO instant (e.g.
+    // "2026-06-01T00:00:00.000Z") from the sync range or as a plain
+    // "YYYY-MM-DD". Slice the date portion before re-appending the day bounds
+    // so we never emit a double-suffixed string like "...000ZT00:00:00Z",
+    // which Nuvemshop rejects with HTTP 422 Unprocessable Entity.
+    url.searchParams.set(
+      "created_at_min",
+      `${input.since.slice(0, 10)}T00:00:00Z`,
+    );
+    url.searchParams.set(
+      "created_at_max",
+      `${input.until.slice(0, 10)}T23:59:59Z`,
+    );
     url.searchParams.set("status", "any");
     url.searchParams.set("page", String(input.page));
     url.searchParams.set("per_page", "200");

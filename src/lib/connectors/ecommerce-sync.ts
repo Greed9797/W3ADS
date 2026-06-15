@@ -14,7 +14,10 @@ import {
   connectorAccessTokenFromAccount,
   connectorCredentialsFromAccountVaultAware,
 } from "@/lib/connectors/credentials";
-import { NuvemshopClient } from "@/lib/connectors/nuvemshop/client";
+import {
+  NuvemshopApiError,
+  NuvemshopClient,
+} from "@/lib/connectors/nuvemshop/client";
 import { ShopifyClient } from "@/lib/connectors/shopify/client";
 import {
   buildNuvemshopConfigFromProviderConfig,
@@ -445,46 +448,67 @@ async function loadOrdersForConnector(input: {
     let persistedCount = 0;
     let pagesDone = 0;
 
-    const result = await client.listOrders({
-      storeId: connector.externalAccountId,
-      accessToken: input.accessToken,
-      since: input.range.since,
-      until: input.range.until,
-      deadlineMs: input.deadlineMs,
-      startPage,
-      onPage: async (pageOrders) => {
-        await persistOrdersOnly({
-          workspaceId: connector.workspaceId,
-          connectorAccountId: connector.id,
-          provider: ConnectorProvider.NUVEMSHOP,
-          orders: pageOrders,
-        });
-        persistedCount += pageOrders.length;
-        pagesDone += 1;
-        liveMeta = {
-          ...liveMeta,
-          isetBackfillOffsets: {
-            ...readBackfillOffsets(liveMeta),
-            [input.range.since]: startPage + pagesDone,
-          },
-        };
-        await persistMeta();
-      },
-    });
+    // Drops this window's saved resume page so the next run restarts at page 1.
+    const clearResumeOffset = async () => {
+      const remaining = readBackfillOffsets(liveMeta);
+      if (!(input.range.since in remaining)) return;
+      delete remaining[input.range.since];
+      liveMeta = { ...liveMeta };
+      if (Object.keys(remaining).length === 0) {
+        delete liveMeta.isetBackfillOffsets;
+      } else {
+        liveMeta.isetBackfillOffsets = remaining;
+      }
+      await persistMeta();
+    };
+
+    let result: Awaited<ReturnType<typeof client.listOrders>>;
+    try {
+      result = await client.listOrders({
+        storeId: connector.externalAccountId,
+        accessToken: input.accessToken,
+        since: input.range.since,
+        until: input.range.until,
+        deadlineMs: input.deadlineMs,
+        startPage,
+        onPage: async (pageOrders) => {
+          await persistOrdersOnly({
+            workspaceId: connector.workspaceId,
+            connectorAccountId: connector.id,
+            provider: ConnectorProvider.NUVEMSHOP,
+            orders: pageOrders,
+          });
+          persistedCount += pageOrders.length;
+          pagesDone += 1;
+          liveMeta = {
+            ...liveMeta,
+            isetBackfillOffsets: {
+              ...readBackfillOffsets(liveMeta),
+              [input.range.since]: startPage + pagesDone,
+            },
+          };
+          await persistMeta();
+        },
+      });
+    } catch (caught) {
+      // A 422 when resuming past page 1 means the saved resume page overran
+      // Nuvemshop's pagination cap (a prior run paginated unfiltered and parked
+      // the cursor far beyond the real data). Without clearing it, every future
+      // run resumes the same out-of-range page and 422s forever. Drop the
+      // offset so the next run restarts from page 1 and completes cleanly.
+      if (
+        caught instanceof NuvemshopApiError &&
+        caught.status === 422 &&
+        startPage > 1
+      ) {
+        await clearResumeOffset();
+      }
+      throw caught;
+    }
 
     // Window fully fetched → drop this window's resume entry (leave others).
     if (result.complete) {
-      const remaining = readBackfillOffsets(liveMeta);
-      if (input.range.since in remaining) {
-        delete remaining[input.range.since];
-        liveMeta = { ...liveMeta };
-        if (Object.keys(remaining).length === 0) {
-          delete liveMeta.isetBackfillOffsets;
-        } else {
-          liveMeta.isetBackfillOffsets = remaining;
-        }
-        await persistMeta();
-      }
+      await clearResumeOffset();
     }
 
     // Re-derive the dailyMetric rollup from the DB (orders persisted per page).

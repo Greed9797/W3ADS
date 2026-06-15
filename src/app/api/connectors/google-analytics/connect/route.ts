@@ -83,13 +83,26 @@ export async function GET(request: NextRequest) {
     const config =
       await buildGoogleAnalyticsConfigFromProviderConfig(providerConfig);
 
+    // Derive redirect_uri from the host the user is actually on instead of the
+    // GOOGLE_ANALYTICS_REDIRECT_URI env, which had drifted to a stale host
+    // (w3ads vs w3-ads) and sent Google's return trip to a 404. Connect and
+    // callback derive it identically so the token exchange always matches. The
+    // resulting URI must be registered in the Google OAuth client.
+    const redirectUri = new URL(
+      "/api/connectors/google-analytics/callback",
+      request.nextUrl.origin,
+    ).toString();
+
     const state = createConnectorOAuthState({
       provider: "GA4",
       userId: context.user.id,
       workspaceId: targetWorkspaceId,
     });
     const response = NextResponse.redirect(
-      buildGoogleAnalyticsOAuthUrl({ state, config }),
+      buildGoogleAnalyticsOAuthUrl({
+        state,
+        config: { ...config, redirectUri },
+      }),
     );
 
     response.cookies.set(GOOGLE_ANALYTICS_OAUTH_STATE_COOKIE, state, {

@@ -151,8 +151,15 @@ async function runGoogleAnalyticsCallback(request: NextRequest) {
 
   try {
     const client = new GoogleAnalyticsClient({
-      config:
-        await buildGoogleAnalyticsConfigFromProviderConfig(providerConfig),
+      config: {
+        ...(await buildGoogleAnalyticsConfigFromProviderConfig(providerConfig)),
+        // Must match the redirect_uri sent at connect time (also derived from
+        // the request origin), or Google rejects the token exchange.
+        redirectUri: new URL(
+          "/api/connectors/google-analytics/callback",
+          request.nextUrl.origin,
+        ).toString(),
+      },
     });
     const token = await client.exchangeCodeForTokens(code);
     const properties = await client.listProperties(token.access_token);

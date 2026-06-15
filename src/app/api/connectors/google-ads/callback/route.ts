@@ -153,7 +153,15 @@ async function runGoogleAdsCallback(request: NextRequest) {
 
   try {
     const client = new GoogleAdsClient({
-      config: await buildGoogleAdsConfigFromProviderConfig(providerConfig),
+      config: {
+        ...(await buildGoogleAdsConfigFromProviderConfig(providerConfig)),
+        // Must match the redirect_uri sent at connect time (also derived from
+        // the request origin), or Google rejects the token exchange.
+        redirectUri: new URL(
+          "/api/connectors/google-ads/callback",
+          request.nextUrl.origin,
+        ).toString(),
+      },
     });
     const token = await client.exchangeCodeForTokens(code);
     const customers = await client.listSelectableCustomers(token.access_token);

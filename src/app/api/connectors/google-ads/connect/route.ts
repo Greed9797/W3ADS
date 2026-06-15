@@ -82,13 +82,23 @@ export async function GET(request: NextRequest) {
     }
     const config = await buildGoogleAdsConfigFromProviderConfig(providerConfig);
 
+    // Derive redirect_uri from the host the user is actually on instead of the
+    // GOOGLE_ADS_REDIRECT_URI env, which had drifted to a stale host (w3ads vs
+    // w3-ads) and sent Google's return trip to a 404. Connect and callback both
+    // derive it the same way, so the token exchange's redirect_uri always
+    // matches. The resulting URI must be registered in the Google OAuth client.
+    const redirectUri = new URL(
+      "/api/connectors/google-ads/callback",
+      request.nextUrl.origin,
+    ).toString();
+
     const state = createConnectorOAuthState({
       provider: "GOOGLE_ADS",
       userId: context.user.id,
       workspaceId: targetWorkspaceId,
     });
     const response = NextResponse.redirect(
-      buildGoogleAdsOAuthUrl({ state, config }),
+      buildGoogleAdsOAuthUrl({ state, config: { ...config, redirectUri } }),
     );
 
     response.cookies.set(GOOGLE_ADS_OAUTH_STATE_COOKIE, state, {

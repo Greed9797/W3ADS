@@ -255,7 +255,12 @@ export class NuvemshopClient {
       "created_at_max",
       `${input.until.slice(0, 10)}T23:59:59Z`,
     );
+    // Fulfillment-agnostic (open/closed), but ONLY paid orders: revenue must
+    // count received sales and nothing else. Pending/authorized/cancelled/
+    // refunded orders are never pulled or stored. Mirrors isApprovedOrderStatus
+    // at the metric rollup, enforcing it one layer earlier at the source.
     url.searchParams.set("status", "any");
+    url.searchParams.set("payment_status", "paid");
     url.searchParams.set("page", String(input.page));
     url.searchParams.set("per_page", "200");
 

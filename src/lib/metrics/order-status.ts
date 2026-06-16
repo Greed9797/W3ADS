@@ -1,8 +1,15 @@
 const APPROVED_TERMS: ReadonlyArray<string> = [
+  // Payment received — the canonical "Recebido" and its aliases across all
+  // platforms (Nuvemshop "paid", Shopify "PAID", WBuy "Pagamento efetuado",
+  // PT-BR "Recebido/Recebida", manual "APPROVED").
   "approved",
   "aprovado",
   "paid",
   "pago",
+  "recebid", // recebido / recebida / recebidos / recebidas
+  "efetuado", // WBuy "Pagamento efetuado"
+  "captured",
+  "settled",
   "completed",
   "complete",
   "concluido",
@@ -10,8 +17,6 @@ const APPROVED_TERMS: ReadonlyArray<string> = [
   "faturado",
   "entregue",
   "delivered",
-  "captured",
-  "settled",
   // WBuy post-payment fulfillment states (order is paid once it reaches these).
   "producao",
   "expedicao",
@@ -19,6 +24,7 @@ const APPROVED_TERMS: ReadonlyArray<string> = [
   "enviado",
   "postado",
   "transito",
+  "transporte", // WBuy "Em transporte"
   "shipped",
 ];
 
@@ -30,6 +36,7 @@ const REJECTED_TERMS: ReadonlyArray<string> = [
   "chargeback",
   "declined",
   "denied",
+  "negado", // WBuy "Pagamento negado"
   "devolvido",
   "disputed",
   "estornado",

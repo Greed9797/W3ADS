@@ -208,6 +208,30 @@ function isWithin(date: Date, from: Date, to: Date) {
   return key >= toDateKey(from) && key <= toDateKey(to);
 }
 
+// Brazil (America/Sao_Paulo) is a fixed UTC-3 — no DST since 2019. Order
+// timestamps are stored in UTC, but the dashboard's calendar day must follow
+// the store's LOCAL (BRT) day. Otherwise late-night BRT orders, which fall on
+// the next UTC day, are bucketed into the wrong day's GMV (a 21:39 BRT sale on
+// the 15th showed up under the 16th). Traffic DailyMetric rows are date-keyed
+// in the provider's own day and are intentionally NOT shifted here.
+const BRT_OFFSET_MS = 3 * 60 * 60 * 1000;
+
+// BRT calendar date of a UTC instant.
+function brtDateKey(date: Date) {
+  return toDateKey(new Date(date.getTime() - BRT_OFFSET_MS));
+}
+
+function isWithinBrt(date: Date, from: Date, to: Date) {
+  const key = brtDateKey(date);
+  return key >= toDateKey(from) && key <= toDateKey(to);
+}
+
+// UTC instant of the BRT midnight that corresponds to a UTC-midnight period
+// bound. Used to scope the SQL placedAt fetch to the BRT day window.
+function brtBound(date: Date) {
+  return new Date(date.getTime() + BRT_OFFSET_MS);
+}
+
 function round(value: number, decimals = 2) {
   return Number(value.toFixed(decimals));
 }
@@ -381,16 +405,16 @@ export function buildDashboardSnapshot(input: {
   );
   const filteredOrderItems = (input.orderItems ?? []).filter(
     (item) =>
-      isWithin(item.placedAt, period.from, period.to) &&
+      isWithinBrt(item.placedAt, period.from, period.to) &&
       isApprovedOrderStatus(item.status),
   );
   const currentOrders = filteredOrders.filter((order) =>
-    isWithin(order.placedAt, period.from, period.to),
+    isWithinBrt(order.placedAt, period.from, period.to),
   );
   const previousOrders = input.orders.filter(
     (order) =>
       commerceProviders.includes(order.platform) &&
-      isWithin(order.placedAt, period.comparison.from, period.comparison.to),
+      isWithinBrt(order.placedAt, period.comparison.from, period.comparison.to),
   );
   const currentMetrics = filteredMetrics.filter((metric) =>
     isWithin(metric.date, period.from, period.to),
@@ -505,7 +529,7 @@ export function buildDashboardSnapshot(input: {
   );
 
   for (const order of currentOrders) {
-    const item = daily.get(toDateKey(order.placedAt));
+    const item = daily.get(brtDateKey(order.placedAt));
     if (item) {
       const approved = approvedOrderCount(order);
       // Same rule as the headline revenue: only paid orders count toward the
@@ -552,7 +576,7 @@ export function buildDashboardSnapshot(input: {
   );
 
   for (const order of previousOrders) {
-    const currentKey = alignedByPreviousDate.get(toDateKey(order.placedAt));
+    const currentKey = alignedByPreviousDate.get(brtDateKey(order.placedAt));
     const item = currentKey ? daily.get(currentKey) : null;
     if (item) {
       const approved = approvedOrderCount(order);
@@ -1072,9 +1096,12 @@ async function findDashboardOrders(
     platform: {
       in: input.commerceProviders,
     },
+    // BRT day window (UTC-3): shift the UTC-midnight bounds by +3h so the fetch
+    // covers the store's local day. Precise per-day bucketing happens in-memory
+    // via brtDateKey/isWithinBrt.
     placedAt: {
-      gte: input.period.comparison.from,
-      lt: dayAfter(input.period.to),
+      gte: brtBound(input.period.comparison.from),
+      lt: brtBound(dayAfter(input.period.to)),
     },
   };
 
@@ -1134,9 +1161,10 @@ async function findDashboardOrderItems(
             in: input.commerceProviders,
           },
         },
+        // BRT day window (UTC-3) — see findDashboardOrders.
         placedAt: {
-          gte: input.period.from,
-          lt: dayAfter(input.period.to),
+          gte: brtBound(input.period.from),
+          lt: brtBound(dayAfter(input.period.to)),
         },
       },
       select: {

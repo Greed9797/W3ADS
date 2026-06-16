@@ -349,7 +349,13 @@ export function validateProviderConfigInput(input: ProviderConfigInput) {
   }
 
   if (isManualCommerceProvider(input.provider)) {
-    if (input.provider !== ConnectorProvider.WBUY && !hasText(input.baseUrl)) {
+    // WBuy and Loja Integrada have built-in default base URLs, so the field is
+    // optional for them.
+    if (
+      input.provider !== ConnectorProvider.WBUY &&
+      input.provider !== ConnectorProvider.LOJA_INTEGRADA &&
+      !hasText(input.baseUrl)
+    ) {
       return {
         success: false as const,
         error:
@@ -359,6 +365,24 @@ export function validateProviderConfigInput(input: ProviderConfigInput) {
       };
     }
     if (input.provider === ConnectorProvider.GOOGLE_SHEETS) {
+      return { success: true as const };
+    }
+    if (input.provider === ConnectorProvider.LOJA_INTEGRADA) {
+      // Loja Integrada needs BOTH keys: chave_api (apiKey, per-store) and
+      // chave_aplicacao (apiSecret, per-integrator).
+      if (!hasSecret("apiKey")) {
+        return {
+          success: false as const,
+          error: "Informe a Chave de API (chave_api) da Loja Integrada.",
+        };
+      }
+      if (!hasSecret("apiSecret")) {
+        return {
+          success: false as const,
+          error:
+            "Informe a Chave de Aplicação (chave_aplicacao) da Loja Integrada.",
+        };
+      }
       return { success: true as const };
     }
     if (
@@ -617,9 +641,12 @@ export async function publicManualCredentialsFromProviderConfig(
   return {
     ...credentials,
     baseUrl:
-      config.provider === ConnectorProvider.WBUY && !config.baseUrl?.trim()
+      !config.baseUrl?.trim() && config.provider === ConnectorProvider.WBUY
         ? "https://sistema.sistemawbuy.com.br/api/v1"
-        : requiredConfigText(config, "baseUrl"),
+        : !config.baseUrl?.trim() &&
+            config.provider === ConnectorProvider.LOJA_INTEGRADA
+          ? "https://api.awsli.com.br/v1"
+          : requiredConfigText(config, "baseUrl"),
     ordersPath:
       config.provider === ConnectorProvider.WBUY &&
       config.ordersPath?.trim().replace(/\/+$/, "").toLowerCase() === "/orders"
@@ -633,7 +660,9 @@ export async function publicManualCredentialsFromProviderConfig(
                 ? "/pedidos"
                 : config.provider === ConnectorProvider.MAGAZORD
                   ? "/api/v2/site/pedido"
-                  : "/orders"),
+                  : config.provider === ConnectorProvider.LOJA_INTEGRADA
+                    ? "/pedido/search/"
+                    : "/orders"),
   };
 }
 

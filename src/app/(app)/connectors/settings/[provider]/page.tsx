@@ -440,6 +440,32 @@ function ProviderSpecificFields({
       );
     }
 
+    if (provider === ConnectorProvider.LOJA_INTEGRADA) {
+      return (
+        <>
+          <SecretField
+            name="apiKey"
+            label="Chave de API (chave_api da loja)"
+            configured={
+              hasSecret(config, "apiKey") ||
+              Boolean(publicCredential(config, "apiKey"))
+            }
+          />
+          <SecretField
+            name="apiSecret"
+            label="Chave de Aplicação (chave_aplicacao)"
+            configured={hasSecret(config, "apiSecret")}
+          />
+          <Field
+            name="baseUrl"
+            label="URL base da API"
+            defaultValue={config?.baseUrl}
+            placeholder="Opcional — padrão: api.awsli.com.br/v1"
+          />
+        </>
+      );
+    }
+
     return (
       <>
         <Field

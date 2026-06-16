@@ -25,6 +25,9 @@ export function backfillBatchMonthsFor(provider: string): number {
     case "NUVEMSHOP":
     case "MAGAZORD":
     case "WBUY":
+    // Loja Integrada: 100 req/min per-store rate limit + 100 orders/page →
+    // a wide window guarantees 429s on backfill, so slice to 1 month.
+    case "LOJA_INTEGRADA":
       return 1;
     default:
       return BACKFILL_BATCH_MONTHS;

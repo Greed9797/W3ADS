@@ -27,6 +27,7 @@ const PROVIDER_LABEL: Record<ConnectorProvider, string> = {
   WBUY: "WBuy",
   MAGAZORD: "Magazord",
   GOOGLE_SHEETS: "Google Sheets",
+  LOJA_INTEGRADA: "Loja Integrada",
 };
 
 type Rule = {

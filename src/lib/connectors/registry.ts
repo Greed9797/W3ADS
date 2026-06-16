@@ -117,6 +117,16 @@ export const CONNECTOR_PROVIDER_DEFINITIONS: Partial<
     supportsOrders: true,
     supportsAdMetrics: false,
   },
+  [ConnectorProvider.LOJA_INTEGRADA]: {
+    provider: ConnectorProvider.LOJA_INTEGRADA,
+    name: "Loja Integrada",
+    category: "commerce",
+    connectionMode: "manual",
+    accountUnitLabel: "Loja",
+    supportsSelection: false,
+    supportsOrders: true,
+    supportsAdMetrics: false,
+  },
 };
 
 export const selectableAdsProviders = [
@@ -137,6 +147,7 @@ export const manualCommerceProviders = [
   ConnectorProvider.WBUY,
   ConnectorProvider.MAGAZORD,
   ConnectorProvider.GOOGLE_SHEETS,
+  ConnectorProvider.LOJA_INTEGRADA,
 ] as const;
 
 export function getConnectorDefinition(provider: ConnectorProvider) {

@@ -49,6 +49,7 @@ export const dashboardCommerceProviders = [
   ConnectorProvider.ISET,
   ConnectorProvider.MAGAZORD,
   ConnectorProvider.GOOGLE_SHEETS,
+  ConnectorProvider.LOJA_INTEGRADA,
 ] as const;
 
 export const dashboardTrafficProviderLabels: Record<
@@ -71,6 +72,7 @@ export const dashboardCommerceProviderLabels: Record<
   [ConnectorProvider.ISET]: "iSet",
   [ConnectorProvider.MAGAZORD]: "Magazord",
   [ConnectorProvider.GOOGLE_SHEETS]: "Google Sheets / WhatsApp",
+  [ConnectorProvider.LOJA_INTEGRADA]: "Loja Integrada",
 };
 
 const dateFormatter = new Intl.DateTimeFormat("pt-BR", {

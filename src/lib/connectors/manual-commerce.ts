@@ -60,6 +60,60 @@ function statusFromMaybeObject(value: unknown): string | null {
   return asString(value);
 }
 
+/**
+ * Loja Integrada (Django Tastypie) exposes the order status as a FK that can
+ * arrive in three shapes depending on the endpoint/expansion:
+ *   - a numeric code (`situacao: 4` / `situacao_id: 4`)
+ *   - a resource URI (`"/api/v1/situacao/4/"`)
+ *   - an expanded object (`{ codigo: 4, nome: "Pago" }`)
+ * A bare URI or code would otherwise reach the revenue filter as a non-matching
+ * string and silently drop the sale. We map the known LI status codes to a PT
+ * term the downstream `isApprovedOrderStatus` filter understands. Returns null
+ * for an unrecognized/absent value so the caller can fall back to the object's
+ * `nome` (handled via statusFromMaybeObject).
+ *
+ * Code semantics (LI order states): 2=aguardando, 3=em análise, 4=pago,
+ * 6=disputa, 7=devolvido, 8=cancelado, 9=efetuado (placed, NOT paid),
+ * 11=enviado, 13=pronto p/ retirada, 14=entregue.
+ */
+function lojaIntegradaSituacaoLabel(value: unknown): string | null {
+  let code: string | null = null;
+  if (typeof value === "number" && Number.isFinite(value)) {
+    code = String(value);
+  } else if (typeof value === "string") {
+    const fromUri = value.match(/situacao\/(\d+)/);
+    code = fromUri
+      ? fromUri[1]
+      : /^\d+$/.test(value.trim())
+        ? value.trim()
+        : null;
+  } else if (value && typeof value === "object" && !Array.isArray(value)) {
+    const o = value as Record<string, unknown>;
+    code = firstString(o.codigo, o.id);
+    // Already an expanded object with a human label → let it flow through the
+    // normal name path instead of code-mapping.
+    if (firstString(o.nome, o.name)) {
+      return null;
+    }
+  }
+  if (!code) {
+    return null;
+  }
+  const LABELS: Record<string, string> = {
+    "2": "aguardando",
+    "3": "pendente",
+    "4": "pago",
+    "6": "disputed",
+    "7": "estornado",
+    "8": "cancelado",
+    "9": "efetuado", // placed, not paid → intentionally NOT an approved term
+    "11": "enviado",
+    "13": "separacao",
+    "14": "entregue",
+  };
+  return LABELS[code] ?? null;
+}
+
 function normalizeMoney(value: string | null) {
   if (!value) {
     return null;
@@ -201,6 +255,8 @@ export function normalizeManualCommerceOrder(
       payload.data_pedido,
       payload.data_do_pedido,
       payload.criado_em,
+      // Loja Integrada (Tastypie) stamps order creation as `data_criacao`.
+      payload.data_criacao,
       payload.date,
       payload.placed_at,
     ) ?? "";
@@ -253,8 +309,12 @@ export function normalizeManualCommerceOrder(
     items,
     status:
       firstString(
+        // Loja Integrada situacao FK (code/URI) → PT term. Wins over the raw
+        // `payload.situacao` (which may be a non-matching URI string).
+        lojaIntegradaSituacaoLabel(payload.situacao),
+        lojaIntegradaSituacaoLabel(payload.situacao_id),
         statusFromMaybeObject(payload.status),
-        payload.situacao,
+        statusFromMaybeObject(payload.situacao),
         payload.payment_status,
         payload.status_pagamento,
         payload.aprovacao,

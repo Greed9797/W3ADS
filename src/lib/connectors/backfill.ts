@@ -12,7 +12,11 @@ export type ConnectorBackfillEventName =
   | "connector.shopify.backfill"
   | "connector.ecommerce.backfill";
 
-export type ConnectorSyncType = "BACKFILL" | "INCREMENTAL" | "TOKEN_REFRESH" | "MANUAL";
+export type ConnectorSyncType =
+  | "BACKFILL"
+  | "INCREMENTAL"
+  | "TOKEN_REFRESH"
+  | "MANUAL";
 
 export type ConnectorBackfillEvent = {
   name: ConnectorBackfillEventName;
@@ -27,8 +31,13 @@ function dateOnly(date: Date) {
   return date.toISOString().slice(0, 10);
 }
 
-export function buildBackfillRange(now = new Date(), lookbackDays = 90): ConnectorBackfillRange {
-  const until = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+export function buildBackfillRange(
+  now = new Date(),
+  lookbackDays = 90,
+): ConnectorBackfillRange {
+  const until = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+  );
   const since = new Date(until);
   since.setUTCDate(since.getUTCDate() - lookbackDays);
 
@@ -49,14 +58,19 @@ export function lookbackDaysForProvider(input: {
   provider: ConnectorProvider;
   scopes?: string | null;
 }) {
-  if (input.provider === ConnectorProvider.SHOPIFY && !hasShopifyReadAllOrders(input.scopes)) {
+  if (
+    input.provider === ConnectorProvider.SHOPIFY &&
+    !hasShopifyReadAllOrders(input.scopes)
+  ) {
     return 60;
   }
 
   return 90;
 }
 
-function eventNameForProvider(provider: ConnectorProvider): ConnectorBackfillEventName {
+function eventNameForProvider(
+  provider: ConnectorProvider,
+): ConnectorBackfillEventName {
   switch (provider) {
     case ConnectorProvider.META_ADS:
       return "connector.meta.backfill";
@@ -72,6 +86,7 @@ function eventNameForProvider(provider: ConnectorProvider): ConnectorBackfillEve
     case ConnectorProvider.WBUY:
     case ConnectorProvider.MAGAZORD:
     case ConnectorProvider.GOOGLE_SHEETS:
+    case ConnectorProvider.LOJA_INTEGRADA:
       return "connector.ecommerce.backfill";
     default:
       throw new Error(`Provider ${provider} does not support MVP backfill`);
@@ -92,7 +107,10 @@ export function buildConnectorBackfillEvent(input: {
       input.range ??
       buildBackfillRange(
         input.now,
-        lookbackDaysForProvider({ provider: input.provider, scopes: input.scopes }),
+        lookbackDaysForProvider({
+          provider: input.provider,
+          scopes: input.scopes,
+        }),
       ),
   };
 

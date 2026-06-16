@@ -254,6 +254,7 @@ enum ConnectorProvider {
   GOOGLE_SHEETS
   GA4
   SEARCH_CONSOLE
+  LOJA_INTEGRADA
 }
 
 enum ConnectorStatus {

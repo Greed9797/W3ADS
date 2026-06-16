@@ -22,6 +22,7 @@ const configurableProviders = [
   ConnectorProvider.WBUY,
   ConnectorProvider.MAGAZORD,
   ConnectorProvider.GOOGLE_SHEETS,
+  ConnectorProvider.LOJA_INTEGRADA,
   ConnectorProvider.GA4,
 ] as const;
 

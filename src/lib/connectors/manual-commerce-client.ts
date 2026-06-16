@@ -6,6 +6,7 @@ import type { ConnectorCredentialPayload } from "@/lib/connectors/credentials";
 type FetchLike = typeof fetch;
 
 const WBUY_API_BASE_URL = "https://sistema.sistemawbuy.com.br/api/v1";
+const LOJA_INTEGRADA_API_BASE_URL = "https://api.awsli.com.br/v1";
 const DEFAULT_USER_AGENT = "W3ADS (integracoes@w3educacao.com.br)";
 
 function credentialString(
@@ -70,6 +71,29 @@ function appendPath(baseUrl: string, path: string) {
   return `${cleanBase}/${cleanPath}`;
 }
 
+/**
+ * `fetch()` resolves (does not throw) on HTTP error statuses, so callWithRetry —
+ * which only retries on a THROWN error carrying `status`/`response.status` —
+ * never sees a 429. Wrapping a retryable response in a thrown error (shaped for
+ * retry.ts: `status` + `response.headers` so Retry-After is honored) makes the
+ * backoff engage. Used for Loja Integrada, whose 100 req/min per-store cap makes
+ * 429s likely on multi-page syncs.
+ */
+function isRetryableHttpStatus(status: number) {
+  return status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
+function retryableHttpError(response: Response) {
+  const error = new Error(`Retryable HTTP ${response.status}`) as Error & {
+    status: number;
+    response: { status: number; headers: Headers };
+  };
+  error.status = response.status;
+  error.response = { status: response.status, headers: response.headers };
+
+  return error;
+}
+
 function appendIsetBasePath(baseUrl: string) {
   const normalized = normalizeBaseUrl(baseUrl);
   if (/\/ws\/v1$/i.test(normalized)) {
@@ -97,6 +121,12 @@ function providerBaseUrl(
     return configuredBaseUrl
       ? normalizeBaseUrl(configuredBaseUrl)
       : WBUY_API_BASE_URL;
+  }
+
+  if (provider === ConnectorProvider.LOJA_INTEGRADA) {
+    return configuredBaseUrl
+      ? normalizeBaseUrl(configuredBaseUrl)
+      : LOJA_INTEGRADA_API_BASE_URL;
   }
 
   if (!configuredBaseUrl) {
@@ -136,6 +166,10 @@ function providerOrdersPath(
     case ConnectorProvider.MAGAZORD:
       // Magazord OpenAPI: GET /api/v2/site/pedido (singular, with /api prefix).
       return "/api/v2/site/pedido";
+    case ConnectorProvider.LOJA_INTEGRADA:
+      // Loja Integrada (Django Tastypie): GET /pedido/search/ — trailing slash
+      // kept so Tastypie doesn't 301-redirect and drop the query string.
+      return "/pedido/search/";
     default:
       return "/orders";
   }
@@ -192,6 +226,19 @@ function buildHeaders(
     if (apiKey) {
       headers["X-Api-Token"] = apiKey;
     }
+
+    return headers;
+  }
+
+  if (provider === ConnectorProvider.LOJA_INTEGRADA) {
+    // Loja Integrada auth header is a single custom scheme combining BOTH keys:
+    // `Authorization: chave_api <chave_api> aplicacao <chave_aplicacao>`.
+    // We map chave_api → apiKey (per-store) and chave_aplicacao → apiSecret
+    // (per-integrator). Both are required; missing one yields a 401 upstream.
+    if (apiKey && apiSecret) {
+      headers.Authorization = `chave_api ${apiKey} aplicacao ${apiSecret}`;
+    }
+    headers["Content-Type"] = "application/json";
 
     return headers;
   }
@@ -459,7 +506,15 @@ function extractOrderPayloads(value: unknown): Record<string, unknown>[] {
 
   const record = value as Record<string, unknown>;
 
-  for (const key of ["orders", "pedidos", "data", "items", "results"]) {
+  for (const key of [
+    "orders",
+    "pedidos",
+    "data",
+    "items",
+    "results",
+    // Loja Integrada (Django Tastypie) wraps the list under `objects`.
+    "objects",
+  ]) {
     const nested = record[key];
     if (Array.isArray(nested)) {
       return nested.filter((item): item is Record<string, unknown> =>
@@ -529,6 +584,24 @@ export class ManualCommerceClient {
       } else {
         url.searchParams.set("limit", "1");
         url.searchParams.set("page", "1");
+      }
+      return url;
+    }
+
+    if (this.provider === ConnectorProvider.LOJA_INTEGRADA) {
+      // Loja Integrada (Tastypie): `?format=json`, date window via
+      // `since_criado`/`until_criado` (YYYY-MM-DD), pagination via limit/offset
+      // (max 100). The full listing loop lives in listOrders()/
+      // fetchLojaIntegradaOrders(); this URL is used for the no-range health
+      // check (limit=1) and as the first page when a range is provided.
+      url.searchParams.set("format", "json");
+      if (range) {
+        url.searchParams.set("since_criado", range.since.slice(0, 10));
+        url.searchParams.set("until_criado", range.until.slice(0, 10));
+        url.searchParams.set("limit", "100");
+        url.searchParams.set("offset", "0");
+      } else {
+        url.searchParams.set("limit", "1");
       }
       return url;
     }
@@ -723,6 +796,93 @@ export class ManualCommerceClient {
     return collected;
   }
 
+  private lojaIntegradaOrdersUrl(input: {
+    range: { since: string; until: string };
+    offset: number;
+    limit: number;
+  }) {
+    const url = new URL(
+      appendPath(
+        providerBaseUrl(this.provider, this.credentials),
+        providerOrdersPath(this.provider, this.credentials),
+      ),
+    );
+    url.searchParams.set("format", "json");
+    // Filter by creation date (since_criado/until_criado) to match the
+    // backfill-window semantics the cron + manual route use. LI also offers
+    // `since_atualizado` (catches status changes on aged orders), but the
+    // generic sync range is creation-window-oriented and the client can't tell
+    // backfill from incremental — same trade-off as WBuy/Magazord. Status
+    // changes on orders older than the incremental window are not re-fetched.
+    url.searchParams.set("since_criado", input.range.since.slice(0, 10));
+    url.searchParams.set("until_criado", input.range.until.slice(0, 10));
+    url.searchParams.set("limit", String(input.limit));
+    url.searchParams.set("offset", String(input.offset));
+    return url;
+  }
+
+  private async fetchLojaIntegradaOrders(range: {
+    since: string;
+    until: string;
+  }) {
+    const pageSize = 100; // Tastypie hard max per page.
+    const MAX_PAGES = 100; // 100 * 100 = 10k orders/window safety cap.
+    const collected: Record<string, unknown>[] = [];
+
+    for (let page = 0; page < MAX_PAGES; page += 1) {
+      const offset = page * pageSize;
+      const response = await callWithRetry(async () => {
+        const res = await this.fetchImpl(
+          this.lojaIntegradaOrdersUrl({ range, offset, limit: pageSize }),
+          { headers: buildHeaders(this.provider, this.credentials) },
+        );
+        // Throw on 429/5xx so callWithRetry backs off (honoring Retry-After)
+        // instead of failing the whole sync on the first rate-limit hit.
+        if (!res.ok && isRetryableHttpStatus(res.status)) {
+          throw retryableHttpError(res);
+        }
+        return res;
+      });
+
+      if (!response.ok) {
+        let body = "";
+        try {
+          body = (await response.text()).slice(0, 300);
+        } catch {
+          // body unreadable
+        }
+        const suffix = body ? ` | body: ${body}` : "";
+        throw new Error(
+          `${this.provider} orders failed with status ${response.status}${suffix}`,
+        );
+      }
+
+      const json = (await response.json()) as unknown;
+      const payload = extractOrderPayloads(json);
+      if (payload.length === 0) {
+        break;
+      }
+      collected.push(...payload);
+
+      // Stop when Tastypie reports no further page (`meta.next` is null) or the
+      // page came back short (defensive: a provider that omits meta won't loop
+      // past the data).
+      const meta =
+        json && typeof json === "object" && !Array.isArray(json)
+          ? (json as Record<string, unknown>).meta
+          : null;
+      const next =
+        meta && typeof meta === "object" && !Array.isArray(meta)
+          ? (meta as Record<string, unknown>).next
+          : null;
+      if (!next || payload.length < pageSize) {
+        break;
+      }
+    }
+
+    return collected;
+  }
+
   async healthCheck() {
     if (this.provider === ConnectorProvider.WBUY) {
       const response = await this.fetchWbuyResponse(
@@ -760,6 +920,9 @@ export class ManualCommerceClient {
     }
     if (this.provider === ConnectorProvider.MAGAZORD) {
       return this.fetchMagazordOrders(range);
+    }
+    if (this.provider === ConnectorProvider.LOJA_INTEGRADA) {
+      return this.fetchLojaIntegradaOrders(range);
     }
 
     const response = await callWithRetry(() =>

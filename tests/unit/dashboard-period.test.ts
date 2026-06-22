@@ -9,18 +9,19 @@ import {
 } from "@/lib/metrics/period";
 
 describe("dashboard period", () => {
-  it("builds the last 7 days range with previous period", () => {
+  it("builds the last 7 complete days (ending yesterday) with previous period", () => {
     const period = getDashboardPeriod(
       { period: "week" },
       new Date("2026-05-16T12:00:00.000Z"),
     );
 
-    expect(toDateKey(period.from)).toBe("2026-05-10");
-    expect(toDateKey(period.to)).toBe("2026-05-16");
-    expect(toDateKey(period.previousFrom)).toBe("2026-05-03");
-    expect(toDateKey(period.previousTo)).toBe("2026-05-09");
-    expect(toDateKey(period.comparison.from)).toBe("2026-05-03");
-    expect(toDateKey(period.comparison.to)).toBe("2026-05-09");
+    // Today (05-16) is excluded; window is the 7 complete days ending yesterday.
+    expect(toDateKey(period.from)).toBe("2026-05-09");
+    expect(toDateKey(period.to)).toBe("2026-05-15");
+    expect(toDateKey(period.previousFrom)).toBe("2026-05-02");
+    expect(toDateKey(period.previousTo)).toBe("2026-05-08");
+    expect(toDateKey(period.comparison.from)).toBe("2026-05-02");
+    expect(toDateKey(period.comparison.to)).toBe("2026-05-08");
     expect(period.comparison.source).toBe("previous");
     expect(period.days).toBe(7);
   });

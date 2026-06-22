@@ -245,7 +245,10 @@ export function getDashboardPeriod(
   }
 
   if (preset === "week") {
-    period = buildPeriod("week", addDays(today, -6), today);
+    // "7 Dias" = the 7 most recent COMPLETE days, ending yesterday. Today is a
+    // partial day and is excluded so the window isn't skewed by an in-progress
+    // (or empty) current day.
+    period = buildPeriod("week", addDays(today, -7), addDays(today, -1));
     return withManualComparison(period, params);
   }
 

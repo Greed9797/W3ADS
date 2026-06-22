@@ -1,4 +1,5 @@
 import { callWithRetry } from "@/lib/connectors/retry";
+import { resolveCategory, type InventoryRow } from "@/lib/connectors/inventory";
 import type { ShopifyOrder } from "@/lib/connectors/shopify/client";
 
 import type { NuvemshopConfig } from "./oauth";
@@ -199,6 +200,71 @@ function normalizeNuvemshopOrder(order: NuvemshopOrderPayload): ShopifyOrder {
   };
 }
 
+type NuvemshopI18n = string | Record<string, string> | null | undefined;
+
+type NuvemshopProductPayload = {
+  id?: string | number;
+  name?: NuvemshopI18n;
+  categories?: Array<{ id?: string | number; name?: NuvemshopI18n }> | null;
+  variants?: Array<{
+    sku?: string | null;
+    stock?: number | string | null;
+  }> | null;
+};
+
+/** First non-empty value of an i18n map (pt first), or the raw string. */
+function nuvemshopI18n(value: NuvemshopI18n): string | null {
+  if (typeof value === "string") {
+    return value.trim() || null;
+  }
+  if (value && typeof value === "object") {
+    for (const key of ["pt", "pt_BR", "es", "en"]) {
+      const candidate = value[key];
+      if (typeof candidate === "string" && candidate.trim()) {
+        return candidate.trim();
+      }
+    }
+    const first = Object.values(value).find(
+      (item) => typeof item === "string" && item.trim(),
+    );
+    return typeof first === "string" ? first.trim() : null;
+  }
+  return null;
+}
+
+/** Nuvemshop product → InventoryRow. Stock summed across variants. */
+function normalizeNuvemshopProduct(
+  product: NuvemshopProductPayload,
+): InventoryRow | null {
+  const externalProductId =
+    product.id === undefined || product.id === null ? null : String(product.id);
+  const productName = nuvemshopI18n(product.name);
+  if (!externalProductId || !productName) {
+    return null;
+  }
+
+  const variants = product.variants ?? [];
+  const quantity = variants.reduce((sum, variant) => {
+    const raw = Number(variant.stock);
+    // Nuvemshop uses null stock for "unlimited/untracked" — count as 0.
+    return sum + (Number.isFinite(raw) ? Math.max(0, Math.trunc(raw)) : 0);
+  }, 0);
+  const sku =
+    variants.map((variant) => variant.sku).find((value) => Boolean(value)) ??
+    null;
+  const categoryName = resolveCategory(
+    (product.categories ?? []).map((category) => category.name),
+  );
+
+  return {
+    externalProductId,
+    sku: sku ? String(sku).trim() : null,
+    productName,
+    categoryName,
+    quantity,
+  };
+}
+
 export class NuvemshopClient {
   private readonly config: NuvemshopConfig;
   private readonly fetchImpl: FetchLike;
@@ -341,5 +407,52 @@ export class NuvemshopClient {
 
     // Hit the MAX_PAGES safety cap without exhausting the window.
     return { orders: out, complete: false, nextPage: page };
+  }
+
+  /**
+   * Current catalog (stock + category per product) for the store. Paginates
+   * GET /{storeId}/products; only `id,name,categories,variants` are requested
+   * to keep the payload small. Returns normalized InventoryRows for the
+   * inventory sync to upsert.
+   */
+  async listProducts(input: {
+    storeId: string;
+    accessToken: string;
+  }): Promise<InventoryRow[]> {
+    const rows: InventoryRow[] = [];
+    const perPage = 200;
+    const MAX_PAGES = 1000; // safety cap: 1000 * 200 = 200k products.
+
+    for (let page = 1; page <= MAX_PAGES; page += 1) {
+      const url = new URL(
+        `${this.config.apiBaseUrl}/${input.storeId}/products`,
+      );
+      url.searchParams.set("fields", "id,name,categories,variants");
+      url.searchParams.set("page", String(page));
+      url.searchParams.set("per_page", String(perPage));
+
+      const response = await callWithRetry(() =>
+        fetchJson<NuvemshopProductPayload[]>(url, this.fetchImpl, {
+          headers: {
+            Authentication: `bearer ${input.accessToken}`,
+            "User-Agent": "W3ADS (integracoes@w3educacao.com.br)",
+          },
+          signal: AbortSignal.timeout(15_000),
+        }),
+      );
+
+      for (const product of response) {
+        const row = normalizeNuvemshopProduct(product);
+        if (row) {
+          rows.push(row);
+        }
+      }
+
+      if (response.length < perPage) {
+        break;
+      }
+    }
+
+    return rows;
   }
 }

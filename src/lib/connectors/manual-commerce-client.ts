@@ -7,7 +7,7 @@ import {
   redirectSafeFetch,
 } from "@/lib/connectors/url-guard";
 import {
-  normalizeLojaIntegradaInventory,
+  normalizeManualInventory,
   type InventoryRow,
 } from "@/lib/connectors/inventory";
 
@@ -972,18 +972,77 @@ export class ManualCommerceClient {
     return url;
   }
 
+  // WBuy lists the catalog at GET /product the same way it lists orders
+  // (?limit=<offset>,<size>, max 100). Try both path variants like orders do.
+  private wbuyProductsUrls(input: { offset: number; pageSize: number }) {
+    return uniqueStrings(["/product", "/product/"]).map((path) => {
+      const url = new URL(
+        appendPath(providerBaseUrl(this.provider, this.credentials), path),
+      );
+      url.searchParams.set("limit", `${input.offset},${input.pageSize}`);
+      return url;
+    });
+  }
+
+  // Magazord OpenAPI: GET /api/v2/site/produto, page/limit pagination.
+  private magazordProductsUrl(input: { page: number; pageSize: number }) {
+    const url = new URL(
+      appendPath(
+        providerBaseUrl(this.provider, this.credentials),
+        "/api/v2/site/produto",
+      ),
+    );
+    url.searchParams.set("limit", String(input.pageSize));
+    url.searchParams.set("page", String(input.page));
+    return url;
+  }
+
+  // Tray Commerce: GET /products?limit=&offset=&access_token=. Items wrap as
+  // { Products: [ { Product: {...} } ] }.
+  private trayProductsUrl(input: { offset: number; pageSize: number }) {
+    const url = new URL(
+      appendPath(providerBaseUrl(this.provider, this.credentials), "/products"),
+    );
+    url.searchParams.set("limit", String(input.pageSize));
+    url.searchParams.set("offset", String(input.offset));
+    appendProviderQueryParams(this.provider, url, this.credentials);
+    return url;
+  }
+
   /**
-   * Current stock per product. Loja Integrada paginates its catalog
-   * (/produto/search/) the same Tastypie way as orders (offset/limit +
-   * meta.next). Other manual providers don't expose a uniform stock endpoint
-   * yet, so they return []. The quantity field is resolved tolerantly by
-   * normalizeLojaIntegradaInventory.
+   * Current per-product stock + category for the store catalog. Dispatches to
+   * the provider's product list endpoint and normalizes tolerantly via
+   * normalizeManualInventory. Providers without a catalog source return [].
    */
   async listInventory(): Promise<InventoryRow[]> {
-    if (this.provider !== ConnectorProvider.LOJA_INTEGRADA) {
-      return [];
+    switch (this.provider) {
+      case ConnectorProvider.LOJA_INTEGRADA:
+        return this.listLojaIntegradaInventory();
+      case ConnectorProvider.WBUY:
+        return this.listWbuyInventory();
+      case ConnectorProvider.MAGAZORD:
+        return this.listMagazordInventory();
+      case ConnectorProvider.TRAY:
+        return this.listTrayInventory();
+      default:
+        return [];
     }
+  }
 
+  private mapInventoryPayloads(payloads: Record<string, unknown>[]) {
+    const rows: InventoryRow[] = [];
+    for (const payload of payloads) {
+      const row = normalizeManualInventory(payload);
+      if (row) {
+        rows.push(row);
+      }
+    }
+    return rows;
+  }
+
+  // Loja Integrada paginates its catalog (/produto/search/) the Tastypie way
+  // (offset/limit + meta.next), same as orders.
+  private async listLojaIntegradaInventory(): Promise<InventoryRow[]> {
     const pageSize = 100; // Tastypie hard max per page.
     const MAX_PAGES = 200; // 200 * 100 = 20k products safety cap.
     const rows: InventoryRow[] = [];
@@ -1012,12 +1071,7 @@ export class ManualCommerceClient {
       if (payloads.length === 0) {
         break;
       }
-      for (const payload of payloads) {
-        const row = normalizeLojaIntegradaInventory(payload);
-        if (row) {
-          rows.push(row);
-        }
-      }
+      rows.push(...this.mapInventoryPayloads(payloads));
 
       const meta =
         json && typeof json === "object" && !Array.isArray(json)
@@ -1030,6 +1084,112 @@ export class ManualCommerceClient {
       if (!next || payloads.length < pageSize) {
         break;
       }
+    }
+
+    return rows;
+  }
+
+  private async listWbuyInventory(): Promise<InventoryRow[]> {
+    const pageSize = 100;
+    const MAX_PAGES = 200; // 200 * 100 = 20k products safety cap.
+    const rows: InventoryRow[] = [];
+    let offset = 0;
+
+    for (let page = 0; page < MAX_PAGES; page += 1) {
+      const response = await this.fetchWbuyResponse(
+        this.wbuyProductsUrls({ offset, pageSize }),
+      );
+      if (!response.ok) {
+        // Catalog is supplementary — a store that gates /product behind a
+        // different scope shouldn't crash; surface the status for the caller's
+        // best-effort try/catch.
+        throw new Error(
+          `${this.provider} products failed with status ${response.status}`,
+        );
+      }
+      const payloads = extractOrderPayloads(await response.json());
+      if (payloads.length === 0) {
+        break;
+      }
+      rows.push(...this.mapInventoryPayloads(payloads));
+      if (payloads.length < pageSize) {
+        break;
+      }
+      offset += pageSize;
+    }
+
+    return rows;
+  }
+
+  private async listMagazordInventory(): Promise<InventoryRow[]> {
+    const pageSize = 100;
+    const MAX_PAGES = 200;
+    const rows: InventoryRow[] = [];
+
+    for (let page = 1; page <= MAX_PAGES; page += 1) {
+      const response = await callWithRetry(() =>
+        this.fetchImpl(this.magazordProductsUrl({ page, pageSize }), {
+          headers: buildHeaders(this.provider, this.credentials),
+        }),
+      );
+      if (!response.ok) {
+        throw new Error(
+          `${this.provider} products failed with status ${response.status}`,
+        );
+      }
+      const payloads = extractOrderPayloads(await response.json());
+      if (payloads.length === 0) {
+        break;
+      }
+      rows.push(...this.mapInventoryPayloads(payloads));
+      if (payloads.length < pageSize) {
+        break;
+      }
+    }
+
+    return rows;
+  }
+
+  private async listTrayInventory(): Promise<InventoryRow[]> {
+    const pageSize = 50;
+    const MAX_PAGES = 400; // 400 * 50 = 20k products safety cap.
+    const rows: InventoryRow[] = [];
+    let offset = 0;
+
+    for (let page = 0; page < MAX_PAGES; page += 1) {
+      const response = await callWithRetry(() =>
+        this.fetchImpl(this.trayProductsUrl({ offset, pageSize }), {
+          headers: buildHeaders(this.provider, this.credentials),
+        }),
+      );
+      if (!response.ok) {
+        throw new Error(
+          `${this.provider} products failed with status ${response.status}`,
+        );
+      }
+      // Tray wraps each row as { Product: {...} }; unwrap before normalizing.
+      const json = (await response.json()) as unknown;
+      const wrapped =
+        json && typeof json === "object" && !Array.isArray(json)
+          ? (json as Record<string, unknown>).Products
+          : null;
+      const payloads = (Array.isArray(wrapped) ? wrapped : [])
+        .map((item) =>
+          item && typeof item === "object" && "Product" in item
+            ? (item as Record<string, unknown>).Product
+            : item,
+        )
+        .filter((item): item is Record<string, unknown> =>
+          Boolean(item && typeof item === "object"),
+        );
+      if (payloads.length === 0) {
+        break;
+      }
+      rows.push(...this.mapInventoryPayloads(payloads));
+      if (payloads.length < pageSize) {
+        break;
+      }
+      offset += pageSize;
     }
 
     return rows;

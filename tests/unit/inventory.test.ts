@@ -19,8 +19,46 @@ describe("normalizeLojaIntegradaInventory", () => {
       externalProductId: "10",
       sku: "PX-100",
       productName: "Perfume X",
+      categoryName: null,
       quantity: 7,
     });
+  });
+
+  it("extracts the category name when present", () => {
+    const row = normalizeLojaIntegradaInventory({
+      id: 20,
+      nome: "Perfume W",
+      sku: "PW-1",
+      quantidade: 4,
+      categoria: "Perfumaria",
+    });
+    expect(row?.categoryName).toBe("Perfumaria");
+  });
+
+  it("extracts category from a nested object / list shape", () => {
+    expect(
+      normalizeLojaIntegradaInventory({
+        id: 21,
+        nome: "Item A",
+        categorias: [{ nome: "Casa" }],
+      })?.categoryName,
+    ).toBe("Casa");
+    expect(
+      normalizeLojaIntegradaInventory({
+        id: 22,
+        nome: "Item B",
+        categoria: { nome: "Jardim" },
+      })?.categoryName,
+    ).toBe("Jardim");
+  });
+
+  it("ignores category ids/URIs (needs a name, not an id)", () => {
+    const row = normalizeLojaIntegradaInventory({
+      id: 23,
+      nome: "Item C",
+      categorias: ["/api/v1/categoria/5/"],
+    });
+    expect(row?.categoryName).toBeNull();
   });
 
   it("reads a nested estoque.quantidade", () => {
@@ -82,13 +120,119 @@ describe("ManualCommerceClient.listInventory (Loja Integrada)", () => {
     });
   });
 
-  it("returns [] for providers without an inventory source", async () => {
+  it("returns [] for providers without a catalog source", async () => {
     const client = new ManualCommerceClient({
-      provider: ConnectorProvider.WBUY,
+      provider: ConnectorProvider.ISET,
       credentials: { apiKey: "Bearer t" },
       fetchImpl: vi.fn() as unknown as typeof fetch,
     });
     expect(await client.listInventory()).toEqual([]);
+  });
+});
+
+describe("ManualCommerceClient.listInventory (WBuy / Magazord / Tray)", () => {
+  it("pulls WBuy catalog with stock and category", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json({
+          data: [
+            {
+              id: 7,
+              nome: "Camiseta",
+              sku: "CAM-1",
+              estoque: 15,
+              categorias: [{ nome: "Vestuário" }],
+            },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(Response.json({ data: [] }));
+
+    const client = new ManualCommerceClient({
+      provider: ConnectorProvider.WBUY,
+      credentials: { apiKey: "Bearer t" },
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+
+    const rows = await client.listInventory();
+    expect(rows).toEqual([
+      {
+        externalProductId: "7",
+        sku: "CAM-1",
+        productName: "Camiseta",
+        categoryName: "Vestuário",
+        quantity: 15,
+      },
+    ]);
+  });
+
+  it("pulls Magazord catalog from /api/v2/site/produto", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      Response.json({
+        data: {
+          items: [
+            {
+              id: 3,
+              nome: "Tênis",
+              sku: "TEN-1",
+              saldo: 4,
+              categoria: "Calçados",
+            },
+          ],
+        },
+      }),
+    );
+
+    const client = new ManualCommerceClient({
+      provider: ConnectorProvider.MAGAZORD,
+      credentials: { baseUrl: "https://x.magazord.com.br", apiKey: "t" },
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+
+    const rows = await client.listInventory();
+    expect(rows[0]).toMatchObject({
+      productName: "Tênis",
+      categoryName: "Calçados",
+      quantity: 4,
+    });
+    const url = new URL(String(fetchMock.mock.calls[0][0]));
+    expect(url.pathname).toBe("/api/v2/site/produto");
+  });
+
+  it("unwraps Tray's { Products: [{ Product }] } shape", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      Response.json({
+        Products: [
+          {
+            Product: {
+              id: 99,
+              name: "Caneca",
+              reference: "CAN-1",
+              stock: "8",
+              ProductCategory: { Category: { name: "Cozinha" } },
+            },
+          },
+        ],
+      }),
+    );
+
+    const client = new ManualCommerceClient({
+      provider: ConnectorProvider.TRAY,
+      credentials: { baseUrl: "https://x.commercesuite.com.br", apiKey: "tok" },
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+
+    const rows = await client.listInventory();
+    expect(rows[0]).toMatchObject({
+      externalProductId: "99",
+      sku: "CAN-1",
+      productName: "Caneca",
+      categoryName: "Cozinha",
+      quantity: 8,
+    });
+    const url = new URL(String(fetchMock.mock.calls[0][0]));
+    expect(url.searchParams.get("access_token")).toBe("tok");
   });
 });
 
@@ -123,6 +267,73 @@ describe("dashboard products join inventory", () => {
     );
     // Case-insensitive match, summed across connectors (5 + 2).
     expect(product?.stockQuantity).toBe(7);
+  });
+
+  it("matches stock by SKU even when the product name has a variant suffix", () => {
+    const period = getDashboardPeriod(
+      { period: "week" },
+      new Date("2026-05-16T12:00:00.000Z"),
+    );
+    const snapshot = buildDashboardSnapshot({
+      period,
+      orders: [],
+      metrics: [],
+      orderItems: [
+        {
+          productName: "Rosa do Deserto - TROPICAL",
+          sku: "ROSA-1",
+          categoryName: null,
+          quantity: 3,
+          total: "300.00",
+          status: "pago",
+          placedAt: new Date("2026-05-10T12:00:00.000Z"),
+        },
+      ],
+      // Catalog name differs ("Rosa do Deserto"), only SKU lines up.
+      inventory: [
+        {
+          productName: "Rosa do Deserto",
+          sku: "ROSA-1",
+          quantity: 12,
+          categoryName: "Suculentas",
+        },
+      ],
+    });
+
+    const product = snapshot.products.find(
+      (p) => p.productName === "Rosa do Deserto - TROPICAL",
+    );
+    expect(product?.stockQuantity).toBe(12);
+    // Category enriched from the catalog by SKU → not "Sem categoria".
+    const category = snapshot.categories.find(
+      (c) => c.categoryName === "Suculentas",
+    );
+    expect(category?.quantitySold).toBe(3);
+  });
+
+  it("falls back to 'Sem categoria' only when no catalog category matches", () => {
+    const period = getDashboardPeriod(
+      { period: "week" },
+      new Date("2026-05-16T12:00:00.000Z"),
+    );
+    const snapshot = buildDashboardSnapshot({
+      period,
+      orders: [],
+      metrics: [],
+      orderItems: [
+        {
+          productName: "Produto Sem Cat",
+          sku: "X-9",
+          categoryName: null,
+          quantity: 2,
+          total: "20.00",
+          status: "pago",
+          placedAt: new Date("2026-05-10T12:00:00.000Z"),
+        },
+      ],
+      inventory: [],
+    });
+    expect(snapshot.categories[0]?.categoryName).toBe("Sem categoria");
   });
 
   it("leaves stockQuantity null when no inventory matches", () => {

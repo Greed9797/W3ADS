@@ -1,4 +1,5 @@
 import { callWithRetry } from "@/lib/connectors/retry";
+import { resolveCategory, type InventoryRow } from "@/lib/connectors/inventory";
 
 import { normalizeShopDomain, type ShopifyConfig } from "./oauth";
 
@@ -169,6 +170,96 @@ query Orders($cursor: String, $query: String) {
   }
 }
 `;
+
+// `inventoryQuantity` needs the read_inventory scope; `productType` only needs
+// read_products. We build the query with/without the inventory field so a token
+// granted before read_inventory was requested can still pull categories.
+function shopifyProductsQuery(includeInventory: boolean) {
+  const variantFields = includeInventory ? "sku inventoryQuantity" : "sku";
+  return `
+query Products($cursor: String) {
+  products(first: 250, after: $cursor, sortKey: TITLE) {
+    edges {
+      cursor
+      node {
+        id
+        title
+        productType
+        variants(first: 100) { edges { node { ${variantFields} } } }
+      }
+    }
+    pageInfo { hasNextPage endCursor }
+  }
+}
+`;
+}
+
+type ShopifyProductNode = {
+  id: string;
+  title?: string | null;
+  productType?: string | null;
+  variants?: {
+    edges?: Array<{
+      node?: {
+        sku?: string | null;
+        inventoryQuantity?: number | null;
+      };
+    }>;
+  };
+};
+
+type ShopifyProductsResponse = {
+  data?: {
+    products?: {
+      edges?: Array<{ cursor: string; node: ShopifyProductNode }>;
+      pageInfo?: { hasNextPage: boolean; endCursor?: string | null };
+    };
+  };
+  errors?: Array<{ message: string; extensions?: Record<string, unknown> }>;
+};
+
+function isAccessDeniedError(
+  errors: ShopifyProductsResponse["errors"],
+): boolean {
+  return Boolean(
+    errors?.some((error) => {
+      const code = (error.extensions as { code?: string } | undefined)?.code;
+      return (
+        code === "ACCESS_DENIED" ||
+        /access denied|read_inventory|scope/i.test(error.message)
+      );
+    }),
+  );
+}
+
+function normalizeShopifyProduct(
+  node: ShopifyProductNode,
+): InventoryRow | null {
+  const externalProductId = node.id;
+  const productName = node.title?.trim();
+  if (!externalProductId || !productName) {
+    return null;
+  }
+  const variants = (node.variants?.edges ?? [])
+    .map((edge) => edge.node)
+    .filter((variant): variant is NonNullable<typeof variant> =>
+      Boolean(variant),
+    );
+  const quantity = variants.reduce((sum, variant) => {
+    const raw = Number(variant.inventoryQuantity);
+    return sum + (Number.isFinite(raw) ? Math.max(0, Math.trunc(raw)) : 0);
+  }, 0);
+  const sku =
+    variants.map((variant) => variant.sku).find((value) => Boolean(value)) ??
+    null;
+  return {
+    externalProductId,
+    sku: sku ? String(sku).trim() : null,
+    productName,
+    categoryName: resolveCategory(node.productType),
+    quantity,
+  };
+}
 
 const SHOPIFY_WEBHOOK_SUBSCRIPTION_CREATE_MUTATION = `
 mutation WebhookSubscriptionCreate(
@@ -440,6 +531,70 @@ export class ShopifyClient {
     }
 
     return orders;
+  }
+
+  /**
+   * Current catalog (stock + category per product). Paginates the products
+   * connection by cursor. Tries with inventoryQuantity first; if the token
+   * lacks read_inventory, retries category-only so the Categorias widget still
+   * gets data (stock then degrades to "Sem dado").
+   */
+  async listProducts(input: {
+    shop: string;
+    accessToken: string;
+  }): Promise<InventoryRow[]> {
+    const shop = normalizeShopDomain(input.shop);
+    const endpoint = `https://${shop}/admin/api/${this.config.apiVersion}/graphql.json`;
+    const rows: InventoryRow[] = [];
+    let cursor: string | null = null;
+    let hasNextPage = true;
+    let includeInventory = true;
+    const MAX_PAGES = 1000; // safety cap: 1000 * 250 = 250k products.
+
+    for (let page = 0; page < MAX_PAGES && hasNextPage; page += 1) {
+      const response: ShopifyProductsResponse = await callWithRetry(() =>
+        fetchJson<ShopifyProductsResponse>(endpoint, this.fetchImpl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Shopify-Access-Token": input.accessToken,
+          },
+          body: JSON.stringify({
+            query: shopifyProductsQuery(includeInventory),
+            variables: { cursor },
+          }),
+        }),
+      );
+
+      if (response.errors) {
+        // Token without read_inventory: drop the inventory field and retry the
+        // same page once (category-only). Reset pagination so we don't skip.
+        if (includeInventory && isAccessDeniedError(response.errors)) {
+          includeInventory = false;
+          cursor = null;
+          hasNextPage = true;
+          rows.length = 0;
+          continue;
+        }
+        const summary = response.errors
+          .map((error) => error.message)
+          .filter(Boolean)
+          .join(" | ");
+        throw new Error(`Shopify GraphQL error: ${summary}`);
+      }
+
+      const connection = response.data?.products;
+      for (const edge of connection?.edges ?? []) {
+        const row = normalizeShopifyProduct(edge.node);
+        if (row) {
+          rows.push(row);
+        }
+      }
+      hasNextPage = Boolean(connection?.pageInfo?.hasNextPage);
+      cursor = connection?.pageInfo?.endCursor ?? null;
+    }
+
+    return rows;
   }
 
   async ensureWebhookSubscriptions(input: {

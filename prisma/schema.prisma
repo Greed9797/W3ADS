@@ -352,7 +352,8 @@ model EcommerceOrderItem {
 /// Current available stock per product per store connector. Unlike
 /// EcommerceOrderItem.quantity (units SOLD), this holds the live on-hand
 /// quantity pulled from the store catalog API, refreshed on each sync. The
-/// dashboard joins it into the products table by productName.
+/// dashboard joins it into the products table by SKU (preferred) then by
+/// productName, and uses categoryName to fill the Categorias widget.
 model ProductInventory {
   id                 String           @id @default(cuid())
   workspaceId        String
@@ -362,6 +363,7 @@ model ProductInventory {
   externalProductId  String
   sku                String?
   productName        String
+  categoryName       String?
   quantity           Int              @default(0)
   syncedAt           DateTime         @default(now())
   createdAt          DateTime         @default(now())

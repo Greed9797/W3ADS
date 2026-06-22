@@ -31,6 +31,7 @@ export type DashboardOrderRow = {
 
 export type DashboardOrderItemRow = {
   productName: string;
+  sku?: string | null;
   categoryName?: string | null;
   quantity: number;
   total: NumericLike;
@@ -382,22 +383,82 @@ export function buildDashboardSnapshot(input: {
   orderItems?: DashboardOrderItemRow[];
   metrics: DashboardMetricRow[];
   connectorAccounts?: DashboardConnectorRow[];
-  inventory?: { productName: string; quantity: number }[];
+  inventory?: {
+    productName: string;
+    quantity: number;
+    sku?: string | null;
+    categoryName?: string | null;
+  }[];
   trafficProviders?: ConnectorProvider[];
   commerceProviders?: ConnectorProvider[];
 }): DashboardSnapshot {
   const { period } = input;
-  // Current on-hand stock summed per product name (across the workspace's store
-  // connectors), used to fill the products table's "Estoque disponível" column.
-  const inventoryByProduct = new Map<string, number>();
+  // Product catalog (stock + category) synced from the workspace's store
+  // connectors. Keyed by SKU (preferred — survives "Produto - VARIANTE" name
+  // drift) and by normalized name (fallback). Used to fill the products table's
+  // "Estoque disponível" column and to enrich each order item's category for the
+  // Categorias widget.
+  // ponytail: quantities SUM across connectors — a multi-store workspace's
+  // total on-hand. If a SKU is shared across stores this is the combined stock,
+  // not a double-count; switch to MAX only if stores mirror the same warehouse.
+  const inventoryQtyByName = new Map<string, number>();
+  const inventoryQtyBySku = new Map<string, number>();
+  const categoryByName = new Map<string, string>();
+  const categoryBySku = new Map<string, string>();
   for (const item of input.inventory ?? []) {
-    const key = item.productName.trim().toLowerCase();
-    if (!key) continue;
-    inventoryByProduct.set(
-      key,
-      (inventoryByProduct.get(key) ?? 0) + item.quantity,
-    );
+    const nameKey = item.productName.trim().toLowerCase();
+    const skuKey = item.sku?.trim().toLowerCase() || "";
+    if (nameKey) {
+      inventoryQtyByName.set(
+        nameKey,
+        (inventoryQtyByName.get(nameKey) ?? 0) + item.quantity,
+      );
+    }
+    if (skuKey) {
+      inventoryQtyBySku.set(
+        skuKey,
+        (inventoryQtyBySku.get(skuKey) ?? 0) + item.quantity,
+      );
+    }
+    const category = item.categoryName?.trim();
+    if (category) {
+      if (nameKey && !categoryByName.has(nameKey)) {
+        categoryByName.set(nameKey, category);
+      }
+      if (skuKey && !categoryBySku.has(skuKey)) {
+        categoryBySku.set(skuKey, category);
+      }
+    }
   }
+  // Resolve a product's on-hand stock: SKU match first, then name. null when no
+  // catalog row matches (renders "Sem dado").
+  const resolveStock = (
+    productName: string,
+    sku: string | null | undefined,
+  ): number | null => {
+    const skuKey = sku?.trim().toLowerCase() || "";
+    if (skuKey && inventoryQtyBySku.has(skuKey)) {
+      return inventoryQtyBySku.get(skuKey) ?? null;
+    }
+    const nameKey = productName.trim().toLowerCase();
+    return inventoryQtyByName.get(nameKey) ?? null;
+  };
+  // Resolve a product's category: explicit order-item category wins, then
+  // catalog by SKU, then catalog by name.
+  const resolveCategoryName = (
+    productName: string,
+    sku: string | null | undefined,
+    explicit: string | null | undefined,
+  ): string | null => {
+    const fromItem = explicit?.trim();
+    if (fromItem) return fromItem;
+    const skuKey = sku?.trim().toLowerCase() || "";
+    if (skuKey && categoryBySku.has(skuKey)) {
+      return categoryBySku.get(skuKey) ?? null;
+    }
+    const nameKey = productName.trim().toLowerCase();
+    return categoryByName.get(nameKey) ?? null;
+  };
   const trafficProviders = input.trafficProviders ?? [
     ...dashboardTrafficProviders,
   ];
@@ -712,6 +773,7 @@ export function buildDashboardSnapshot(input: {
     string,
     {
       productName: string;
+      sku: string | null;
       quantitySold: number;
       revenue: number;
     }
@@ -802,14 +864,22 @@ export function buildDashboardSnapshot(input: {
   for (const item of filteredOrderItems) {
     const existing = productRevenue.get(item.productName) ?? {
       productName: item.productName,
+      sku: null as string | null,
       quantitySold: 0,
       revenue: 0,
     };
     existing.quantitySold += item.quantity;
     existing.revenue += asNumber(item.total);
+    // Keep the first SKU seen for this product name so the stock join can match
+    // by SKU even though products are aggregated by name.
+    if (!existing.sku && item.sku?.trim()) {
+      existing.sku = item.sku.trim();
+    }
     productRevenue.set(item.productName, existing);
 
-    const categoryName = item.categoryName?.trim() || "Sem categoria";
+    const categoryName =
+      resolveCategoryName(item.productName, item.sku, item.categoryName) ||
+      "Sem categoria";
     const category = categoryRevenue.get(categoryName) ?? {
       categoryName,
       quantitySold: 0,
@@ -941,7 +1011,7 @@ export function buildDashboardSnapshot(input: {
     stateOrders,
     originMedia,
     products: Array.from(productRevenue.values())
-      .map((product) => ({
+      .map(({ sku, ...product }) => ({
         ...product,
         revenue: round(product.revenue),
         averagePrice:
@@ -949,10 +1019,8 @@ export function buildDashboardSnapshot(input: {
             ? round(product.revenue / product.quantitySold)
             : 0,
         // Real on-hand stock when a connector synced it; null ("Sem dado")
-        // when no inventory row matches this product name.
-        stockQuantity:
-          inventoryByProduct.get(product.productName.trim().toLowerCase()) ??
-          null,
+        // when no catalog row matches by SKU or product name.
+        stockQuantity: resolveStock(product.productName, sku),
       }))
       .sort((a, b) => b.revenue - a.revenue)
       .slice(0, 10),
@@ -1111,13 +1179,23 @@ export async function getDashboardSnapshot(input: {
  * error returns [] so the products table degrades to "Sem dado" rather than
  * breaking the whole dashboard.
  */
-async function findDashboardInventory(
-  workspaceId: string,
-): Promise<{ productName: string; quantity: number }[]> {
+async function findDashboardInventory(workspaceId: string): Promise<
+  {
+    productName: string;
+    quantity: number;
+    sku: string | null;
+    categoryName: string | null;
+  }[]
+> {
   try {
     return await prisma.productInventory.findMany({
       where: { workspaceId },
-      select: { productName: true, quantity: true },
+      select: {
+        productName: true,
+        quantity: true,
+        sku: true,
+        categoryName: true,
+      },
     });
   } catch {
     return [];
@@ -1214,6 +1292,7 @@ async function findDashboardOrderItems(
       },
       select: {
         productName: true,
+        sku: true,
         quantity: true,
         total: true,
         placedAt: true,
@@ -1227,6 +1306,7 @@ async function findDashboardOrderItems(
 
     return rows.map((row) => ({
       productName: row.productName,
+      sku: row.sku,
       quantity: row.quantity,
       total: row.total,
       placedAt: row.placedAt,

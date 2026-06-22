@@ -1,12 +1,31 @@
 import { ConnectorProvider, ConnectorStatus } from "@prisma/client";
 
 import { connectorCredentialsFromAccountVaultAware } from "@/lib/connectors/credentials";
+import type { InventoryRow } from "@/lib/connectors/inventory";
 import { ManualCommerceClient } from "@/lib/connectors/manual-commerce-client";
+import { NuvemshopClient } from "@/lib/connectors/nuvemshop/client";
+import {
+  buildNuvemshopConfigFromProviderConfig,
+  buildShopifyConfigFromProviderConfig,
+  getActiveProviderConfig,
+} from "@/lib/connectors/provider-config";
+import { ShopifyClient } from "@/lib/connectors/shopify/client";
 import { prisma } from "@/lib/db/prisma";
 
-/** Providers whose catalog stock the inventory sync can currently pull. */
+/**
+ * Providers whose product catalog (stock + category) the inventory sync can
+ * pull. Manual providers (Loja Integrada, WBuy, Magazord, Tray) route through
+ * ManualCommerceClient.listInventory(); Nuvemshop/Shopify through their OAuth
+ * clients' listProducts(). iSET is intentionally excluded — its order API does
+ * not return line items, so there are no dashboard product rows to enrich.
+ */
 const INVENTORY_PROVIDERS = new Set<ConnectorProvider>([
   ConnectorProvider.LOJA_INTEGRADA,
+  ConnectorProvider.NUVEMSHOP,
+  ConnectorProvider.SHOPIFY,
+  ConnectorProvider.WBUY,
+  ConnectorProvider.MAGAZORD,
+  ConnectorProvider.TRAY,
 ]);
 
 export function supportsInventory(provider: ConnectorProvider): boolean {
@@ -66,12 +85,52 @@ export async function syncConnectorInventory(input: {
 
   const credentials =
     await connectorCredentialsFromAccountVaultAware(connector);
-  const client = new ManualCommerceClient({
-    provider: connector.provider,
-    credentials,
-  });
+  const accessToken =
+    typeof credentials.accessToken === "string"
+      ? credentials.accessToken
+      : null;
 
-  const rows = await client.listInventory();
+  let rows: InventoryRow[];
+
+  if (connector.provider === ConnectorProvider.NUVEMSHOP) {
+    const providerConfig = await getActiveProviderConfig({
+      workspaceId: connector.workspaceId,
+      provider: ConnectorProvider.NUVEMSHOP,
+    });
+    if (!providerConfig || !accessToken) {
+      return { count: 0 };
+    }
+    const client = new NuvemshopClient({
+      config: await buildNuvemshopConfigFromProviderConfig(providerConfig),
+    });
+    rows = await client.listProducts({
+      storeId: connector.externalAccountId,
+      accessToken,
+    });
+  } else if (connector.provider === ConnectorProvider.SHOPIFY) {
+    const providerConfig = await getActiveProviderConfig({
+      workspaceId: connector.workspaceId,
+      provider: ConnectorProvider.SHOPIFY,
+    });
+    if (!providerConfig || !accessToken) {
+      return { count: 0 };
+    }
+    const client = new ShopifyClient({
+      config: await buildShopifyConfigFromProviderConfig(providerConfig),
+    });
+    rows = await client.listProducts({
+      shop: connector.externalAccountId,
+      accessToken,
+    });
+  } else {
+    // Manual providers (Loja Integrada, WBuy, Magazord, Tray).
+    const client = new ManualCommerceClient({
+      provider: connector.provider,
+      credentials,
+    });
+    rows = await client.listInventory();
+  }
+
   const syncedAt = new Date();
 
   for (const row of rows) {
@@ -85,6 +144,7 @@ export async function syncConnectorInventory(input: {
       update: {
         sku: row.sku,
         productName: row.productName,
+        categoryName: row.categoryName,
         quantity: row.quantity,
         syncedAt,
       },
@@ -94,6 +154,7 @@ export async function syncConnectorInventory(input: {
         externalProductId: row.externalProductId,
         sku: row.sku,
         productName: row.productName,
+        categoryName: row.categoryName,
         quantity: row.quantity,
       },
     });

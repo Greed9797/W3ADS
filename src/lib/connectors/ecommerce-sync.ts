@@ -802,9 +802,11 @@ export async function syncEcommerceOrders(input: {
       orders,
     });
 
-    // Best-effort: refresh per-product stock for providers that expose a
-    // catalog API (Loja Integrada). A failure here must never fail the order
-    // sync — stock is supplementary to revenue.
+    // Best-effort: refresh per-product stock + category for providers that
+    // expose a catalog API (Loja Integrada, Nuvemshop, Shopify, WBuy, Magazord,
+    // Tray). A failure here must never fail the order sync — the catalog is
+    // supplementary to revenue. Errors are logged (captured by Sentry) and
+    // surface on the dashboard as "Sem dado"/"Sem categoria".
     if (supportsInventory(connector.provider)) {
       try {
         await syncConnectorInventory({ connectorAccountId: connector.id });

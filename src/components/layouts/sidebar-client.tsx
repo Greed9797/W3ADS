@@ -13,6 +13,7 @@ import {
   UnfoldVertical,
   UserCircle,
   UsersRound,
+  X,
   type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
@@ -22,6 +23,8 @@ import { useEffect, useRef, useState } from "react";
 import { W3Logo } from "@/components/brand/w3-logo";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils/cn";
+
+import { useMobileNav } from "./mobile-nav-context";
 
 const SIDEBAR_STORAGE_KEY = "w3ads.sidebar.collapsed";
 
@@ -172,6 +175,7 @@ export function SidebarClient({
   const [collapsed, setCollapsed] = useState(false);
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
   const workspaceMenuRef = useRef<HTMLDivElement>(null);
+  const { open: mobileOpen, setOpen: setMobileOpen } = useMobileNav();
   const pathname = usePathname() ?? "";
   const activeHref = resolveActiveHref(navItems, pathname);
   const workspaceInitial =
@@ -181,6 +185,21 @@ export function SidebarClient({
   useEffect(() => {
     setCollapsed(readCollapsedPreference());
   }, []);
+
+  // Mobile drawer: close on Escape and lock body scroll while open.
+  useEffect(() => {
+    if (!mobileOpen) return;
+    function handleKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setMobileOpen(false);
+    }
+    document.addEventListener("keydown", handleKey);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", handleKey);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [mobileOpen, setMobileOpen]);
 
   useEffect(() => {
     if (!workspaceMenuOpen) {
@@ -207,13 +226,132 @@ export function SidebarClient({
   }
 
   return (
-    <aside
-      className={cn(
-        "hidden shrink-0 border-r border-[var(--border-subtle)] bg-[var(--bg-surface)] transition-[width] duration-200 ease-out lg:sticky lg:top-0 lg:flex lg:h-screen lg:max-h-screen lg:flex-col lg:self-start lg:overflow-y-auto",
-        collapsed ? "w-[76px]" : "w-64",
-      )}
-      data-sidebar-collapsed={collapsed ? "true" : "false"}
-    >
+    <>
+      {/* Mobile drawer + backdrop (below lg). Desktop sidebar unchanged. */}
+      <div
+        aria-hidden
+        className={cn(
+          "fixed inset-0 z-40 bg-black/40 transition-opacity duration-200 lg:hidden",
+          mobileOpen ? "opacity-100" : "pointer-events-none opacity-0",
+        )}
+        onClick={() => setMobileOpen(false)}
+      />
+      <aside
+        aria-label="Navegação"
+        className={cn(
+          "fixed inset-y-0 left-0 z-50 flex w-[min(82vw,18rem)] flex-col overflow-y-auto border-r border-[var(--border-subtle)] bg-[var(--bg-surface)] transition-transform duration-200 ease-out lg:hidden",
+          mobileOpen ? "translate-x-0" : "-translate-x-full",
+        )}
+      >
+        <div className="flex h-[72px] items-center justify-between px-5">
+          <W3Logo />
+          <Button
+            aria-label="Fechar menu"
+            className="size-9 text-[var(--text-tertiary)]"
+            onClick={() => setMobileOpen(false)}
+            size="icon"
+            type="button"
+            variant="ghost"
+          >
+            <X aria-hidden className="size-5" />
+          </Button>
+        </div>
+        <div className="px-3 pb-2">
+          <div className="flex items-center gap-2.5 rounded-lg bg-[var(--bg-elevated)] px-2.5 py-2">
+            <span className="grid size-8 shrink-0 place-items-center rounded-md bg-[var(--bg-surface)] text-sm font-semibold text-[var(--text-primary)]">
+              {workspaceInitial}
+            </span>
+            <span className="min-w-0">
+              <span className="block truncate text-sm font-semibold text-[var(--text-primary)]">
+                {currentWorkspace.name}
+              </span>
+              <span className="block truncate text-xs text-[var(--text-tertiary)]">
+                {currentRoleLabel}
+              </span>
+            </span>
+          </div>
+        </div>
+        <nav className="flex-1 px-3 pb-4">
+          <div className="space-y-6">
+            {SECTIONS.map((section) => {
+              const items = navItems.filter(
+                (item) => item.section === section.key,
+              );
+              if (items.length === 0) return null;
+              return (
+                <div className="space-y-1" key={section.key}>
+                  <p className="px-3 pb-1 text-[0.6875rem] font-semibold uppercase tracking-[0.08em] text-[var(--text-tertiary)]">
+                    {section.label}
+                  </p>
+                  {items.map((item) => {
+                    const Icon = iconMap[item.icon];
+                    const isActive = item.href === activeHref;
+                    return (
+                      <Link
+                        aria-current={isActive ? "page" : undefined}
+                        className={cn(
+                          "flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors",
+                          isActive
+                            ? "bg-[var(--w3-red-bg)] text-[var(--w3-red)]"
+                            : "text-[var(--text-secondary)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-primary)]",
+                        )}
+                        href={item.href}
+                        key={item.href}
+                        onClick={() => setMobileOpen(false)}
+                      >
+                        <Icon
+                          aria-hidden
+                          className="size-[18px] shrink-0"
+                          strokeWidth={isActive ? 2.2 : 1.8}
+                        />
+                        <span className="truncate">{item.label}</span>
+                      </Link>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
+        </nav>
+        <div className="border-t border-[var(--border-subtle)] p-3">
+          <div className="flex items-center gap-3 rounded-lg px-1.5 py-1.5">
+            <Avatar
+              className="size-9"
+              email={userEmail}
+              image={userImage}
+              name={userName}
+            />
+            <div className="min-w-0 flex-1" title={userEmail}>
+              <p className="truncate text-sm font-semibold text-[var(--text-primary)]">
+                {displayName}
+              </p>
+              <p className="truncate text-xs text-[var(--text-tertiary)]">
+                {currentRoleLabel}
+              </p>
+            </div>
+            <form action={logoutAction}>
+              <Button
+                aria-label="Sair"
+                className="size-9 shrink-0 text-[var(--text-tertiary)] hover:bg-[var(--danger-bg)] hover:text-[var(--danger)]"
+                size="icon"
+                title="Sair"
+                type="submit"
+                variant="ghost"
+              >
+                <LogOut aria-hidden className="size-4" />
+              </Button>
+            </form>
+          </div>
+        </div>
+      </aside>
+
+      <aside
+        className={cn(
+          "hidden shrink-0 border-r border-[var(--border-subtle)] bg-[var(--bg-surface)] transition-[width] duration-200 ease-out lg:sticky lg:top-0 lg:flex lg:h-screen lg:max-h-screen lg:flex-col lg:self-start lg:overflow-y-auto",
+          collapsed ? "w-[76px]" : "w-64",
+        )}
+        data-sidebar-collapsed={collapsed ? "true" : "false"}
+      >
       <div
         className={cn(
           "relative flex h-[72px] items-center",
@@ -460,5 +598,6 @@ export function SidebarClient({
         )}
       </div>
     </aside>
+    </>
   );
 }

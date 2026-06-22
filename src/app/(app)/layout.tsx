@@ -1,5 +1,6 @@
 import { after } from "next/server";
 
+import { MobileNavProvider } from "@/components/layouts/mobile-nav-context";
 import { Sidebar } from "@/components/layouts/sidebar";
 import { Topbar } from "@/components/layouts/topbar";
 import { AnalyticsProvider } from "@/components/observability/analytics-provider";
@@ -33,13 +34,15 @@ export default async function AppLayout({
 
   return (
     <main className="w3-app-shell min-h-screen bg-[var(--bg-canvas)] text-[var(--text-primary)]">
-      <div className="min-h-screen lg:flex">
-        <Sidebar context={context} />
-        <section className="min-w-0 flex-1">
-          <Topbar context={context} />
-          <div className="px-4 py-6 sm:px-6 lg:px-8">{children}</div>
-        </section>
-      </div>
+      <MobileNavProvider>
+        <div className="min-h-screen lg:flex">
+          <Sidebar context={context} />
+          <section className="min-w-0 flex-1">
+            <Topbar context={context} />
+            <div className="px-4 py-6 sm:px-6 lg:px-8">{children}</div>
+          </section>
+        </div>
+      </MobileNavProvider>
       <AnalyticsProvider
         userId={context.user.id}
         workspaceId={context.currentWorkspace.id}

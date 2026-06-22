@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { SidebarClient } from "@/components/layouts/sidebar-client";
@@ -11,7 +11,7 @@ describe("SidebarClient", () => {
   it("collapses the sidebar and persists the preference", () => {
     localStorage.clear();
 
-    render(
+    const { container } = render(
       <SidebarClient
         currentRoleLabel="Owner"
         currentWorkspace={{ id: "workspace-1", name: "W3 Dev" }}
@@ -39,12 +39,22 @@ describe("SidebarClient", () => {
       />,
     );
 
-    expect(screen.getByText("Dashboard")).toBeInTheDocument();
+    // Scope to the desktop sidebar — collapse is desktop-only; the mobile drawer
+    // always renders the label and would otherwise duplicate matches.
+    const desktop = within(
+      container.querySelector("[data-sidebar-collapsed]") as HTMLElement,
+    );
 
-    fireEvent.click(screen.getByRole("button", { name: /recolher sidebar/i }));
+    expect(desktop.getByText("Dashboard")).toBeInTheDocument();
+
+    fireEvent.click(
+      desktop.getByRole("button", { name: /recolher sidebar/i }),
+    );
 
     expect(localStorage.getItem("w3ads.sidebar.collapsed")).toBe("1");
-    expect(screen.queryByText("Dashboard")).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Dashboard" })).toBeInTheDocument();
+    expect(desktop.queryByText("Dashboard")).not.toBeInTheDocument();
+    expect(
+      desktop.getByRole("link", { name: "Dashboard" }),
+    ).toBeInTheDocument();
   });
 });

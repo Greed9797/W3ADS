@@ -9,6 +9,8 @@ graphify-out
 .smart-hook
 .serena
 .playwright-mcp
+.git.corrupt.bak
+.agents
 
 # Untracked local scratch — keep out of production builds.
 # NOTE: anchor screenshot PNGs to the repo ROOT (leading slash). A bare

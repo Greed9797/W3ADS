@@ -180,7 +180,7 @@ function BrandCard({ brand }: { brand: BrandRow }) {
         <BrandMetric
           icon={<ArrowUpRight aria-hidden className="size-3.5" />}
           kind="roas"
-          label="ROI Global"
+          label="ROAS Global"
           value={brand.roas}
         />
         <BrandMetric
@@ -456,7 +456,7 @@ export default async function DashboardsPage({
           label="% de mídia"
           value={totals.mediaRate}
         />
-        <SummaryCard kind="roas" label="ROI Global" value={totals.roas} />
+        <SummaryCard kind="roas" label="ROAS Global" value={totals.roas} />
       </section>
 
       {brands.length ? (

@@ -99,6 +99,13 @@ function lojaIntegradaSituacaoLabel(value: unknown): string | null {
   if (!code) {
     return null;
   }
+  // Loja Integrada situacao codes → canonical PAYMENT term. This is the
+  // per-platform normalization layer: in LI, codes 11/13/14 only occur AFTER
+  // payment (shipped / picking / delivered), so they map to "pago" and count as
+  // revenue. Code 9 ("Pedido efetuado") is placed-but-not-paid, so it maps to a
+  // pending term — NOT "efetuado", which the shared APPROVED_TERMS still treats
+  // as paid for WBuy ("Pagamento efetuado"). Keeping them distinct avoids the
+  // cross-platform collision that counted unpaid LI orders as revenue.
   const LABELS: Record<string, string> = {
     "2": "aguardando",
     "3": "pendente",
@@ -106,10 +113,10 @@ function lojaIntegradaSituacaoLabel(value: unknown): string | null {
     "6": "disputed",
     "7": "estornado",
     "8": "cancelado",
-    "9": "efetuado", // placed, not paid → intentionally NOT an approved term
-    "11": "enviado",
-    "13": "separacao",
-    "14": "entregue",
+    "9": "pendente", // "Pedido efetuado" = placed, not paid
+    "11": "pago", // shipped — only happens post-payment in LI
+    "13": "pago", // em separação — post-payment
+    "14": "entregue", // delivered — terminal paid state
   };
   return LABELS[code] ?? null;
 }

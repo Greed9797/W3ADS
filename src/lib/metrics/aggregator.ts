@@ -382,10 +382,22 @@ export function buildDashboardSnapshot(input: {
   orderItems?: DashboardOrderItemRow[];
   metrics: DashboardMetricRow[];
   connectorAccounts?: DashboardConnectorRow[];
+  inventory?: { productName: string; quantity: number }[];
   trafficProviders?: ConnectorProvider[];
   commerceProviders?: ConnectorProvider[];
 }): DashboardSnapshot {
   const { period } = input;
+  // Current on-hand stock summed per product name (across the workspace's store
+  // connectors), used to fill the products table's "Estoque disponível" column.
+  const inventoryByProduct = new Map<string, number>();
+  for (const item of input.inventory ?? []) {
+    const key = item.productName.trim().toLowerCase();
+    if (!key) continue;
+    inventoryByProduct.set(
+      key,
+      (inventoryByProduct.get(key) ?? 0) + item.quantity,
+    );
+  }
   const trafficProviders = input.trafficProviders ?? [
     ...dashboardTrafficProviders,
   ];
@@ -406,7 +418,11 @@ export function buildDashboardSnapshot(input: {
   const filteredOrderItems = (input.orderItems ?? []).filter(
     (item) =>
       isWithinBrt(item.placedAt, period.from, period.to) &&
-      isApprovedOrderStatus(item.status),
+      // Line items inherit the parent order's paid state and frequently arrive
+      // without their own status — count them unless the status is explicitly a
+      // non-approved (pending / cancelled / refunded) term. Orders themselves
+      // keep the stricter "must be approved" rule (see revenue below).
+      (item.status == null || isApprovedOrderStatus(item.status)),
   );
   const currentOrders = filteredOrders.filter((order) =>
     isWithinBrt(order.placedAt, period.from, period.to),
@@ -932,7 +948,11 @@ export function buildDashboardSnapshot(input: {
           product.quantitySold > 0
             ? round(product.revenue / product.quantitySold)
             : 0,
-        stockQuantity: null,
+        // Real on-hand stock when a connector synced it; null ("Sem dado")
+        // when no inventory row matches this product name.
+        stockQuantity:
+          inventoryByProduct.get(product.productName.trim().toLowerCase()) ??
+          null,
       }))
       .sort((a, b) => b.revenue - a.revenue)
       .slice(0, 10),
@@ -1053,12 +1073,18 @@ export async function getDashboardSnapshot(input: {
       }),
     ]);
 
+    // Inventory is supplementary; fetch it defensively so a missing table
+    // (pre-migration) or transient error degrades to "Sem dado" instead of
+    // failing the whole dashboard.
+    const inventory = await findDashboardInventory(input.workspaceId);
+
     return buildDashboardSnapshot({
       period: input.period,
       orders,
       orderItems,
       metrics,
       connectorAccounts,
+      inventory,
       trafficProviders,
       commerceProviders,
     });
@@ -1076,6 +1102,25 @@ export async function getDashboardSnapshot(input: {
       },
       fetchError,
     );
+  }
+}
+
+/**
+ * Current on-hand stock per product for the workspace. Defensive by design: a
+ * missing ProductInventory table (before the migration runs) or any transient
+ * error returns [] so the products table degrades to "Sem dado" rather than
+ * breaking the whole dashboard.
+ */
+async function findDashboardInventory(
+  workspaceId: string,
+): Promise<{ productName: string; quantity: number }[]> {
+  try {
+    return await prisma.productInventory.findMany({
+      where: { workspaceId },
+      select: { productName: true, quantity: true },
+    });
+  } catch {
+    return [];
   }
 }
 

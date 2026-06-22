@@ -34,13 +34,12 @@ const workspaceRoleDefinitions: Record<MemberRole, WorkspaceRoleDefinition> = {
     role: "ADMIN",
     label: "Admin",
     description:
-      "Opera dashboards, conectores, membros e ajustes do workspace, sem alterar a titularidade.",
+      "Opera dashboards, conectores e membros, sem alterar ajustes ou titularidade do workspace.",
     capabilities: [
       "view_dashboard",
       "edit_dashboard",
       "manage_connectors",
       "manage_members",
-      "manage_workspace_settings",
     ],
   },
   VIEWER: {

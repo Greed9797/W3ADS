@@ -81,7 +81,7 @@ export default async function DashboardPage({
 
   return (
     <div className="space-y-5">
-      <DashboardAutoRefresh />
+      <DashboardAutoRefresh realtime={period.preset === "real_time"} />
       <section>
         <DashboardFilterBar filters={filters} showProviderFilters={false} />
       </section>

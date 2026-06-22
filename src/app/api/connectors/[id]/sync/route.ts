@@ -1,3 +1,4 @@
+import { ConnectorStatus } from "@prisma/client";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { logAudit } from "@/lib/audit/log";
@@ -36,6 +37,7 @@ export async function POST(_request: NextRequest, context: RouteContext) {
       id: true,
       workspaceId: true,
       provider: true,
+      status: true,
     },
   });
 
@@ -51,6 +53,12 @@ export async function POST(_request: NextRequest, context: RouteContext) {
       { ok: false, error: "forbidden" },
       { status: 403 },
     );
+  }
+
+  // A revoked (soft-deleted) connector must not be resurrected to ACTIVE/ERROR
+  // by a direct sync call that bypasses the hidden-from-list UI.
+  if (account.status === ConnectorStatus.REVOKED) {
+    return NextResponse.json({ ok: false, error: "revoked" }, { status: 409 });
   }
 
   const helper = SYNC_HELPERS[account.provider as keyof typeof SYNC_HELPERS];

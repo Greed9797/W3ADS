@@ -3,6 +3,7 @@ import { ConnectorProvider } from "@prisma/client";
 export type DashboardPeriodPreset =
   | "real_time"
   | "day"
+  | "yesterday"
   | "week"
   | "month"
   | "custom";
@@ -184,6 +185,7 @@ function normalizePreset(
   if (
     value === "real_time" ||
     value === "day" ||
+    value === "yesterday" ||
     value === "week" ||
     value === "month" ||
     value === "custom"
@@ -233,6 +235,12 @@ export function getDashboardPeriod(
 
   if (preset === "real_time" || preset === "day") {
     period = buildPeriod(preset, today, today);
+    return withManualComparison(period, params);
+  }
+
+  if (preset === "yesterday") {
+    const yesterday = addDays(today, -1);
+    period = buildPeriod("yesterday", yesterday, yesterday);
     return withManualComparison(period, params);
   }
 

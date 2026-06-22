@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ManualCommerceClient } from "@/lib/connectors/manual-commerce-client";
 
 describe("documented ecommerce API clients", () => {
-  it("uses WBuy /order/ resource with POST Bearer apiKey auth and offset,size pagination", async () => {
+  it("uses WBuy /order/ resource with GET Bearer apiKey auth and offset,size pagination", async () => {
     // First page returns 100 results (newest-first), second page returns 30
     // results — older than `since`, so the loop must stop after the first page.
     const recentOrders = Array.from({ length: 100 }, (_, idx) => ({
@@ -48,7 +48,7 @@ describe("documented ecommerce API clients", () => {
       "Content-Type": "application/json",
       "User-Agent": "W3ADS (integracoes@w3educacao.com.br)",
     });
-    expect(init1.method).toBe("POST");
+    expect(init1.method).toBe("GET");
     // The page that came back had 100 rows so the loop fetched a second page.
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const [url2] = fetchMock.mock.calls[1] as unknown as [URL, RequestInit];
@@ -79,7 +79,7 @@ describe("documented ecommerce API clients", () => {
       Authorization: `Bearer ${Buffer.from("wbuy-user:wbuy-password").toString("base64")}`,
       "Content-Type": "application/json",
     });
-    expect(init.method).toBe("POST");
+    expect(init.method).toBe("GET");
   });
 
   it("normalizes legacy WBuy /orders path and accepts token from API secret", async () => {
@@ -106,7 +106,7 @@ describe("documented ecommerce API clients", () => {
       Authorization: "Bearer pasted-authorization-token",
       "Content-Type": "application/json",
     });
-    expect(init.method).toBe("POST");
+    expect(init.method).toBe("GET");
   });
 
   it("tries WBuy slash and Basic auth fallbacks before failing validation", async () => {
@@ -136,10 +136,7 @@ describe("documented ecommerce API clients", () => {
       URL,
       RequestInit,
     ];
-    const [, init2] = fetchMock.mock.calls[1] as unknown as [
-      URL,
-      RequestInit,
-    ];
+    const [, init2] = fetchMock.mock.calls[1] as unknown as [URL, RequestInit];
     const token = Buffer.from("wbuy-user:wbuy-password").toString("base64");
     expect(url1.toString()).toBe(
       "https://sistema.sistemawbuy.com.br/api/v1/order?limit=0%2C1",

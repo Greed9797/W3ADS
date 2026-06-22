@@ -80,16 +80,52 @@ export async function createMemberAction(formData: FormData) {
   }
 
   const { name, email, role } = parsed.data;
-  const password =
-    parsed.data.password && parsed.data.password.length > 0
-      ? parsed.data.password
-      : generatePassword();
-  const passwordHash = await hashPassword(password);
 
   const existing = await prisma.user.findUnique({
     where: { email },
-    select: { id: true },
+    select: { id: true, platformRole: true },
   });
+
+  // Is the existing user ALREADY a member of the workspace being managed?
+  const existingMembership = existing
+    ? await prisma.membership.findUnique({
+        where: {
+          userId_workspaceId: {
+            userId: existing.id,
+            workspaceId: context.currentWorkspace.id,
+          },
+        },
+        select: { role: true },
+      })
+    : null;
+
+  // A workspace admin may only SET A PASSWORD when:
+  //  - creating a brand-new user, OR
+  //  - resetting a user who is already a member of THIS workspace and is a
+  //    plain platform USER.
+  // Resetting any other existing account (another workspace's user, an internal
+  // platform admin, or a non-member found only by email) would be a cross-tenant
+  // account takeover. In that case we add the membership WITHOUT ever touching
+  // their credentials — they keep using their own password.
+  const isNewUser = existing == null;
+  const canResetExisting =
+    existing != null &&
+    existingMembership != null &&
+    existing.platformRole === "USER";
+  const willSetPassword = isNewUser || canResetExisting;
+
+  const password = willSetPassword
+    ? parsed.data.password && parsed.data.password.length > 0
+      ? parsed.data.password
+      : generatePassword()
+    : null;
+  const passwordHash = password ? await hashPassword(password) : null;
+
+  const auditAction = isNewUser
+    ? ("workspace.member.create" as const)
+    : canResetExisting
+      ? ("workspace.member.reset" as const)
+      : ("workspace.member.add" as const);
 
   let resultEmail = email;
 
@@ -101,7 +137,7 @@ export async function createMemberAction(formData: FormData) {
         data: {
           email,
           name,
-          passwordHash,
+          passwordHash: passwordHash!,
           platformRole: "USER",
           emailVerified: new Date(),
         },
@@ -109,13 +145,17 @@ export async function createMemberAction(formData: FormData) {
       });
       userId = created.id;
       resultEmail = created.email;
-    } else {
-      // Atualiza senha do usuário existente (admin pode resetar)
+    } else if (canResetExisting) {
+      // Reset the member's password and invalidate their existing sessions so
+      // a stale cookie can't outlive the credential change.
       await tx.user.update({
         where: { id: userId },
-        data: { passwordHash, name },
+        data: { passwordHash: passwordHash!, name },
       });
+      await tx.session.deleteMany({ where: { userId } });
     }
+    // else: existing non-member / internal admin — never touch credentials,
+    // only attach the membership below.
 
     await tx.membership.upsert({
       where: {
@@ -134,14 +174,16 @@ export async function createMemberAction(formData: FormData) {
   });
 
   await logAudit({
-    action: existing ? "workspace.member.reset" : "workspace.member.create",
+    action: auditAction,
     userId: context.user.id,
     workspaceId: context.currentWorkspace.id,
     resourceType: "membership",
     metadata: { email: resultEmail, role, reused: Boolean(existing) },
   });
 
-  // Flash message com senha — visível apenas no próximo carregamento da página
+  // Flash message — only carries a password when one was actually set (new user
+  // or in-workspace reset). For an existing user added without a reset, no
+  // credential is exposed.
   const cookieStore = await cookies();
   cookieStore.set(
     FLASH_COOKIE,
@@ -167,7 +209,7 @@ export async function consumeMemberCreatedFlash() {
   try {
     const parsed = JSON.parse(raw) as {
       email: string;
-      password: string;
+      password: string | null;
       role: string;
     };
     return parsed;

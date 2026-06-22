@@ -55,27 +55,32 @@ export default async function MembersPage({ searchParams }: MembersPageProps) {
       {createdFlash ? (
         <div className="rounded-md border border-[var(--success)] bg-[var(--success-bg)] px-4 py-3 text-sm text-[var(--success)]">
           <p className="font-semibold">
-            Usuário criado. Compartilhe o acesso abaixo (visível apenas uma
-            vez):
+            {createdFlash.password
+              ? "Usuário criado. Compartilhe o acesso abaixo (visível apenas uma vez):"
+              : "Usuário existente adicionado ao workspace. Ele mantém a própria senha."}
           </p>
           <dl className="mt-2 grid gap-1 font-mono text-xs">
             <div>
               <span className="text-[var(--text-secondary)]">email: </span>
               {createdFlash.email}
             </div>
-            <div>
-              <span className="text-[var(--text-secondary)]">senha: </span>
-              {createdFlash.password}
-            </div>
+            {createdFlash.password ? (
+              <div>
+                <span className="text-[var(--text-secondary)]">senha: </span>
+                {createdFlash.password}
+              </div>
+            ) : null}
             <div>
               <span className="text-[var(--text-secondary)]">papel: </span>
               {createdFlash.role}
             </div>
           </dl>
-          <p className="mt-2 text-xs text-[var(--text-secondary)]">
-            O usuário pode trocar a senha em <code>/profile</code> após o
-            primeiro login.
-          </p>
+          {createdFlash.password ? (
+            <p className="mt-2 text-xs text-[var(--text-secondary)]">
+              O usuário pode trocar a senha em <code>/profile</code> após o
+              primeiro login.
+            </p>
+          ) : null}
         </div>
       ) : null}
       {params.updated ? (

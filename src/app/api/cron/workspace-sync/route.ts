@@ -72,9 +72,15 @@ export async function GET(request: NextRequest) {
   ]);
   const backlog = Math.max(0, staleTotal - stale.length);
   if (backlog > 0 || severeBacklog > 0) {
-    console.warn(
-      `[cron/workspace-sync] coverage gap: staleTotal=${staleTotal} covered=${stale.length} backlog=${backlog} severe=${severeBacklog}`,
-    );
+    const message = `[cron/workspace-sync] coverage gap: staleTotal=${staleTotal} covered=${stale.length} backlog=${backlog} severe=${severeBacklog}`;
+    if (severeBacklog > 0) {
+      // >2× the stale threshold means workspaces are starving on the daily slot.
+      // Escalate to error level so Sentry surfaces it as an actionable signal to
+      // deploy the 30-min external scheduler (see docs/ops/manual-setup.md).
+      console.error(message);
+    } else {
+      console.warn(message);
+    }
   }
 
   // Process workspaces with bounded concurrency instead of strictly serial:

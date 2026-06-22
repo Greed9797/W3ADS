@@ -181,9 +181,9 @@ export function ProductsTable({
         <thead>
           <tr className="bg-[var(--bg-elevated)] text-caption text-[var(--text-tertiary)]">
             <th className="px-3 py-3 text-left">Nome do produto</th>
+            <th className="px-3 py-3 text-right">Estoque disponível</th>
+            <th className="px-3 py-3 text-right">Quantidade vendida</th>
             <th className="px-3 py-3 text-right">Receita total</th>
-            <th className="px-3 py-3 text-right">Estoque</th>
-            <th className="px-3 py-3 text-right">Preço médio</th>
           </tr>
         </thead>
         <tbody>
@@ -194,15 +194,15 @@ export function ProductsTable({
             >
               <td className="px-3 py-4 font-semibold">{product.productName}</td>
               <td className="px-3 py-4 text-right font-mono">
-                {formatCurrencyBR(product.revenue)}
-              </td>
-              <td className="px-3 py-4 text-right font-mono">
                 {product.stockQuantity === null
                   ? "Sem dado"
                   : formatIntegerBR(product.stockQuantity)}
               </td>
               <td className="px-3 py-4 text-right font-mono">
-                {formatCurrencyBR(product.averagePrice)}
+                {formatIntegerBR(product.quantitySold)}
+              </td>
+              <td className="px-3 py-4 text-right font-mono">
+                {formatCurrencyBR(product.revenue)}
               </td>
             </tr>
           ))}

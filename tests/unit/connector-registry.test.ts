@@ -23,6 +23,7 @@ describe("connector registry", () => {
         ConnectorProvider.SHOPIFY,
         ConnectorProvider.TRAY,
         ConnectorProvider.WBUY,
+        ConnectorProvider.LOJA_INTEGRADA,
       ].sort(),
     );
   });
@@ -43,6 +44,7 @@ describe("connector registry", () => {
       ConnectorProvider.WBUY,
       ConnectorProvider.MAGAZORD,
       ConnectorProvider.GOOGLE_SHEETS,
+      ConnectorProvider.LOJA_INTEGRADA,
     ]);
   });
 });

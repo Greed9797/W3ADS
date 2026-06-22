@@ -29,7 +29,7 @@ export async function bootstrapW3AdminAction() {
   }
 
   await logAudit({
-    action: "connector.provider_config.update",
+    action: "platform.admin.bootstrap",
     userId: context.user.id,
     workspaceId: context.currentWorkspace.id,
     resourceType: "user",

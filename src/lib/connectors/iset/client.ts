@@ -1,5 +1,9 @@
 import { callWithRetry } from "@/lib/connectors/retry";
 import type { ShopifyOrder } from "@/lib/connectors/shopify/client";
+import {
+  assertPublicHttpUrl,
+  redirectSafeFetch,
+} from "@/lib/connectors/url-guard";
 
 type FetchLike = typeof fetch;
 
@@ -75,10 +79,8 @@ function normalizeIsetBaseUrl(raw: string): string {
   if (!trimmed) {
     throw new Error("ISET baseUrl is required");
   }
-  const withProtocol = /^https?:\/\//i.test(trimmed)
-    ? trimmed
-    : `https://${trimmed}`;
-  const url = new URL(withProtocol);
+  // SSRF guard: reject private/loopback/metadata/internal hosts before any fetch.
+  const url = assertPublicHttpUrl(trimmed);
   const host = `${url.protocol}//${url.host}`;
   const path = url.pathname.replace(/\/+$/, "");
   if (/\/ws\/v1$/i.test(path)) {
@@ -177,7 +179,7 @@ export class IsetClient {
     this.baseUrl = normalizeIsetBaseUrl(input.config.baseUrl);
     this.identifier = input.config.identifier?.trim() ?? "";
     this.secret = input.config.secret?.trim() ?? "";
-    this.fetchImpl = input.fetchImpl ?? fetch;
+    this.fetchImpl = redirectSafeFetch(input.fetchImpl ?? fetch);
     this.cacheKey = `${this.identifier}@${this.baseUrl}`;
     this.token = input.initialToken?.trim() || null;
     this.onToken = input.onToken;

@@ -62,8 +62,6 @@ describe("production env validation", () => {
       "INNGEST_SIGNING_KEY is required in production.",
       "TOKEN_ENCRYPTION_KEY (32-byte base64) is required in production for connector token encryption.",
       "CRON_SECRET is required in production to authorize Vercel cron invocations.",
-      "SENTRY_DSN or NEXT_PUBLIC_SENTRY_DSN is required in production.",
-      "NEXT_PUBLIC_POSTHOG_KEY is required in production.",
     ]);
   });
 

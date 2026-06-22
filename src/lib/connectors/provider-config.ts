@@ -14,6 +14,7 @@ import {
 } from "@/lib/security/secret-store";
 
 import { getProviderDefaults } from "./global-defaults";
+import { assertPublicHttpUrl } from "./url-guard";
 import type { GoogleAdsConfig } from "./google-ads/oauth";
 import type { GoogleAnalyticsConfig } from "./google-analytics/oauth";
 import type { MetaConfig } from "./meta/oauth";
@@ -244,17 +245,15 @@ export function validateProviderConfigInput(input: ProviderConfigInput) {
   const existingRefs = input.existingSecretRefs ?? {};
   const publicCredentials = input.publicCredentials ?? {};
   const secrets = input.secrets ?? {};
-  // Official "W3 Ads app" env-backed defaults (Google Ads/GA4/Meta) satisfy the
-  // requirement when a field is left blank — OAuth/sync fall back to them, so
-  // validation must too, otherwise the pre-filled form falsely blocks save.
-  const envDefaults = getProviderDefaults(input.provider);
+  // Activation validation requires the secret to be supplied by the user or
+  // already stored in the DB (existingSecretRefs). Env-backed defaults
+  // (process.env) MUST NOT satisfy activation: doing so let an incomplete OAuth
+  // config go ACTIVE and then fail silently at sync time. Runtime credential
+  // resolution still falls back to env via build*FromProviderConfig — that path
+  // is independent of this form-level check.
   const hasSecret = (key: string) =>
-    hasText(secrets[key]) ||
-    hasText(existingRefs[key]) ||
-    Boolean(envDefaults?.secretValues[key]);
-  const hasPublic = (key: string) =>
-    hasText(publicCredentials[key]) ||
-    hasText(envDefaults?.publicCredentials[key]);
+    hasText(secrets[key]) || hasText(existingRefs[key]);
+  const hasPublic = (key: string) => hasText(publicCredentials[key]);
 
   if (status !== "ACTIVE") {
     return { success: true as const };
@@ -349,6 +348,24 @@ export function validateProviderConfigInput(input: ProviderConfigInput) {
   }
 
   if (isManualCommerceProvider(input.provider)) {
+    // SSRF guard at the save boundary: a user-supplied baseUrl must not point at
+    // a private/loopback/metadata/internal host. Runtime fetch is also guarded,
+    // but blocking here gives an actionable error and stops poisoned configs from
+    // ever being persisted.
+    const baseUrlValue = input.baseUrl?.trim();
+    if (baseUrlValue) {
+      try {
+        assertPublicHttpUrl(baseUrlValue);
+      } catch (error: unknown) {
+        return {
+          success: false as const,
+          error:
+            error instanceof Error
+              ? error.message
+              : "URL da API inválida ou não permitida.",
+        };
+      }
+    }
     // WBuy and Loja Integrada have built-in default base URLs, so the field is
     // optional for them.
     if (

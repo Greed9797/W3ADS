@@ -9,6 +9,10 @@ import Decimal from "decimal.js";
 
 import { isApprovedOrderStatus } from "@/lib/metrics/order-status";
 import { IsetClient } from "@/lib/connectors/iset/client";
+import {
+  supportsInventory,
+  syncConnectorInventory,
+} from "@/lib/connectors/inventory-sync";
 import { normalizeManualCommerceOrder } from "@/lib/connectors/manual-commerce";
 import {
   connectorAccessTokenFromAccount,
@@ -797,6 +801,20 @@ export async function syncEcommerceOrders(input: {
       provider: connector.provider,
       orders,
     });
+
+    // Best-effort: refresh per-product stock for providers that expose a
+    // catalog API (Loja Integrada). A failure here must never fail the order
+    // sync — stock is supplementary to revenue.
+    if (supportsInventory(connector.provider)) {
+      try {
+        await syncConnectorInventory({ connectorAccountId: connector.id });
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : "unknown";
+        console.error(
+          `[inventory-sync] ${connector.provider} ${connector.id}: ${message}`,
+        );
+      }
+    }
 
     const ordersCount = persistedCount ?? orders.length;
 

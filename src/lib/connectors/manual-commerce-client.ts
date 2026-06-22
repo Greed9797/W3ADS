@@ -2,6 +2,14 @@ import { ConnectorProvider } from "@prisma/client";
 
 import { callWithRetry } from "@/lib/connectors/retry";
 import type { ConnectorCredentialPayload } from "@/lib/connectors/credentials";
+import {
+  assertPublicHttpUrl,
+  redirectSafeFetch,
+} from "@/lib/connectors/url-guard";
+import {
+  normalizeLojaIntegradaInventory,
+  type InventoryRow,
+} from "@/lib/connectors/inventory";
 
 type FetchLike = typeof fetch;
 
@@ -56,10 +64,8 @@ function wbuyAuthorizationCandidates(credentials: ConnectorCredentialPayload) {
 
 function normalizeBaseUrl(baseUrl: string) {
   const trimmed = baseUrl.trim().replace(/\/+$/, "");
-  const withProtocol = /^https?:\/\//i.test(trimmed)
-    ? trimmed
-    : `https://${trimmed}`;
-  const url = new URL(withProtocol);
+  // SSRF guard: reject private/loopback/metadata/internal hosts before any fetch.
+  const url = assertPublicHttpUrl(trimmed);
 
   return `${url.protocol}//${url.host}${url.pathname.replace(/\/+$/, "")}`;
 }
@@ -114,6 +120,8 @@ function providerBaseUrl(
       throw new Error("GOOGLE_SHEETS baseUrl is required");
     }
 
+    // GOOGLE_SHEETS skips normalizeBaseUrl, so guard it explicitly here.
+    assertPublicHttpUrl(configuredBaseUrl.trim());
     return configuredBaseUrl.trim();
   }
 
@@ -549,7 +557,7 @@ export class ManualCommerceClient {
   }) {
     this.provider = input.provider;
     this.credentials = input.credentials;
-    this.fetchImpl = input.fetchImpl ?? fetch;
+    this.fetchImpl = redirectSafeFetch(input.fetchImpl ?? fetch);
   }
 
   private ordersUrl(range?: { since: string; until: string }) {
@@ -949,5 +957,81 @@ export class ManualCommerceClient {
     }
 
     return extractOrderPayloads(await response.json());
+  }
+
+  private lojaIntegradaProductsUrl(input: { offset: number; limit: number }) {
+    const url = new URL(
+      appendPath(
+        providerBaseUrl(this.provider, this.credentials),
+        "/produto/search/",
+      ),
+    );
+    url.searchParams.set("format", "json");
+    url.searchParams.set("limit", String(input.limit));
+    url.searchParams.set("offset", String(input.offset));
+    return url;
+  }
+
+  /**
+   * Current stock per product. Loja Integrada paginates its catalog
+   * (/produto/search/) the same Tastypie way as orders (offset/limit +
+   * meta.next). Other manual providers don't expose a uniform stock endpoint
+   * yet, so they return []. The quantity field is resolved tolerantly by
+   * normalizeLojaIntegradaInventory.
+   */
+  async listInventory(): Promise<InventoryRow[]> {
+    if (this.provider !== ConnectorProvider.LOJA_INTEGRADA) {
+      return [];
+    }
+
+    const pageSize = 100; // Tastypie hard max per page.
+    const MAX_PAGES = 200; // 200 * 100 = 20k products safety cap.
+    const rows: InventoryRow[] = [];
+
+    for (let page = 0; page < MAX_PAGES; page += 1) {
+      const offset = page * pageSize;
+      const response = await callWithRetry(async () => {
+        const res = await this.fetchImpl(
+          this.lojaIntegradaProductsUrl({ offset, limit: pageSize }),
+          { headers: buildHeaders(this.provider, this.credentials) },
+        );
+        if (!res.ok && isRetryableHttpStatus(res.status)) {
+          throw retryableHttpError(res);
+        }
+        return res;
+      });
+
+      if (!response.ok) {
+        throw new Error(
+          `${this.provider} products failed with status ${response.status}`,
+        );
+      }
+
+      const json = (await response.json()) as unknown;
+      const payloads = extractOrderPayloads(json);
+      if (payloads.length === 0) {
+        break;
+      }
+      for (const payload of payloads) {
+        const row = normalizeLojaIntegradaInventory(payload);
+        if (row) {
+          rows.push(row);
+        }
+      }
+
+      const meta =
+        json && typeof json === "object" && !Array.isArray(json)
+          ? (json as Record<string, unknown>).meta
+          : null;
+      const next =
+        meta && typeof meta === "object" && !Array.isArray(meta)
+          ? (meta as Record<string, unknown>).next
+          : null;
+      if (!next || payloads.length < pageSize) {
+        break;
+      }
+    }
+
+    return rows;
   }
 }

@@ -15,18 +15,14 @@ const APPROVED_TERMS: ReadonlyArray<string> = [
   "concluido",
   "finalizado",
   "faturado",
-  "entregue",
+  "entregue", // delivered order is a terminal, paid sale
   "delivered",
-  // WBuy post-payment fulfillment states (order is paid once it reaches these).
-  "producao",
-  "expedicao",
-  "separacao",
-  "enviado",
-  "postado",
-  "transito",
-  "transporte", // WBuy "Em transporte"
-  "shipped",
 ];
+// NOTE: fulfillment-progress states (producao/expedicao/separacao/enviado/
+// postado/transito/transporte/shipped) are intentionally NOT here. Per product
+// rule "Recebido = pagamento recebido, nada a ver com entrega", a fulfillment
+// state does not by itself confirm payment — connectors must emit an explicit
+// payment term at ingestion. Counting "em separação" as paid inflated GMV.
 
 const REJECTED_TERMS: ReadonlyArray<string> = [
   "abandoned",

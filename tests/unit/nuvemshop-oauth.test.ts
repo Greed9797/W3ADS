@@ -60,22 +60,21 @@ describe("Nuvemshop OAuth", () => {
     });
   });
 
-  it("lists orders with Authentication bearer header and follows Link pagination", async () => {
+  it("lists orders with Authentication bearer header and paginates by page number", async () => {
+    // A full page (per_page=200) forces the client to fetch the next page; a
+    // short page (<200) signals the window is exhausted. Pagination is by page
+    // number, not the Link header, so resume-by-page is deterministic.
+    const fullPage = Array.from({ length: 200 }, (_, idx) => ({
+      id: idx + 1,
+      total: "100.00",
+      created_at: "2026-05-01T10:00:00Z",
+    }));
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(
-        Response.json(
-          [{ id: 1, total: "100.00", created_at: "2026-05-01T10:00:00Z" }],
-          {
-            headers: {
-              Link: '<https://api.nuvemshop.com.br/v1/2093261/orders?page=2>; rel="next"',
-            },
-          },
-        ),
-      )
+      .mockResolvedValueOnce(Response.json(fullPage))
       .mockResolvedValueOnce(
         Response.json([
-          { id: 2, total: "50.00", created_at: "2026-05-02T10:00:00Z" },
+          { id: 201, total: "50.00", created_at: "2026-05-02T10:00:00Z" },
         ]),
       );
     const client = new NuvemshopClient({
@@ -83,22 +82,24 @@ describe("Nuvemshop OAuth", () => {
       fetchImpl: fetchMock as unknown as typeof fetch,
     });
 
-    await expect(
-      client.listOrders({
-        storeId: "2093261",
-        accessToken: "store-token",
-        since: "2026-05-01",
-        until: "2026-05-18",
-      }),
-    ).resolves.toHaveLength(2);
+    const result = await client.listOrders({
+      storeId: "2093261",
+      accessToken: "store-token",
+      since: "2026-05-01",
+      until: "2026-05-18",
+    });
+    expect(result.orders).toHaveLength(201);
+    expect(result.complete).toBe(true);
 
     const firstInit = fetchMock.mock.calls[0][1] as RequestInit;
     expect(firstInit.headers).toMatchObject({
       Authentication: "bearer store-token",
     });
     expect(firstInit.headers).not.toHaveProperty("Authorization");
-    expect(String(fetchMock.mock.calls[1][0])).toBe(
-      "https://api.nuvemshop.com.br/v1/2093261/orders?page=2",
-    );
+    const firstUrl = new URL(String(fetchMock.mock.calls[0][0]));
+    expect(firstUrl.searchParams.get("page")).toBe("1");
+    expect(firstUrl.searchParams.get("payment_status")).toBe("paid");
+    const secondUrl = new URL(String(fetchMock.mock.calls[1][0]));
+    expect(secondUrl.searchParams.get("page")).toBe("2");
   });
 });

@@ -2,7 +2,7 @@
    buttons are intentional full-page navigations to /api/* OAuth initiators
    (they 302 to Google/Nuvemshop), not client-side page links; next/link is
    wrong here. */
-import { ConnectorProvider } from "@prisma/client";
+import { ConnectorProvider, ConnectorStatus } from "@prisma/client";
 import { Cable, CircleAlert, Settings } from "lucide-react";
 import type { ReactNode } from "react";
 
@@ -198,7 +198,12 @@ export default async function ConnectorsPage({
   // [workspaceId, provider] index) plus the provider configs in parallel.
   const [connectorAccounts, configs] = await Promise.all([
     prisma.connectorAccount.findMany({
-      where: { workspaceId: context.currentWorkspace.id },
+      // Revoked connectors are soft-deleted: hidden from the connected list and
+      // per-provider counts, but their historical orders/metrics are preserved.
+      where: {
+        workspaceId: context.currentWorkspace.id,
+        status: { not: ConnectorStatus.REVOKED },
+      },
       orderBy: { createdAt: "desc" },
       select: {
         id: true,

@@ -1,3 +1,4 @@
+import { ConnectorStatus } from "@prisma/client";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { logAudit } from "@/lib/audit/log";
@@ -35,6 +36,7 @@ export async function DELETE(_request: NextRequest, context: RouteContext) {
       workspaceId: true,
       provider: true,
       accountName: true,
+      status: true,
       credentialSecretId: true,
       refreshCredentialSecretId: true,
     },
@@ -56,6 +58,11 @@ export async function DELETE(_request: NextRequest, context: RouteContext) {
     );
   }
 
+  // Idempotent: a connector already revoked is treated as successfully removed.
+  if (account.status === ConnectorStatus.REVOKED) {
+    return NextResponse.json({ ok: true });
+  }
+
   // Best-effort: drop the Vault secrets first. A Vault failure must NOT block
   // removing the connector row, so failures here are logged and swallowed.
   const store = getSecretStore();
@@ -75,14 +82,33 @@ export async function DELETE(_request: NextRequest, context: RouteContext) {
   }
 
   try {
-    // FKs to ConnectorAccount are ON DELETE CASCADE (orders, daily metrics,
-    // sync jobs), so this hard delete also clears the connector's child data.
-    await prisma.connectorAccount.delete({ where: { id: account.id } });
+    // Soft delete: flip to REVOKED and invalidate the stored credentials instead
+    // of hard-deleting. A hard delete cascades (ON DELETE CASCADE) into orders,
+    // daily metrics and sync jobs, wiping the workspace's historical facts. The
+    // sync orchestrator only picks up ACTIVE accounts, so a REVOKED row stops
+    // syncing; reconnecting upserts the same unique row back to ACTIVE with
+    // fresh tokens, preserving all child history.
+    await prisma.connectorAccount.update({
+      where: { id: account.id },
+      data: {
+        status: ConnectorStatus.REVOKED,
+        // Credential ciphertext columns are NOT NULL — blank them to guarantee
+        // the revoked tokens can never be decrypted/used.
+        accessTokenCiphertext: "",
+        refreshTokenCiphertext: null,
+        tokenIv: "",
+        tokenAuthTag: "",
+        credentialSecretId: null,
+        refreshCredentialSecretId: null,
+        tokenExpiresAt: null,
+        lastSyncError: null,
+      },
+    });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "unknown";
     // Log the raw cause server-side; never return Prisma internals (table /
     // column / constraint names) to the client.
-    console.error(`[connectors/${id}] delete failed: ${message}`);
+    console.error(`[connectors/${id}] revoke failed: ${message}`);
     return NextResponse.json(
       {
         ok: false,

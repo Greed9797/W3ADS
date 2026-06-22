@@ -22,9 +22,11 @@ import {
 import { cn } from "@/lib/utils/cn";
 
 const presets: Array<{ value: DashboardPeriodPreset; label: string }> = [
-  { value: "month", label: "Mês" },
-  { value: "week", label: "Semana" },
-  { value: "day", label: "Dia" },
+  { value: "real_time", label: "Tempo Real" },
+  { value: "day", label: "Hoje" },
+  { value: "yesterday", label: "Ontem" },
+  { value: "week", label: "7 Dias" },
+  { value: "month", label: "Este Mês" },
 ];
 
 const monthNames = [

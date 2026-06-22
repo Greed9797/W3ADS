@@ -190,8 +190,10 @@ describe("dashboard aggregator", () => {
     expect(snapshot.kpis.costPerSession.value).toBe(1.36);
     expect(snapshot.kpis.sessions.value).toBe(110);
     // Cancelado order in the previous period no longer counts toward
-    // previousRevenue, so previous=0 → delta capped at +100 (calculateDeltaPercent).
-    expect(snapshot.kpis.revenue.deltaPercent).toBe(100);
+    // previousRevenue, so previous=0. With no baseline, calculateDeltaPercent
+    // signals direction at the ±DELTA_PERCENT_CAP (999) instead of fabricating a
+    // finite magnitude.
+    expect(snapshot.kpis.revenue.deltaPercent).toBe(999);
     expect(snapshot.funnel).toMatchObject({
       impressions: 1500,
       clicks: 140,
@@ -305,12 +307,14 @@ describe("dashboard aggregator", () => {
           connectorAccountId: "shopify-1",
           platform: ConnectorProvider.SHOPIFY,
           orderTotal: "500.00",
+          status: "pago",
           placedAt: new Date("2026-05-10T10:00:00.000Z"),
         },
         {
           connectorAccountId: "nuvemshop-1",
           platform: ConnectorProvider.NUVEMSHOP,
           orderTotal: "900.00",
+          status: "pago",
           placedAt: new Date("2026-05-10T10:00:00.000Z"),
         },
       ],
@@ -365,7 +369,8 @@ describe("dashboard aggregator", () => {
           itemsCount: 11,
           status: "APPROVED",
           utmSource: "whatsapp",
-          placedAt: new Date("2026-05-10T00:00:00.000Z"),
+          // Midday UTC so BRT (-3) day bucketing keeps it on 2026-05-10.
+          placedAt: new Date("2026-05-10T12:00:00.000Z"),
         },
       ],
       metrics: [

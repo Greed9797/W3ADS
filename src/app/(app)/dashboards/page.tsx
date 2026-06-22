@@ -137,18 +137,12 @@ function BrandMetric({
   );
 }
 
-function BrandCard({ brand, rank }: { brand: BrandRow; rank: number }) {
+function BrandCard({ brand }: { brand: BrandRow }) {
   return (
     <Card className="overflow-hidden p-0">
       <div className="p-6">
-        <div className="mb-8 flex items-start justify-between gap-4">
-          <Tag
-            aria-hidden
-            className="mt-1 size-5 text-[var(--text-tertiary)]"
-          />
-          <span className="font-[var(--font-display)] text-2xl leading-none text-[var(--text-primary)]">
-            {rank}°
-          </span>
+        <div className="mb-6">
+          <Tag aria-hidden className="size-5 text-[var(--text-tertiary)]" />
         </div>
 
         <div className="flex items-end justify-between gap-4">
@@ -186,7 +180,7 @@ function BrandCard({ brand, rank }: { brand: BrandRow; rank: number }) {
         <BrandMetric
           icon={<ArrowUpRight aria-hidden className="size-3.5" />}
           kind="roas"
-          label="ROAS Global"
+          label="ROI Global"
           value={brand.roas}
         />
         <BrandMetric
@@ -198,13 +192,13 @@ function BrandCard({ brand, rank }: { brand: BrandRow; rank: number }) {
         <BrandMetric
           icon={<MetaAdsLogo className="size-5 rounded-[6px] shadow-none" />}
           kind="roas"
-          label="Meta ROAS"
+          label="Facebook ROAS"
           value={brand.metaRoas}
         />
         <BrandMetric
           icon={<GoogleAdsLogo className="size-5 shadow-none" />}
           kind="roas"
-          label="Conv./Custo"
+          label="Conversão/custo"
           value={brand.googleRoas}
         />
       </div>
@@ -462,17 +456,16 @@ export default async function DashboardsPage({
           label="% de mídia"
           value={totals.mediaRate}
         />
-        <SummaryCard kind="roas" label="ROAS Global" value={totals.roas} />
+        <SummaryCard kind="roas" label="ROI Global" value={totals.roas} />
       </section>
 
       {brands.length ? (
         <>
           <section className="grid gap-4 xl:grid-cols-3">
-            {pageBrands.map((brand, index) => (
+            {pageBrands.map((brand) => (
               <BrandCard
                 brand={brand}
                 key={`${brand.workspaceId}-${brand.slug}`}
-                rank={pageStart + index + 1}
               />
             ))}
           </section>

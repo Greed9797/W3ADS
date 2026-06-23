@@ -1,7 +1,6 @@
 import { ConnectorProvider } from "@prisma/client";
 
 export type DashboardPeriodPreset =
-  | "real_time"
   | "day"
   | "yesterday"
   | "week"
@@ -183,7 +182,6 @@ function normalizePreset(
   value: string | undefined,
 ): DashboardPeriodPreset | "legacy_30d" | null {
   if (
-    value === "real_time" ||
     value === "day" ||
     value === "yesterday" ||
     value === "week" ||
@@ -193,7 +191,9 @@ function normalizePreset(
     return value;
   }
 
-  if (value === "today") {
+  // Legacy "Tempo Real" preset was removed (its live-sync now runs for every
+  // period); old bookmarked ?period=real_time URLs fall back to "Hoje".
+  if (value === "real_time" || value === "today") {
     return "day";
   }
 
@@ -233,7 +233,7 @@ export function getDashboardPeriod(
   const preset = normalizePreset(firstParam(params.period));
   let period: DashboardPeriod;
 
-  if (preset === "real_time" || preset === "day") {
+  if (preset === "day") {
     period = buildPeriod(preset, today, today);
     return withManualComparison(period, params);
   }

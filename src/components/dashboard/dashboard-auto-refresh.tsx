@@ -4,8 +4,9 @@ import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 
 const POLL_MS = 8000;
-// Real-time mode triggers a sync at most this often. Kept under the 5-minute
-// freshness target the product requires while bounding connector API usage.
+// The live-sync loop triggers a workspace sync at most this often. Kept under
+// the 5-minute freshness target the product requires while bounding connector
+// API usage.
 const REALTIME_SYNC_MS = 4 * 60 * 1000;
 
 type SyncStatus = {
@@ -21,21 +22,19 @@ type SyncStatus = {
  * app-layout `after()` background sync writes new data — without it the user
  * only sees fresh data after a manual reload or Sync Now.
  *
- * When `realtime` is true (the "Tempo Real" period preset), it also POSTs the
- * workspace sync trigger on mount and every REALTIME_SYNC_MS so fresh store
- * data is pulled on a ≤5-minute cadence; the status poll above then refreshes
- * the view as soon as the sync lands.
+ * It also POSTs the workspace sync trigger on mount and every REALTIME_SYNC_MS
+ * so fresh store data is pulled on a ≤5-minute cadence regardless of the
+ * selected period; the status poll above then refreshes the view as soon as
+ * the sync lands. (The dedicated "Tempo Real" preset was removed — this live
+ * cadence now applies to every period filter.)
  *
  * Renders nothing. Polling pauses while the tab is hidden to avoid waste.
  */
 export function DashboardAutoRefresh({
   initialSyncedAt,
-  realtime = false,
 }: {
   /** Optional render-time baseline. When omitted the first poll self-baselines. */
   initialSyncedAt?: string | null;
-  /** Enable the ≤5-minute store-data pull loop (Tempo Real mode). */
-  realtime?: boolean;
 }) {
   const router = useRouter();
   const baselineRef = useRef<string | null>(initialSyncedAt ?? null);
@@ -81,7 +80,6 @@ export function DashboardAutoRefresh({
   }, [router]);
 
   useEffect(() => {
-    if (!realtime) return;
     let active = true;
     let timer: ReturnType<typeof setTimeout>;
 
@@ -102,13 +100,13 @@ export function DashboardAutoRefresh({
       timer = setTimeout(triggerSync, REALTIME_SYNC_MS);
     }
 
-    // Kick once on entering real-time mode, then on the interval.
+    // Kick once on mount, then on the interval.
     triggerSync();
     return () => {
       active = false;
       clearTimeout(timer);
     };
-  }, [realtime]);
+  }, []);
 
   return null;
 }

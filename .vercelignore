@@ -24,3 +24,8 @@ graphify-out
 /*.png
 wbuy-after.md
 src/app/preview
+
+# macOS "Keep Both" duplicates (e.g. "page 2.tsx") — never real route/source.
+# They get type-checked by `next build` and a stale copy fails the whole build.
+* 2.ts
+* 2.tsx

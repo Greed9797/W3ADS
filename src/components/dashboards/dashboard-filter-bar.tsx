@@ -22,7 +22,6 @@ import {
 import { cn } from "@/lib/utils/cn";
 
 const presets: Array<{ value: DashboardPeriodPreset; label: string }> = [
-  { value: "real_time", label: "Tempo Real" },
   { value: "day", label: "Hoje" },
   { value: "yesterday", label: "Ontem" },
   { value: "week", label: "7 Dias" },

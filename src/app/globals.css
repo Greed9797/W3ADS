@@ -173,9 +173,9 @@ select {
    bigger and darker than the old uppercase caption, value sits one notch
    lighter. Single source of truth for every metric card in the system. */
 .metric-label {
-  font-size: 0.9375rem;
+  font-size: 1.125rem;
   font-weight: 600;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.015em;
   line-height: 1.25;
   text-transform: none;
   color: var(--text-primary);

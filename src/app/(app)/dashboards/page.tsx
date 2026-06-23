@@ -99,11 +99,11 @@ function SummaryCard({
   return (
     <Card className="min-h-[132px]">
       <CardHeader className="mb-3">
-        <CardTitle className="normal-case tracking-normal">{label}</CardTitle>
+        <CardTitle className="metric-label">{label}</CardTitle>
         <span className="size-2 rounded-full bg-[var(--w3-red)] shadow-[0_0_0_4px_var(--w3-red-bg)]" />
       </CardHeader>
       <CardContent>
-        <p className="font-[var(--font-display)] text-[2rem] leading-none tracking-[-0.03em] text-[var(--text-primary)]">
+        <p className="font-[var(--font-display)] text-[2rem] leading-none tracking-[-0.03em] text-[var(--metric-value)]">
           {metricValue(value, kind)}
         </p>
       </CardContent>
@@ -124,13 +124,13 @@ function BrandMetric({
 }) {
   return (
     <div>
-      <div className="mb-1 flex items-center gap-2 text-sm text-[var(--text-secondary)]">
+      <div className="metric-label mb-1 flex items-center gap-2">
         <span className="grid size-5 place-items-center rounded-full bg-[var(--bg-surface)] text-[var(--w3-red)]">
           {icon}
         </span>
         {label}
       </div>
-      <p className="font-[var(--font-display)] text-[1.65rem] leading-none tracking-[-0.03em] text-[var(--text-primary)]">
+      <p className="font-[var(--font-display)] text-[1.65rem] leading-none tracking-[-0.03em] text-[var(--metric-value)]">
         {metricValue(value, kind)}
       </p>
     </div>

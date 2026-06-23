@@ -20,6 +20,9 @@
   --text-secondary: #45413b;
   --text-tertiary: #7d756c;
   --text-disabled: #b6afa7;
+  /* Metric value: ~10% lighter than the H1/label black so big numbers don't
+     fight the page title or the (now black) card label. */
+  --metric-value: #26221d;
   --text-on-red: #FFFFFF;
   --text-on-gold: #0a0a0a;
 
@@ -68,6 +71,7 @@
   --text-secondary: #d0ccc4;
   --text-tertiary: #96918a;
   --text-disabled: #64605b;
+  --metric-value: #e8e4dc;
 
   --success: #39c16d;
   --success-bg: rgba(57, 193, 109, 0.13);
@@ -163,6 +167,18 @@ select {
   font-weight: 400;
   letter-spacing: -0.03em;
   line-height: 1;
+}
+
+/* Metric card label: the name (e.g. "ROAS Global") is the black anchor —
+   bigger and darker than the old uppercase caption, value sits one notch
+   lighter. Single source of truth for every metric card in the system. */
+.metric-label {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+  text-transform: none;
+  color: var(--text-primary);
 }
 
 .scrollbar-stable {

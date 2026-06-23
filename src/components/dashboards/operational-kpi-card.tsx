@@ -49,13 +49,13 @@ export function OperationalKpiCard({
       style={{ borderLeftColor: accent }}
     >
       <CardHeader className="mb-3">
-        <CardTitle>{label}</CardTitle>
+        <CardTitle className="metric-label">{label}</CardTitle>
         <span className="text-[var(--text-tertiary)]">{icon}</span>
       </CardHeader>
       <CardContent>
         <p
           className={cn(
-            "font-[var(--font-display)] font-normal leading-none tracking-[-0.03em]",
+            "font-[var(--font-display)] font-normal leading-none tracking-[-0.03em] text-[var(--metric-value)]",
             compact ? "text-2xl" : "text-[2rem]",
           )}
         >

@@ -123,7 +123,11 @@ function WidgetBody({
     return <SourceDistribution snapshot={snapshot} />;
   }
 
-  return <p className="text-kpi">{widgetValue(widget.widgetId, snapshot)}</p>;
+  return (
+    <p className="text-kpi text-[var(--metric-value)]">
+      {widgetValue(widget.widgetId, snapshot)}
+    </p>
+  );
 }
 
 export function DashboardWidgetRenderer({
@@ -161,7 +165,9 @@ export function DashboardWidgetRenderer({
           >
             <CardHeader>
               <div>
-                <CardTitle>{catalogItem?.label ?? widget.widgetId}</CardTitle>
+                <CardTitle className="metric-label">
+                  {catalogItem?.label ?? widget.widgetId}
+                </CardTitle>
                 <p className="mt-1 text-sm text-[var(--text-secondary)]">
                   {catalogItem?.description}
                 </p>

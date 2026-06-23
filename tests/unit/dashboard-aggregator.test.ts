@@ -499,10 +499,30 @@ describe("dashboard aggregator", () => {
           total: "10.00",
           placedAt: new Date("2026-05-10T10:00:00.000Z"),
         },
+        {
+          productName: "Mixed",
+          categoryName: null,
+          quantity: 1,
+          total: "5.00",
+          placedAt: new Date("2026-05-10T10:00:00.000Z"),
+        },
       ],
       inventory: [
         { productName: "Tracked", quantity: 7, sku: null, categoryName: null },
-        { productName: "Unlimited", quantity: null, sku: null, categoryName: null },
+        {
+          productName: "Unlimited",
+          quantity: null,
+          sku: null,
+          categoryName: null,
+        },
+        // Same product seen as tracked-0 AND unlimited → still available.
+        { productName: "Mixed", quantity: 0, sku: null, categoryName: null },
+        {
+          productName: "Mixed",
+          quantity: null,
+          sku: null,
+          categoryName: null,
+        },
       ],
     });
 
@@ -512,5 +532,6 @@ describe("dashboard aggregator", () => {
     expect(byName.get("Tracked")?.stockQuantity).toBe(7);
     expect(byName.get("Unlimited")?.stockQuantity).toBe("unlimited");
     expect(byName.get("Untouched")?.stockQuantity).toBeNull();
+    expect(byName.get("Mixed")?.stockQuantity).toBe("unlimited");
   });
 });

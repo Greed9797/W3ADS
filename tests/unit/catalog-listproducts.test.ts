@@ -59,9 +59,7 @@ describe("NuvemshopClient.listProducts", () => {
             id: 7,
             name: { pt: "Perfume Importado" },
             categories: [{ id: 1, name: { pt: "Nicho" } }],
-            variants: [
-              { sku: "PERF-1", stock: null, stock_management: false },
-            ],
+            variants: [{ sku: "PERF-1", stock: null, stock_management: false }],
           },
         ]),
       )
@@ -97,8 +95,18 @@ describe("NuvemshopClient.listProducts", () => {
             id: 9,
             name: { pt: "BDK Ambre" },
             categories: [
-              { id: 10, name: { pt: "Nicho" }, parent: null, subcategories: [20] },
-              { id: 20, name: { pt: "BDK Parfums" }, parent: 10, subcategories: [] },
+              {
+                id: 10,
+                name: { pt: "Nicho" },
+                parent: null,
+                subcategories: [20],
+              },
+              {
+                id: 20,
+                name: { pt: "BDK Parfums" },
+                parent: 10,
+                subcategories: [],
+              },
             ],
             variants: [{ sku: "BDK-1", stock: 4 }],
           },
@@ -122,6 +130,41 @@ describe("NuvemshopClient.listProducts", () => {
     });
 
     expect(rows[0]?.categoryName).toBe("BDK Parfums");
+  });
+
+  it("treats a 404 past the last page as end-of-pagination, not an error", async () => {
+    // A full first page (200) makes the loop request page 2, which Nuvemshop
+    // answers with 404 "Last page is 1". That must end pagination gracefully.
+    const fullPage = Array.from({ length: 200 }, (_unused, index) => ({
+      id: index + 1,
+      name: { pt: `Produto ${index + 1}` },
+      categories: [{ id: 1, name: { pt: "Geral" } }],
+      variants: [{ sku: `SKU-${index + 1}`, stock: 1 }],
+    }));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json(fullPage))
+      .mockResolvedValueOnce(
+        Response.json({ code: 404, message: "Last page is 1" }, { status: 404 }),
+      );
+
+    const client = new NuvemshopClient({
+      config: {
+        clientId: "c",
+        clientSecret: "s",
+        redirectUri: "https://app/cb",
+        apiBaseUrl: "https://api.nuvemshop.com.br/v1",
+      },
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+
+    const rows = await client.listProducts({
+      storeId: "100",
+      accessToken: "tok",
+    });
+
+    expect(rows).toHaveLength(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
 

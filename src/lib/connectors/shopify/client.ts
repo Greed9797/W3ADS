@@ -253,8 +253,11 @@ function normalizeShopifyProduct(
   // Only sum variants Shopify actually tracks. A variant with
   // inventoryItem.tracked === false is unlimited; if NONE are tracked the
   // product is "available/unlimited" → quantity null ("Disponível"), not 0.
-  // When the inventory scope is absent, tracked is undefined (treated as
-  // tracked) so the product keeps its prior 0 rather than a false "Disponível".
+  // ponytail: when the token lacks read_inventory the retry path drops the
+  // inventory fields, so tracked is undefined and the product reads as a
+  // tracked 0 (a "real" out-of-stock) rather than "unknown". Both prod Shopify
+  // tokens carry read_inventory, so this can't fire today; the upgrade — if a
+  // scope-less token ever ships — is a distinct "unknown" stock state.
   let trackedSum = 0;
   let hasTracked = false;
   for (const variant of variants) {

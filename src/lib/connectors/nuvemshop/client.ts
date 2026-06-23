@@ -409,6 +409,7 @@ export class NuvemshopClient {
     // deterministic across runs; past windows are stable so the same page
     // returns the same rows.
     let page = Math.max(1, Math.trunc(input.startPage ?? 1));
+    const firstPage = page;
     const MAX_PAGES = 1000; // safety cap: 1000 * 200 = 200k orders per window
 
     for (let i = 0; i < MAX_PAGES; i += 1) {
@@ -421,17 +422,34 @@ export class NuvemshopClient {
         until: input.until,
         page,
       });
-      const response = await callWithRetry(() =>
-        fetchJsonWithHeaders<NuvemshopOrderPayload[]>(url, this.fetchImpl, {
-          headers: {
-            Authentication: `bearer ${input.accessToken}`,
-            "User-Agent": "W3ADS (integracoes@w3educacao.com.br)",
-          },
-          // Fail a slow page fast so the wall-clock budget can stop cleanly
-          // before the function limit (matches the iSET per-page timeout).
-          signal: AbortSignal.timeout(15_000),
-        }),
-      );
+      let response: { data: NuvemshopOrderPayload[]; headers: Headers };
+      try {
+        response = await callWithRetry(() =>
+          fetchJsonWithHeaders<NuvemshopOrderPayload[]>(url, this.fetchImpl, {
+            headers: {
+              Authentication: `bearer ${input.accessToken}`,
+              "User-Agent": "W3ADS (integracoes@w3educacao.com.br)",
+            },
+            // Fail a slow page fast so the wall-clock budget can stop cleanly
+            // before the function limit (matches the iSET per-page timeout).
+            signal: AbortSignal.timeout(15_000),
+          }),
+        );
+      } catch (error: unknown) {
+        // Nuvemshop returns 404 ("Last page is N") when a page past the last is
+        // requested — happens when the previous page was exactly full (200), so
+        // the `< 200` check below never fires. Treat it as end-of-pagination,
+        // but only after the first page; a 404 on the first page is a real
+        // error (bad store/endpoint) and must surface.
+        if (
+          error instanceof NuvemshopApiError &&
+          error.status === 404 &&
+          page > firstPage
+        ) {
+          return { orders: out, complete: true, nextPage: page };
+        }
+        throw error;
+      }
 
       const pageOrders = response.data.map(normalizeNuvemshopOrder);
       if (onPage) {
@@ -474,15 +492,29 @@ export class NuvemshopClient {
       url.searchParams.set("page", String(page));
       url.searchParams.set("per_page", String(perPage));
 
-      const response = await callWithRetry(() =>
-        fetchJson<NuvemshopProductPayload[]>(url, this.fetchImpl, {
-          headers: {
-            Authentication: `bearer ${input.accessToken}`,
-            "User-Agent": "W3ADS (integracoes@w3educacao.com.br)",
-          },
-          signal: AbortSignal.timeout(15_000),
-        }),
-      );
+      let response: NuvemshopProductPayload[];
+      try {
+        response = await callWithRetry(() =>
+          fetchJson<NuvemshopProductPayload[]>(url, this.fetchImpl, {
+            headers: {
+              Authentication: `bearer ${input.accessToken}`,
+              "User-Agent": "W3ADS (integracoes@w3educacao.com.br)",
+            },
+            signal: AbortSignal.timeout(15_000),
+          }),
+        );
+      } catch (error: unknown) {
+        // 404 past the last page (previous page was exactly full) → stop, not
+        // an error. A 404 on page 1 is a real failure and must surface.
+        if (
+          error instanceof NuvemshopApiError &&
+          error.status === 404 &&
+          page > 1
+        ) {
+          break;
+        }
+        throw error;
+      }
 
       for (const product of response) {
         const row = normalizeNuvemshopProduct(product);

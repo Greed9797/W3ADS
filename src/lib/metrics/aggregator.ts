@@ -404,9 +404,11 @@ export function buildDashboardSnapshot(input: {
   // total on-hand. If a SKU is shared across stores this is the combined stock,
   // not a double-count; switch to MAX only if stores mirror the same warehouse.
   // Stock accumulator per product key. `hasNumber` tracks whether any matching
-  // catalog row reported a tracked count; when none did (all rows untracked),
-  // the product resolves to "unlimited" → "Disponível" rather than a false 0.
-  type StockAcc = { sum: number; hasNumber: boolean };
+  // catalog row reported a tracked count; `hasUnlimited` whether any row was
+  // untracked (sells unlimited). When no row tracked a count — or every tracked
+  // row summed to 0 while an unlimited source exists — the product resolves to
+  // "unlimited" ("Disponível") rather than a false out-of-stock 0.
+  type StockAcc = { sum: number; hasNumber: boolean; hasUnlimited: boolean };
   const inventoryQtyByName = new Map<string, StockAcc>();
   const inventoryQtyBySku = new Map<string, StockAcc>();
   const categoryByName = new Map<string, string>();
@@ -416,8 +418,14 @@ export function buildDashboardSnapshot(input: {
     key: string,
     quantity: number | null,
   ): void => {
-    const entry = map.get(key) ?? { sum: 0, hasNumber: false };
-    if (quantity !== null) {
+    const entry = map.get(key) ?? {
+      sum: 0,
+      hasNumber: false,
+      hasUnlimited: false,
+    };
+    if (quantity === null) {
+      entry.hasUnlimited = true;
+    } else {
       entry.sum += quantity;
       entry.hasNumber = true;
     }
@@ -447,8 +455,14 @@ export function buildDashboardSnapshot(input: {
   //   "unlimited" → matched but the store doesn't track stock (renders
   //                 "Disponível")
   //   null        → no catalog row matched (renders "Sem dado")
-  const accToStock = (acc: StockAcc): number | "unlimited" =>
-    acc.hasNumber ? acc.sum : "unlimited";
+  // A tracked count wins only when it's positive; a tracked-zero that coexists
+  // with an unlimited source is still "available" (don't show a false 0).
+  const accToStock = (acc: StockAcc): number | "unlimited" => {
+    if (acc.hasNumber && (acc.sum > 0 || !acc.hasUnlimited)) {
+      return acc.sum;
+    }
+    return "unlimited";
+  };
   const resolveStock = (
     productName: string,
     sku: string | null | undefined,

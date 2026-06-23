@@ -167,7 +167,9 @@ export type DashboardProductRow = {
   quantitySold: number;
   revenue: number;
   averagePrice: number;
-  stockQuantity: number | null;
+  // number → tracked count · "unlimited" → store doesn't track ("Disponível")
+  // · null → no catalog match ("Sem dado")
+  stockQuantity: number | "unlimited" | null;
 };
 
 export type DashboardCategoryRow = {
@@ -385,7 +387,7 @@ export function buildDashboardSnapshot(input: {
   connectorAccounts?: DashboardConnectorRow[];
   inventory?: {
     productName: string;
-    quantity: number;
+    quantity: number | null;
     sku?: string | null;
     categoryName?: string | null;
   }[];
@@ -401,24 +403,34 @@ export function buildDashboardSnapshot(input: {
   // ponytail: quantities SUM across connectors — a multi-store workspace's
   // total on-hand. If a SKU is shared across stores this is the combined stock,
   // not a double-count; switch to MAX only if stores mirror the same warehouse.
-  const inventoryQtyByName = new Map<string, number>();
-  const inventoryQtyBySku = new Map<string, number>();
+  // Stock accumulator per product key. `hasNumber` tracks whether any matching
+  // catalog row reported a tracked count; when none did (all rows untracked),
+  // the product resolves to "unlimited" → "Disponível" rather than a false 0.
+  type StockAcc = { sum: number; hasNumber: boolean };
+  const inventoryQtyByName = new Map<string, StockAcc>();
+  const inventoryQtyBySku = new Map<string, StockAcc>();
   const categoryByName = new Map<string, string>();
   const categoryBySku = new Map<string, string>();
+  const accumulateStock = (
+    map: Map<string, StockAcc>,
+    key: string,
+    quantity: number | null,
+  ): void => {
+    const entry = map.get(key) ?? { sum: 0, hasNumber: false };
+    if (quantity !== null) {
+      entry.sum += quantity;
+      entry.hasNumber = true;
+    }
+    map.set(key, entry);
+  };
   for (const item of input.inventory ?? []) {
     const nameKey = item.productName.trim().toLowerCase();
     const skuKey = item.sku?.trim().toLowerCase() || "";
     if (nameKey) {
-      inventoryQtyByName.set(
-        nameKey,
-        (inventoryQtyByName.get(nameKey) ?? 0) + item.quantity,
-      );
+      accumulateStock(inventoryQtyByName, nameKey, item.quantity);
     }
     if (skuKey) {
-      inventoryQtyBySku.set(
-        skuKey,
-        (inventoryQtyBySku.get(skuKey) ?? 0) + item.quantity,
-      );
+      accumulateStock(inventoryQtyBySku, skuKey, item.quantity);
     }
     const category = item.categoryName?.trim();
     if (category) {
@@ -430,18 +442,25 @@ export function buildDashboardSnapshot(input: {
       }
     }
   }
-  // Resolve a product's on-hand stock: SKU match first, then name. null when no
-  // catalog row matches (renders "Sem dado").
+  // Resolve a product's on-hand stock: SKU match first, then name.
+  //   number      → tracked on-hand count (renders the number)
+  //   "unlimited" → matched but the store doesn't track stock (renders
+  //                 "Disponível")
+  //   null        → no catalog row matched (renders "Sem dado")
+  const accToStock = (acc: StockAcc): number | "unlimited" =>
+    acc.hasNumber ? acc.sum : "unlimited";
   const resolveStock = (
     productName: string,
     sku: string | null | undefined,
-  ): number | null => {
+  ): number | "unlimited" | null => {
     const skuKey = sku?.trim().toLowerCase() || "";
-    if (skuKey && inventoryQtyBySku.has(skuKey)) {
-      return inventoryQtyBySku.get(skuKey) ?? null;
+    const bySku = skuKey ? inventoryQtyBySku.get(skuKey) : undefined;
+    if (bySku) {
+      return accToStock(bySku);
     }
     const nameKey = productName.trim().toLowerCase();
-    return inventoryQtyByName.get(nameKey) ?? null;
+    const byName = inventoryQtyByName.get(nameKey);
+    return byName ? accToStock(byName) : null;
   };
   // Resolve a product's category: explicit order-item category wins, then
   // catalog by SKU, then catalog by name.
@@ -1182,7 +1201,7 @@ export async function getDashboardSnapshot(input: {
 async function findDashboardInventory(workspaceId: string): Promise<
   {
     productName: string;
-    quantity: number;
+    quantity: number | null;
     sku: string | null;
     categoryName: string | null;
   }[]

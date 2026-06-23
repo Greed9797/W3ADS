@@ -5,7 +5,11 @@ export type InventoryRow = {
   productName: string;
   /** Category name when the catalog API exposes it; null otherwise. */
   categoryName: string | null;
-  quantity: number;
+  /**
+   * Tracked on-hand count, or null when the store does not track stock for the
+   * product (sells unlimited / always available → rendered as "Disponível").
+   */
+  quantity: number | null;
 };
 
 function firstString(...values: unknown[]): string | null {

@@ -467,4 +467,50 @@ describe("dashboard aggregator", () => {
       },
     ]);
   });
+
+  it("resolves stock into number / unlimited / no-data states", () => {
+    const period = getDashboardPeriod(
+      { period: "week" },
+      new Date("2026-05-16T12:00:00.000Z"),
+    );
+    const snapshot = buildDashboardSnapshot({
+      period,
+      orders: [],
+      metrics: [],
+      orderItems: [
+        {
+          productName: "Tracked",
+          categoryName: null,
+          quantity: 1,
+          total: "30.00",
+          placedAt: new Date("2026-05-10T10:00:00.000Z"),
+        },
+        {
+          productName: "Unlimited",
+          categoryName: null,
+          quantity: 1,
+          total: "20.00",
+          placedAt: new Date("2026-05-10T10:00:00.000Z"),
+        },
+        {
+          productName: "Untouched",
+          categoryName: null,
+          quantity: 1,
+          total: "10.00",
+          placedAt: new Date("2026-05-10T10:00:00.000Z"),
+        },
+      ],
+      inventory: [
+        { productName: "Tracked", quantity: 7, sku: null, categoryName: null },
+        { productName: "Unlimited", quantity: null, sku: null, categoryName: null },
+      ],
+    });
+
+    const byName = new Map(
+      snapshot.products.map((product) => [product.productName, product]),
+    );
+    expect(byName.get("Tracked")?.stockQuantity).toBe(7);
+    expect(byName.get("Unlimited")?.stockQuantity).toBe("unlimited");
+    expect(byName.get("Untouched")?.stockQuantity).toBeNull();
+  });
 });

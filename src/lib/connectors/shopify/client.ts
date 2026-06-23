@@ -175,7 +175,9 @@ query Orders($cursor: String, $query: String) {
 // read_products. We build the query with/without the inventory field so a token
 // granted before read_inventory was requested can still pull categories.
 function shopifyProductsQuery(includeInventory: boolean) {
-  const variantFields = includeInventory ? "sku inventoryQuantity" : "sku";
+  const variantFields = includeInventory
+    ? "sku inventoryQuantity inventoryItem { tracked }"
+    : "sku";
   return `
 query Products($cursor: String) {
   products(first: 250, after: $cursor, sortKey: TITLE) {
@@ -203,6 +205,9 @@ type ShopifyProductNode = {
       node?: {
         sku?: string | null;
         inventoryQuantity?: number | null;
+        // tracked === false → Shopify isn't managing stock for this variant
+        // (unlimited / always sellable).
+        inventoryItem?: { tracked?: boolean | null } | null;
       };
     }>;
   };
@@ -245,10 +250,22 @@ function normalizeShopifyProduct(
     .filter((variant): variant is NonNullable<typeof variant> =>
       Boolean(variant),
     );
-  const quantity = variants.reduce((sum, variant) => {
+  // Only sum variants Shopify actually tracks. A variant with
+  // inventoryItem.tracked === false is unlimited; if NONE are tracked the
+  // product is "available/unlimited" → quantity null ("Disponível"), not 0.
+  // When the inventory scope is absent, tracked is undefined (treated as
+  // tracked) so the product keeps its prior 0 rather than a false "Disponível".
+  let trackedSum = 0;
+  let hasTracked = false;
+  for (const variant of variants) {
+    if (variant.inventoryItem?.tracked === false) {
+      continue;
+    }
+    hasTracked = true;
     const raw = Number(variant.inventoryQuantity);
-    return sum + (Number.isFinite(raw) ? Math.max(0, Math.trunc(raw)) : 0);
-  }, 0);
+    trackedSum += Number.isFinite(raw) ? Math.max(0, Math.trunc(raw)) : 0;
+  }
+  const quantity = hasTracked ? trackedSum : null;
   const sku =
     variants.map((variant) => variant.sku).find((value) => Boolean(value)) ??
     null;

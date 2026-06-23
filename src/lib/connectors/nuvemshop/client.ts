@@ -202,15 +202,50 @@ function normalizeNuvemshopOrder(order: NuvemshopOrderPayload): ShopifyOrder {
 
 type NuvemshopI18n = string | Record<string, string> | null | undefined;
 
+type NuvemshopCategory = {
+  id?: string | number;
+  name?: NuvemshopI18n;
+  parent?: string | number | null;
+  subcategories?: Array<string | number> | null;
+};
+
 type NuvemshopProductPayload = {
   id?: string | number;
   name?: NuvemshopI18n;
-  categories?: Array<{ id?: string | number; name?: NuvemshopI18n }> | null;
+  categories?: Array<NuvemshopCategory> | null;
   variants?: Array<{
     sku?: string | null;
     stock?: number | string | null;
+    // false = the store does not manage stock for this variant (unlimited).
+    stock_management?: boolean | null;
   }> | null;
 };
+
+/**
+ * Pick the most specific category for a product. Nuvemshop returns every
+ * category a product belongs to (often a broad parent like "Nicho" PLUS a
+ * leaf subcategory). Taking the first one buried the useful label, so we prefer
+ * a leaf (no in-set subcategory) that has a parent — the deepest, most
+ * descriptive bucket — and fall back to any leaf, then the first category.
+ */
+function pickNuvemshopCategory(
+  categories: Array<NuvemshopCategory>,
+): string | null {
+  if (categories.length === 0) {
+    return null;
+  }
+  const idSet = new Set(categories.map((category) => String(category.id)));
+  const isLeaf = (category: NuvemshopCategory): boolean =>
+    !(category.subcategories ?? []).some((childId) =>
+      idSet.has(String(childId)),
+    );
+  const leaves = categories.filter(isLeaf);
+  const specific = leaves.filter(
+    (category) => category.parent !== null && category.parent !== undefined,
+  );
+  const chosen = specific[0] ?? leaves[0] ?? categories[0];
+  return resolveCategory(chosen.name);
+}
 
 /** First non-empty value of an i18n map (pt first), or the raw string. */
 function nuvemshopI18n(value: NuvemshopI18n): string | null {
@@ -244,17 +279,25 @@ function normalizeNuvemshopProduct(
   }
 
   const variants = product.variants ?? [];
-  const quantity = variants.reduce((sum, variant) => {
+  // Stock model: a variant with stock_management === false is unlimited
+  // (the store sells it without tracking a count). Only sum variants that ARE
+  // tracked. If NONE are tracked, the product is "available/unlimited" →
+  // quantity null (rendered "Disponível"), never a misleading 0.
+  let trackedSum = 0;
+  let hasTracked = false;
+  for (const variant of variants) {
+    if (variant.stock_management === false) {
+      continue;
+    }
+    hasTracked = true;
     const raw = Number(variant.stock);
-    // Nuvemshop uses null stock for "unlimited/untracked" — count as 0.
-    return sum + (Number.isFinite(raw) ? Math.max(0, Math.trunc(raw)) : 0);
-  }, 0);
+    trackedSum += Number.isFinite(raw) ? Math.max(0, Math.trunc(raw)) : 0;
+  }
+  const quantity = hasTracked ? trackedSum : null;
   const sku =
     variants.map((variant) => variant.sku).find((value) => Boolean(value)) ??
     null;
-  const categoryName = resolveCategory(
-    (product.categories ?? []).map((category) => category.name),
-  );
+  const categoryName = pickNuvemshopCategory(product.categories ?? []);
 
   return {
     externalProductId,

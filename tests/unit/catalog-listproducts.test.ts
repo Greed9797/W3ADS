@@ -49,6 +49,80 @@ describe("NuvemshopClient.listProducts", () => {
     const url = new URL(String(fetchMock.mock.calls[0][0]));
     expect(url.pathname).toBe("/v1/100/products");
   });
+
+  it("reports null quantity when the store does not track stock (unlimited)", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json([
+          {
+            id: 7,
+            name: { pt: "Perfume Importado" },
+            categories: [{ id: 1, name: { pt: "Nicho" } }],
+            variants: [
+              { sku: "PERF-1", stock: null, stock_management: false },
+            ],
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(Response.json([]));
+
+    const client = new NuvemshopClient({
+      config: {
+        clientId: "c",
+        clientSecret: "s",
+        redirectUri: "https://app/cb",
+        apiBaseUrl: "https://api.nuvemshop.com.br/v1",
+      },
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+
+    const rows = await client.listProducts({
+      storeId: "100",
+      accessToken: "tok",
+    });
+
+    expect(rows[0]).toMatchObject({
+      productName: "Perfume Importado",
+      quantity: null,
+    });
+  });
+
+  it("picks the most specific (leaf) category over a broad parent", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json([
+          {
+            id: 9,
+            name: { pt: "BDK Ambre" },
+            categories: [
+              { id: 10, name: { pt: "Nicho" }, parent: null, subcategories: [20] },
+              { id: 20, name: { pt: "BDK Parfums" }, parent: 10, subcategories: [] },
+            ],
+            variants: [{ sku: "BDK-1", stock: 4 }],
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(Response.json([]));
+
+    const client = new NuvemshopClient({
+      config: {
+        clientId: "c",
+        clientSecret: "s",
+        redirectUri: "https://app/cb",
+        apiBaseUrl: "https://api.nuvemshop.com.br/v1",
+      },
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+
+    const rows = await client.listProducts({
+      storeId: "100",
+      accessToken: "tok",
+    });
+
+    expect(rows[0]?.categoryName).toBe("BDK Parfums");
+  });
 });
 
 describe("ShopifyClient.listProducts", () => {
@@ -159,6 +233,54 @@ describe("ShopifyClient.listProducts", () => {
       productName: "Cacto",
       categoryName: "Plantas",
       quantity: 0, // no inventory scope → stock degrades to 0
+    });
+  });
+
+  it("reports null quantity for variants Shopify does not track", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      Response.json({
+        data: {
+          products: {
+            edges: [
+              {
+                cursor: "c1",
+                node: {
+                  id: "gid://shopify/Product/3",
+                  title: "Vela Aromática",
+                  productType: "Casa",
+                  variants: {
+                    edges: [
+                      {
+                        node: {
+                          sku: "VELA-1",
+                          inventoryQuantity: 0,
+                          inventoryItem: { tracked: false },
+                        },
+                      },
+                    ],
+                  },
+                },
+              },
+            ],
+            pageInfo: { hasNextPage: false, endCursor: null },
+          },
+        },
+      }),
+    );
+
+    const client = new ShopifyClient({
+      config,
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+
+    const rows = await client.listProducts({
+      shop: "teststore",
+      accessToken: "tok",
+    });
+
+    expect(rows[0]).toMatchObject({
+      productName: "Vela Aromática",
+      quantity: null,
     });
   });
 });

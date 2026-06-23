@@ -196,7 +196,9 @@ export function ProductsTable({
               <td className="px-3 py-4 text-right font-mono">
                 {product.stockQuantity === null
                   ? "Sem dado"
-                  : formatIntegerBR(product.stockQuantity)}
+                  : product.stockQuantity === "unlimited"
+                    ? "Disponível"
+                    : formatIntegerBR(product.stockQuantity)}
               </td>
               <td className="px-3 py-4 text-right font-mono">
                 {formatIntegerBR(product.quantitySold)}

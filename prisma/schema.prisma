@@ -364,7 +364,9 @@ model ProductInventory {
   sku                String?
   productName        String
   categoryName       String?
-  quantity           Int              @default(0)
+  // null = stock not tracked by the store (sells unlimited / always available),
+  // rendered as "Disponível". A real integer (incl. 0) = tracked on-hand count.
+  quantity           Int?
   syncedAt           DateTime         @default(now())
   createdAt          DateTime         @default(now())
   updatedAt          DateTime         @updatedAt

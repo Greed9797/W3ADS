@@ -35,12 +35,12 @@ export default async function AppLayout({
   return (
     <main className="w3-app-shell min-h-screen bg-[var(--bg-canvas)] text-[var(--text-primary)]">
       <MobileNavProvider>
-        <div className="min-h-screen lg:flex">
-          <Sidebar context={context} />
-          <section className="min-w-0 flex-1">
-            <Topbar context={context} />
-            <div className="px-4 py-6 sm:px-6 lg:px-8">{children}</div>
-          </section>
+        {/* Navigation is an off-canvas drawer (opened by the Topbar hamburger);
+            page content uses the full screen width — no persistent sidebar. */}
+        <Sidebar context={context} />
+        <div className="min-h-screen">
+          <Topbar context={context} />
+          <div className="px-4 py-6 sm:px-6 lg:px-8">{children}</div>
         </div>
       </MobileNavProvider>
       <AnalyticsProvider

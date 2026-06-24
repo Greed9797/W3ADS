@@ -1,3 +1,6 @@
+import Link from "next/link";
+
+import { W3Logo } from "@/components/brand/w3-logo";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
 import type { getCurrentUserContext } from "@/lib/auth/current";
 import { getWorkspaceRoleDefinition } from "@/lib/auth/permissions";
@@ -20,6 +23,13 @@ export function Topbar({ context }: { context: AppContext }) {
     <header className="sticky top-0 z-10 flex min-h-[72px] flex-wrap items-center justify-between gap-4 border-b border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--bg-canvas)_88%,transparent)] px-4 py-4 backdrop-blur sm:px-6 lg:px-8">
       <div className="flex min-w-0 items-center gap-2">
         <MobileNavTrigger />
+        <Link
+          aria-label="Início"
+          className="mr-1 hidden shrink-0 sm:block"
+          href="/"
+        >
+          <W3Logo />
+        </Link>
         <div className="min-w-0">
           <p className="text-caption text-[var(--text-tertiary)]">
             {context.currentWorkspace.name} / {role.label}

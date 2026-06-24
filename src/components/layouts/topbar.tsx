@@ -7,6 +7,7 @@ import { getWorkspaceRoleDefinition } from "@/lib/auth/permissions";
 import { canAddWorkspaceConnectors } from "@/lib/auth/platform-permissions";
 import { MobileNavTrigger } from "./mobile-nav-trigger";
 import { SyncButton } from "./sync-button";
+import { TopbarHeading } from "./topbar-heading";
 
 type AppContext = Awaited<ReturnType<typeof getCurrentUserContext>>;
 
@@ -30,14 +31,10 @@ export function Topbar({ context }: { context: AppContext }) {
         >
           <W3Logo />
         </Link>
-        <div className="min-w-0">
-          <p className="text-caption text-[var(--text-tertiary)]">
-            {context.currentWorkspace.name} / {role.label}
-          </p>
-          <h1 className="mt-1 truncate font-sans text-[1.5rem] font-semibold leading-tight tracking-[-0.02em] sm:text-[1.75rem]">
-            Central de crescimento W3
-          </h1>
-        </div>
+        <TopbarHeading
+          title="Central de crescimento W3"
+          workspaceLabel={`${context.currentWorkspace.name} / ${role.label}`}
+        />
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <ThemeToggle />

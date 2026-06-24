@@ -28,9 +28,7 @@ describe("SidebarClient", () => {
       />,
     );
 
-    expect(
-      screen.getByRole("link", { name: "Dashboard" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Dashboard" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Sair" })).toBeInTheDocument();
     expect(screen.getByText("W3 Dev")).toBeInTheDocument();
   });

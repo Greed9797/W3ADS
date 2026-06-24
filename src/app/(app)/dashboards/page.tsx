@@ -27,6 +27,7 @@ import {
 } from "@/lib/auth/platform-permissions";
 import { getActiveSession } from "@/lib/timer/queries";
 import { TimerControl } from "@/components/timer/timer-control";
+import { BrandTimerButton } from "@/components/timer/brand-timer-button";
 import { prisma } from "@/lib/db/prisma";
 import {
   calculateRatioPercent,
@@ -140,7 +141,15 @@ function BrandMetric({
   );
 }
 
-function BrandCard({ brand }: { brand: BrandRow }) {
+function BrandCard({
+  brand,
+  showTimer,
+  activeStartedAt,
+}: {
+  brand: BrandRow;
+  showTimer: boolean;
+  activeStartedAt: string | null;
+}) {
   return (
     <Card className="overflow-hidden p-0">
       <div className="p-6">
@@ -157,13 +166,25 @@ function BrandCard({ brand }: { brand: BrandRow }) {
               {formatSlug(brand.slug)}
             </p>
           </div>
-          <form action={switchWorkspaceAction}>
-            <input name="workspaceId" type="hidden" value={brand.workspaceId} />
-            <Button size="sm" type="submit" variant="secondary">
-              Dashboard
-              <ArrowUpRight aria-hidden className="size-4" />
-            </Button>
-          </form>
+          <div className="flex shrink-0 flex-col items-end gap-2">
+            <form action={switchWorkspaceAction}>
+              <input
+                name="workspaceId"
+                type="hidden"
+                value={brand.workspaceId}
+              />
+              <Button size="sm" type="submit" variant="secondary">
+                Dashboard
+                <ArrowUpRight aria-hidden className="size-4" />
+              </Button>
+            </form>
+            {showTimer ? (
+              <BrandTimerButton
+                activeStartedAt={activeStartedAt}
+                workspaceId={brand.workspaceId}
+              />
+            ) : null}
+          </div>
         </div>
       </div>
 
@@ -404,6 +425,9 @@ export default async function DashboardsPage({
   const activeSession = showTimer
     ? await getActiveSession(context.user.id)
     : null;
+  const activeStartedAtIso = activeSession
+    ? activeSession.startedAt.toISOString()
+    : null;
   const timerError = Array.isArray(params.timerError)
     ? params.timerError[0]
     : params.timerError;
@@ -438,18 +462,15 @@ export default async function DashboardsPage({
                   : "Não foi possível atualizar o timer."}
             </p>
           ) : null}
-          <TimerControl
-            brandName={context.currentWorkspace.name}
-            activeSession={
-              activeSession
-                ? {
-                    id: activeSession.id,
-                    startedAt: activeSession.startedAt.toISOString(),
-                    brandName: activeSession.workspaceName,
-                  }
-                : null
-            }
-          />
+          {activeSession ? (
+            <TimerControl
+              activeSession={{
+                id: activeSession.id,
+                startedAt: activeSession.startedAt.toISOString(),
+                brandName: activeSession.workspaceName,
+              }}
+            />
+          ) : null}
         </>
       ) : null}
       <section className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -503,8 +524,14 @@ export default async function DashboardsPage({
           <section className="grid gap-4 xl:grid-cols-3">
             {pageBrands.map((brand) => (
               <BrandCard
+                activeStartedAt={
+                  activeSession?.workspaceId === brand.workspaceId
+                    ? activeStartedAtIso
+                    : null
+                }
                 brand={brand}
                 key={`${brand.workspaceId}-${brand.slug}`}
+                showTimer={showTimer}
               />
             ))}
           </section>

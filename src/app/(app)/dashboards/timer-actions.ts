@@ -33,18 +33,30 @@ async function realMembershipRole(userId: string, workspaceId: string) {
   return membership?.role ?? null;
 }
 
-/** Start the review timer for the currently-selected brand. */
-export async function startTimerAction() {
+/** Start the review timer for a brand (defaults to the selected one). */
+export async function startTimerAction(formData: FormData) {
   const context = await getCurrentUserContext();
 
   if (!canUseAccountTimer(context.user)) {
     redirect("/dashboards?timerError=forbidden");
   }
 
+  // The brand is chosen per-card on the Marcas page; fall back to the selected
+  // workspace when no id is provided.
+  const workspaceId =
+    getString(formData, "workspaceId") || context.currentWorkspace.id;
+  const workspace = await prisma.workspace.findUnique({
+    where: { id: workspaceId },
+    select: { id: true },
+  });
+  if (!workspace) {
+    redirect("/dashboards?timerError=invalid");
+  }
+
   try {
     await prisma.accountReviewSession.create({
       data: {
-        workspaceId: context.currentWorkspace.id,
+        workspaceId,
         userId: context.user.id,
       },
     });
@@ -63,7 +75,7 @@ export async function startTimerAction() {
   await logAudit({
     action: "account_timer.start",
     userId: context.user.id,
-    workspaceId: context.currentWorkspace.id,
+    workspaceId,
     resourceType: "account_review_session",
   });
 

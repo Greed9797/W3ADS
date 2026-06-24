@@ -12,13 +12,9 @@ import {
   canViewBrands,
 } from "@/lib/auth/platform-permissions";
 
-import { logoutAction, switchWorkspaceAction } from "@/app/(app)/actions";
+import { logoutAction } from "@/app/(app)/actions";
 
-import {
-  SidebarClient,
-  type SidebarNavItem,
-  type SidebarWorkspaceOption,
-} from "./sidebar-client";
+import { SidebarClient, type SidebarNavItem } from "./sidebar-client";
 
 type AppContext = Awaited<ReturnType<typeof getCurrentUserContext>>;
 
@@ -108,15 +104,6 @@ export function Sidebar({ context }: { context: AppContext }) {
         ]
       : []),
   ];
-  const workspaces: SidebarWorkspaceOption[] = context.memberships.map(
-    (membership) => ({
-      id: membership.workspaceId,
-      name: membership.workspace.name,
-      label: `${membership.workspace.name} · ${
-        getWorkspaceRoleDefinition(membership.role).label
-      }`,
-    }),
-  );
 
   return (
     <SidebarClient
@@ -127,14 +114,11 @@ export function Sidebar({ context }: { context: AppContext }) {
         id: context.currentWorkspace.id,
         name: context.currentWorkspace.name,
       }}
-      isClientRole={context.currentMembership.role === "CLIENT"}
       logoutAction={logoutAction}
       navItems={navItems}
-      switchWorkspaceAction={switchWorkspaceAction}
       userEmail={context.user.email}
       userImage={context.user.image ?? null}
       userName={context.user.name}
-      workspaces={workspaces}
     />
   );
 }

@@ -15,7 +15,6 @@ describe("SidebarClient", () => {
       <SidebarClient
         currentRoleLabel="Owner"
         currentWorkspace={{ id: "workspace-1", name: "W3 Dev" }}
-        isClientRole={false}
         logoutAction={async () => {}}
         navItems={[
           {
@@ -25,17 +24,9 @@ describe("SidebarClient", () => {
             section: "overview",
           },
         ]}
-        switchWorkspaceAction={async () => {}}
         userEmail="owner@w3.dev"
         userImage={null}
         userName="W3 Owner"
-        workspaces={[
-          {
-            id: "workspace-1",
-            label: "W3 Dev · Owner",
-            name: "W3 Dev",
-          },
-        ]}
       />,
     );
 

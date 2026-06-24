@@ -6,7 +6,6 @@
 import {
   SidebarClient,
   type SidebarNavItem,
-  type SidebarWorkspaceOption,
 } from "@/components/layouts/sidebar-client";
 
 const navItems: SidebarNavItem[] = [
@@ -51,11 +50,6 @@ const navItems: SidebarNavItem[] = [
   },
 ];
 
-const workspaces: SidebarWorkspaceOption[] = [
-  { id: "w1", name: "Adstart W3", label: "Adstart W3 · Proprietário" },
-  { id: "w2", name: "Loja Demo", label: "Loja Demo · Proprietário" },
-];
-
 export default function SidebarPreviewPage() {
   return (
     <main className="w3-app-shell min-h-screen bg-[var(--bg-canvas)] text-[var(--text-primary)]">
@@ -63,14 +57,11 @@ export default function SidebarPreviewPage() {
         <SidebarClient
           currentRoleLabel="Proprietário"
           currentWorkspace={{ id: "w1", name: "Adstart W3" }}
-          isClientRole={false}
           logoutAction={async () => {}}
           navItems={navItems}
-          switchWorkspaceAction={async () => {}}
           userEmail="leo@leonardoames.com.br"
           userImage={null}
           userName="Leonardo Ames"
-          workspaces={workspaces}
         />
         <section className="min-w-0 flex-1">
           <header className="sticky top-0 z-10 flex min-h-[72px] items-center justify-between gap-4 border-b border-[var(--border-subtle)] bg-[color-mix(in_srgb,var(--bg-canvas)_88%,transparent)] px-8 py-4 backdrop-blur">

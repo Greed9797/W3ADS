@@ -103,9 +103,18 @@ export async function stopTimerAction(formData: FormData) {
     select: { id: true, userId: true, startedAt: true, endedAt: true },
   });
 
-  // Only the owner of the running session may stop it, and only once.
-  if (!session || session.userId !== context.user.id || session.endedAt) {
-    redirect("/dashboards?timerError=invalid");
+  // Idempotent stop: the page auto-refreshes, so a double submit of "Parar" is
+  // easy to trigger. A missing or already-ended session means the timer is
+  // ALREADY stopped (and saved) — succeed silently instead of showing a scary
+  // "Não foi possível atualizar o timer" that makes it look like nothing saved.
+  if (!session) {
+    redirect("/dashboards");
+  }
+  if (session.userId !== context.user.id) {
+    redirect("/dashboards?timerError=forbidden");
+  }
+  if (session.endedAt) {
+    redirect("/dashboards");
   }
 
   const endedAt = new Date();

@@ -1,6 +1,10 @@
 import type { MemberRole, PlatformRole } from "@prisma/client";
 
-import { isAdminLimited, isAdminMaster } from "@/lib/auth/platform-permissions";
+import {
+  isAdminLimited,
+  isAdminMaster,
+  isInternalW3User,
+} from "@/lib/auth/platform-permissions";
 
 export type WorkspaceRoleCapability =
   | "view_dashboard"
@@ -131,6 +135,27 @@ export function assertCanManageWorkspaceSettings(role: MemberRole) {
 
 export function canCreateWorkspace(user: { platformRole: PlatformRole }) {
   return isAdminMaster(user) || isAdminLimited(user);
+}
+
+/**
+ * Who can start/stop the account-handover review timer ("passagem de conta"):
+ * internal W3 managers only (Gestor de Tráfego, Gestor de Contas, Master).
+ */
+export function canUseAccountTimer(user: { platformRole: PlatformRole }) {
+  return isInternalW3User(user);
+}
+
+/**
+ * Who can see the timer LOGS (how long each manager took) for a given brand:
+ * the platform Admin Master (all brands) or the OWNER of that workspace (only
+ * their own brand). `membershipRole` MUST be the actor's REAL membership role on
+ * the target workspace — never the synthetic OWNER injected for internal admins.
+ */
+export function canViewAccountTimerLogs(
+  user: { platformRole: PlatformRole },
+  membershipRole: MemberRole | null,
+) {
+  return isAdminMaster(user) || membershipRole === "OWNER";
 }
 
 /**

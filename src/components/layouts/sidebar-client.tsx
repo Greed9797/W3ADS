@@ -10,6 +10,7 @@ import {
   PanelsTopLeft,
   PlugZap,
   Settings,
+  Timer,
   UnfoldVertical,
   UserCircle,
   UsersRound,
@@ -35,7 +36,8 @@ export type SidebarIconKey =
   | "connectors"
   | "profile"
   | "help"
-  | "settings";
+  | "settings"
+  | "timer";
 
 export type SidebarSection = "overview" | "manage" | "account";
 
@@ -76,6 +78,7 @@ const iconMap: Record<SidebarIconKey, LucideIcon> = {
   profile: UserCircle,
   help: HelpCircle,
   settings: Settings,
+  timer: Timer,
 };
 
 const SECTIONS: { key: SidebarSection; label: string }[] = [

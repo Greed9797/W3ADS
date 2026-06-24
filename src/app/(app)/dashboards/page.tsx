@@ -20,10 +20,13 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getCurrentUserContext } from "@/lib/auth/current";
+import { canUseAccountTimer } from "@/lib/auth/permissions";
 import {
   canManagePlatformUsers,
   canViewBrands,
 } from "@/lib/auth/platform-permissions";
+import { getActiveSession } from "@/lib/timer/queries";
+import { TimerControl } from "@/components/timer/timer-control";
 import { prisma } from "@/lib/db/prisma";
 import {
   calculateRatioPercent,
@@ -394,6 +397,17 @@ export default async function DashboardsPage({
   const brands = await getRealBrands(period.from, period.to);
   const totals = summarizeBrands(brands);
 
+  // Account-handover timer — only internal W3 managers see it. Bound to the
+  // currently-selected brand; the active session (if any) is the server source
+  // of truth so the count survives reloads.
+  const showTimer = canUseAccountTimer(context.user);
+  const activeSession = showTimer
+    ? await getActiveSession(context.user.id)
+    : null;
+  const timerError = Array.isArray(params.timerError)
+    ? params.timerError[0]
+    : params.timerError;
+
   // Baseline for the auto-refresh poller: when the layout `after()` background
   // sync advances lastSyncedAt past this, the client calls router.refresh().
   const syncState = await prisma.workspaceSyncState.findUnique({
@@ -413,6 +427,31 @@ export default async function DashboardsPage({
       <DashboardAutoRefresh
         initialSyncedAt={syncState?.lastSyncedAt?.toISOString() ?? null}
       />
+      {showTimer ? (
+        <>
+          {timerError ? (
+            <p className="rounded-md border border-[var(--danger)] bg-[var(--w3-red-bg)] px-4 py-2 text-sm text-[var(--danger)]">
+              {timerError === "active"
+                ? "Você já tem um timer em andamento. Pare-o antes de iniciar outro."
+                : timerError === "forbidden"
+                  ? "Sem permissão para usar o timer."
+                  : "Não foi possível atualizar o timer."}
+            </p>
+          ) : null}
+          <TimerControl
+            brandName={context.currentWorkspace.name}
+            activeSession={
+              activeSession
+                ? {
+                    id: activeSession.id,
+                    startedAt: activeSession.startedAt.toISOString(),
+                    brandName: activeSession.workspaceName,
+                  }
+                : null
+            }
+          />
+        </>
+      ) : null}
       <section className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <p className="text-caption text-[var(--text-tertiary)]">Marcas</p>

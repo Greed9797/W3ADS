@@ -27,6 +27,7 @@ model User {
   passwordResetTokens PasswordResetToken[]
   sentInvites         WorkspaceInvite[]    @relation("WorkspaceInviteInviter")
   betaFeedbacks       BetaFeedback[]
+  accountReviewSessions AccountReviewSession[]
 }
 
 enum PlatformRole {
@@ -99,6 +100,7 @@ model Workspace {
   betaFeedbacks            BetaFeedback[]
   syncJobs                 SyncJob[]
   syncState                WorkspaceSyncState?
+  accountReviewSessions    AccountReviewSession[]
 }
 
 model WorkspaceSyncState {
@@ -407,6 +409,28 @@ model AuditLog {
 
   @@index([workspaceId, createdAt])
   @@index([userId, createdAt])
+}
+
+/// Account-handover review timer ("passagem de conta"). An internal W3 manager
+/// starts the timer when they begin reviewing a brand and stops it when done.
+/// startedAt is the server source of truth: closing the site does not stop the
+/// count — on reopen the client rebuilds the elapsed time from startedAt. While
+/// endedAt is NULL the session is running; a partial unique index (see
+/// migration) enforces at most ONE running session per user at a time.
+model AccountReviewSession {
+  id              String    @id @default(cuid())
+  workspaceId     String
+  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  startedAt       DateTime  @default(now())
+  endedAt         DateTime?
+  durationSeconds Int?
+  note            String?
+  createdAt       DateTime  @default(now())
+
+  @@index([workspaceId, startedAt])
+  @@index([userId, startedAt])
 }
 
 model BetaFeedback {

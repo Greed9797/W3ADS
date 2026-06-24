@@ -2,6 +2,7 @@ import type { getCurrentUserContext } from "@/lib/auth/current";
 import {
   canManageMembers,
   canManageWorkspaceSettings,
+  canViewAccountTimerLogs,
   getWorkspaceRoleDefinition,
 } from "@/lib/auth/permissions";
 import {
@@ -65,6 +66,16 @@ export function Sidebar({ context }: { context: AppContext }) {
             label: "Membros",
             href: "/workspace/members",
             icon: "users" as const,
+            section: "manage" as const,
+          },
+        ]
+      : []),
+    ...(canViewAccountTimerLogs(context.user, context.currentMembership.role)
+      ? [
+          {
+            label: "Tempo de contas",
+            href: "/dashboards/tempo",
+            icon: "timer" as const,
             section: "manage" as const,
           },
         ]

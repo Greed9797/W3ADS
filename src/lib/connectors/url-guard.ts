@@ -119,3 +119,42 @@ export function redirectSafeFetch(impl: typeof fetch): typeof fetch {
   return ((input: Parameters<typeof fetch>[0], init?: RequestInit) =>
     impl(input, { ...init, redirect: "error" })) as typeof fetch;
 }
+
+/**
+ * Like {@link redirectSafeFetch} but FOLLOWS redirects while re-validating every
+ * hop with {@link assertPublicHttpUrl}. Google Sheets' CSV export
+ * (`docs.google.com/.../export?format=csv`) 307-redirects to a
+ * `*.googleusercontent.com` download URL, so the fail-closed `redirect: "error"`
+ * policy throws ("fetch failed: unexpected redirect") and breaks every Sheets
+ * sync. This follows the chain but still blocks a hop to a private/metadata host
+ * (SSRF), unlike a plain `redirect: "follow"`.
+ */
+export function guardedRedirectFetch(
+  impl: typeof fetch,
+  maxRedirects = 5,
+): typeof fetch {
+  return (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    let target =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.href
+          : (input as Request).url;
+
+    for (let hop = 0; hop <= maxRedirects; hop += 1) {
+      assertPublicHttpUrl(target);
+      const response = await impl(target, { ...init, redirect: "manual" });
+      const location =
+        response.status >= 300 && response.status < 400
+          ? response.headers.get("location")
+          : null;
+      if (!location) {
+        return response;
+      }
+      // Resolve relative Locations against the current hop, then re-guard.
+      target = new URL(location, target).href;
+    }
+
+    throw new Error("URL não permitida: redirecionamentos em excesso.");
+  }) as typeof fetch;
+}

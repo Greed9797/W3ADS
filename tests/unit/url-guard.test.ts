@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest";
 
-import { assertPublicHttpUrl } from "@/lib/connectors/url-guard";
+import {
+  assertPublicHttpUrl,
+  guardedRedirectFetch,
+} from "@/lib/connectors/url-guard";
+
+function jsonResponse(status: number, location?: string) {
+  return new Response(status >= 300 && status < 400 ? null : "ok", {
+    status,
+    headers: location ? { location } : undefined,
+  });
+}
 
 describe("assertPublicHttpUrl", () => {
   it("accepts public http(s) hosts", () => {
@@ -40,5 +50,53 @@ describe("assertPublicHttpUrl", () => {
     expect(() => assertPublicHttpUrl("http://[fe80::1]")).toThrow();
     expect(() => assertPublicHttpUrl("http://[fc00::1]")).toThrow();
     expect(() => assertPublicHttpUrl("http://[::ffff:127.0.0.1]")).toThrow();
+  });
+});
+
+describe("guardedRedirectFetch", () => {
+  it("follows a public redirect chain (Google Sheets export → googleusercontent)", async () => {
+    const seen: string[] = [];
+    const impl = (async (input: Parameters<typeof fetch>[0]) => {
+      const url = input.toString();
+      seen.push(url);
+      if (url.includes("docs.google.com")) {
+        return jsonResponse(
+          307,
+          "https://doc-08-4o-sheets.googleusercontent.com/export/abc",
+        );
+      }
+      return jsonResponse(200);
+    }) as typeof fetch;
+
+    const res = await guardedRedirectFetch(impl)(
+      "https://docs.google.com/spreadsheets/d/ID/export?format=csv",
+    );
+    expect(res.status).toBe(200);
+    expect(seen).toHaveLength(2);
+    expect(seen[1]).toContain("googleusercontent.com");
+  });
+
+  it("blocks a redirect to a private/metadata host (SSRF)", async () => {
+    const impl = (async () =>
+      jsonResponse(302, "http://169.254.169.254/latest/meta-data")) as typeof fetch;
+
+    await expect(
+      guardedRedirectFetch(impl)("https://docs.google.com/export"),
+    ).rejects.toThrow();
+  });
+
+  it("returns a non-redirect response directly", async () => {
+    const impl = (async () => jsonResponse(200)) as typeof fetch;
+    const res = await guardedRedirectFetch(impl)("https://docs.google.com/x");
+    expect(res.status).toBe(200);
+  });
+
+  it("stops after too many redirects", async () => {
+    // Always redirects to another public host → must bail, not loop forever.
+    const impl = (async () =>
+      jsonResponse(307, "https://a.example.com/next")) as typeof fetch;
+    await expect(
+      guardedRedirectFetch(impl, 2)("https://docs.google.com/x"),
+    ).rejects.toThrow(/excesso/);
   });
 });

@@ -4,6 +4,7 @@ import { callWithRetry } from "@/lib/connectors/retry";
 import type { ConnectorCredentialPayload } from "@/lib/connectors/credentials";
 import {
   assertPublicHttpUrl,
+  guardedRedirectFetch,
   redirectSafeFetch,
 } from "@/lib/connectors/url-guard";
 import {
@@ -557,7 +558,13 @@ export class ManualCommerceClient {
   }) {
     this.provider = input.provider;
     this.credentials = input.credentials;
-    this.fetchImpl = redirectSafeFetch(input.fetchImpl ?? fetch);
+    // Google Sheets' CSV export 307-redirects to googleusercontent.com, so it
+    // needs a redirect-following fetch (still SSRF-guarded per hop). Every other
+    // provider returns data directly and stays fail-closed on redirects.
+    this.fetchImpl =
+      input.provider === ConnectorProvider.GOOGLE_SHEETS
+        ? guardedRedirectFetch(input.fetchImpl ?? fetch)
+        : redirectSafeFetch(input.fetchImpl ?? fetch);
   }
 
   private ordersUrl(range?: { since: string; until: string }) {

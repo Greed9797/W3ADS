@@ -94,9 +94,34 @@ function resolveQuantity(payload: Record<string, unknown>): number {
     payload.quantidade ??
     payload.quantidade_estoque ??
     payload.estoque_quantidade ??
+    payload.quantidade_em_estoque ??
     payload.saldo ??
     payload.stock ??
     payload.inventory_quantity;
+  // WBuy exposes stock per variation under `estoque: [{ quantidade_em_estoque }]`.
+  // Sum the variations so the product's on-hand count reflects all of them.
+  const fromArray = (() => {
+    if (!Array.isArray(payload.estoque)) return null;
+    let sum = 0;
+    let found = false;
+    for (const entry of payload.estoque) {
+      if (!entry || typeof entry !== "object") continue;
+      const obj = entry as Record<string, unknown>;
+      const value =
+        obj.quantidade_em_estoque ?? obj.quantidade ?? obj.saldo ?? obj.stock;
+      const num =
+        typeof value === "number"
+          ? value
+          : typeof value === "string"
+            ? Number.parseFloat(value.replace(/[^\d.-]/g, ""))
+            : NaN;
+      if (Number.isFinite(num)) {
+        sum += Math.max(0, Math.trunc(num));
+        found = true;
+      }
+    }
+    return found ? sum : null;
+  })();
   const fromNested = (() => {
     const nested = payload.estoque ?? payload.gerenciar_estoque;
     if (typeof nested === "number") return nested;
@@ -107,7 +132,7 @@ function resolveQuantity(payload: Record<string, unknown>): number {
     return null;
   })();
 
-  const raw = direct ?? fromNested;
+  const raw = direct ?? fromArray ?? fromNested;
   const num =
     typeof raw === "number"
       ? raw
@@ -140,6 +165,9 @@ export function normalizeManualInventory(
   );
   const productName = firstString(
     payload.nome,
+    // WBuy names the product field `produto` (not `nome`); without this the
+    // whole WBuy catalog was rejected here and synced zero inventory rows.
+    payload.produto,
     payload.nome_produto,
     payload.name,
     payload.titulo,
@@ -152,6 +180,7 @@ export function normalizeManualInventory(
     externalProductId,
     sku: firstString(
       payload.sku,
+      payload.cod,
       payload.codigo,
       payload.referencia,
       payload.reference,
@@ -159,6 +188,11 @@ export function normalizeManualInventory(
     ),
     productName,
     categoryName: resolveCategory(
+      // WBuy nests category names under categoria_level1/2/3.{nome}; prefer the
+      // top-level category for the dashboard's "Categorias" grouping.
+      payload.categoria_level1,
+      payload.categoria_level2,
+      payload.categoria_level3,
       payload.categoria,
       payload.categorias,
       payload.category,

@@ -332,6 +332,13 @@ export function normalizeManualCommerceOrder(
       payload.estado_uf,
       payload.state,
       payload.shipping_state,
+      // WBuy carries the customer's state in the order's `cliente.uf` — without
+      // this every WBuy order synced with a null state, leaving "vendas por
+      // estado" empty.
+      (payload.cliente as Record<string, unknown> | undefined)?.uf,
+      (payload.cliente as Record<string, unknown> | undefined)?.estado,
+      (payload.entrega as Record<string, unknown> | undefined)?.uf,
+      (payload.endereco_entrega as Record<string, unknown> | undefined)?.uf,
       (payload.shipping_address as Record<string, unknown> | undefined)
         ?.province_code,
       (payload.shipping_address as Record<string, unknown> | undefined)?.state,

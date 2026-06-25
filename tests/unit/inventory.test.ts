@@ -24,6 +24,30 @@ describe("normalizeLojaIntegradaInventory", () => {
     });
   });
 
+  it("normalizes a WBuy product (produto/categoria_level1/estoque[])", () => {
+    // Real WBuy /product shape: name under `produto`, category under
+    // categoria_levelN.nome, stock summed across the `estoque[]` variations.
+    expect(
+      normalizeLojaIntegradaInventory({
+        id: "12345",
+        produto: "Adesivo Decorativo",
+        cod: "ADS-001",
+        categoria_level1: { id: "9", nome: "Adesivos", url: "adesivos" },
+        categoria_level2: { id: "0", nome: "" },
+        estoque: [
+          { sku: "ADS-001-P", quantidade_em_estoque: "7" },
+          { sku: "ADS-001-G", quantidade_em_estoque: "3" },
+        ],
+      }),
+    ).toEqual({
+      externalProductId: "12345",
+      sku: "ADS-001",
+      productName: "Adesivo Decorativo",
+      categoryName: "Adesivos",
+      quantity: 10,
+    });
+  });
+
   it("extracts the category name when present", () => {
     const row = normalizeLojaIntegradaInventory({
       id: 20,

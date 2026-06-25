@@ -174,4 +174,19 @@ describe("manual ecommerce connectors", () => {
     expect(orderItems).toHaveLength(2);
     expect(orderItems[0]).toMatchObject({ productName: "Adesivo A" });
   });
+
+  it("reads the WBuy customer state from cliente.uf", () => {
+    // Real WBuy /order carries the buyer's state in cliente.uf — required for
+    // the "vendas por estado" breakdown.
+    const order = normalizeManualCommerceOrder({
+      id: "12638077",
+      data: "2026-06-03 10:06:18",
+      total_itens: "1",
+      valor_total: { total: "388.36" },
+      cliente: { nome: "Fulano", uf: "CE", cidade: "Fortaleza" },
+      produtos: [{ nome: "Adesivo A", quantidade: 1, total: "189" }],
+    });
+
+    expect(order.shippingState).toBe("CE");
+  });
 });

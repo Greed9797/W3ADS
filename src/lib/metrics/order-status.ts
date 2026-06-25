@@ -53,10 +53,25 @@ const REJECTED_TERMS: ReadonlyArray<string> = [
   "autorizado",
 ];
 
+// WBuy only ever advances an order INTO these fulfillment states AFTER payment
+// is confirmed (you don't produce/separate/ship an unpaid order), so for WBuy
+// they are paid sales — unlike the generic rule, where a fulfillment state does
+// not by itself prove payment. Scoped to WBuy via the `provider` argument.
+const WBUY_PAID_FULFILLMENT_TERMS: ReadonlyArray<string> = [
+  "producao", // Em produção
+  "expedicao", // Em expedição
+  "separacao", // Em separação
+  "transporte",
+  "transito",
+  "enviado",
+  "postado",
+];
+
 const DIACRITICS_RE = /[̀-ͯ]/g;
 
 export function isApprovedOrderStatus(
   status: string | null | undefined,
+  provider?: string | null,
 ): boolean {
   const raw = status?.trim();
   if (!raw) {
@@ -75,6 +90,14 @@ export function isApprovedOrderStatus(
 
   if (REJECTED_TERMS.some((term) => normalized.includes(term))) {
     return false;
+  }
+
+  // WBuy: a fulfillment state implies the order was already paid.
+  if (
+    provider === "WBUY" &&
+    WBUY_PAID_FULFILLMENT_TERMS.some((term) => normalized.includes(term))
+  ) {
+    return true;
   }
 
   return APPROVED_TERMS.some((term) => normalized.includes(term));

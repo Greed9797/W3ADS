@@ -266,6 +266,7 @@ async function getRealBrands(from: Date, to: Date): Promise<BrandRow[]> {
         workspaceId: true,
         orderTotal: true,
         status: true,
+        platform: true,
       },
     }),
     prisma.dailyMetric.findMany({
@@ -311,7 +312,7 @@ async function getRealBrands(from: Date, to: Date): Promise<BrandRow[]> {
     // (buildDashboardSnapshot). Without this the Marcas card summed every
     // order (incl. pending/cancelled) and diverged from the brand's own
     // dashboard faturamento.
-    if (row && isApprovedOrderStatus(order.status)) {
+    if (row && isApprovedOrderStatus(order.status, order.platform)) {
       row.revenue += Number(order.orderTotal);
     }
   }

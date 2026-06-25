@@ -294,7 +294,7 @@ function orderCount(order: DashboardOrderRow) {
 }
 
 function approvedOrderCount(order: DashboardOrderRow) {
-  return isApprovedOrderStatus(order.status) ? orderCount(order) : 0;
+  return isApprovedOrderStatus(order.status, order.platform) ? orderCount(order) : 0;
 }
 
 // isApprovedOrderStatus is imported from ./order-status and re-exported above.
@@ -541,13 +541,13 @@ export function buildDashboardSnapshot(input: {
   const revenue = currentOrders.reduce(
     (sum, order) =>
       sum +
-      (isApprovedOrderStatus(order.status) ? asNumber(order.orderTotal) : 0),
+      (isApprovedOrderStatus(order.status, order.platform) ? asNumber(order.orderTotal) : 0),
     0,
   );
   const previousRevenue = previousOrders.reduce(
     (sum, order) =>
       sum +
-      (isApprovedOrderStatus(order.status) ? asNumber(order.orderTotal) : 0),
+      (isApprovedOrderStatus(order.status, order.platform) ? asNumber(order.orderTotal) : 0),
     0,
   );
   const spend = currentMetrics.reduce(
@@ -644,7 +644,7 @@ export function buildDashboardSnapshot(input: {
       const approved = approvedOrderCount(order);
       // Same rule as the headline revenue: only paid orders count toward the
       // daily revenue series so the line chart matches the KPI total.
-      if (isApprovedOrderStatus(order.status)) {
+      if (isApprovedOrderStatus(order.status, order.platform)) {
         item.revenue += asNumber(order.orderTotal);
       }
       item.orders += approved;
@@ -690,7 +690,7 @@ export function buildDashboardSnapshot(input: {
     const item = currentKey ? daily.get(currentKey) : null;
     if (item) {
       const approved = approvedOrderCount(order);
-      if (isApprovedOrderStatus(order.status)) {
+      if (isApprovedOrderStatus(order.status, order.platform)) {
         item.previousRevenue += asNumber(order.orderTotal);
       }
       item.previousOrders += approved;
@@ -832,7 +832,7 @@ export function buildDashboardSnapshot(input: {
   >();
 
   for (const order of currentOrders) {
-    const approved = isApprovedOrderStatus(order.status);
+    const approved = isApprovedOrderStatus(order.status, order.platform);
     const approvedCount = approved ? orderCount(order) : 0;
     const orderTotal = asNumber(order.orderTotal);
     const revenueContribution = approved ? orderTotal : 0;

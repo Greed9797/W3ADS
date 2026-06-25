@@ -84,7 +84,7 @@ export function mapEcommerceOrdersToDailyMetricSummaries(input: {
   const byDay = new Map<string, { revenue: Decimal; orders: number }>();
 
   for (const order of input.orders) {
-    if (!isApprovedOrderStatus(order.status)) continue;
+    if (!isApprovedOrderStatus(order.status, input.provider)) continue;
     const day = order.placedAt.slice(0, 10);
     const current = byDay.get(day) ?? { revenue: new Decimal(0), orders: 0 };
     current.revenue = current.revenue.plus(order.orderTotal);

@@ -297,4 +297,40 @@ describe("documented ecommerce API clients", () => {
       },
     ]);
   });
+
+  it("captures a day with revenue but blank Qtd. Vendas", async () => {
+    // Real Calê Joias sheet: 19/06 has a total but no quantity filled — it must
+    // still count toward faturamento (was being dropped, ~R$1.344 short).
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          'Calê Joias,,,\nDia,Qtd. Vendas,Valor em vendas,Ticket Médio\n19/05/2026,,"R$ 1.344,50",\n',
+        ),
+    );
+    const client = new ManualCommerceClient({
+      provider: ConnectorProvider.GOOGLE_SHEETS,
+      credentials: {
+        baseUrl:
+          "https://docs.google.com/spreadsheets/d/14h4veQ1W9Qfv5mHGyFqcwdBDLwIDUKlV/edit?gid=0",
+      },
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+
+    const orders = await client.listOrders({
+      since: "2026-05-01",
+      until: "2026-05-31",
+    });
+
+    expect(orders).toEqual([
+      {
+        pedido: "GOOGLE_SHEETS-2026-05-19",
+        valor: "R$ 1.344,50",
+        status: "APPROVED",
+        origem: "whatsapp",
+        data: "2026-05-19T00:00:00.000Z",
+        qtd_vendas: "0",
+        items_count: "0",
+      },
+    ]);
+  });
 });

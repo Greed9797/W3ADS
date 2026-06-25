@@ -454,7 +454,10 @@ function extractDailyGoogleSheetPayloads(
 
     const revenue = parseSheetMoney(cells[revenueIndex] ?? "");
     const quantity = parseSheetInteger(cells[quantityIndex] ?? "");
-    if (revenue <= 0 || quantity <= 0) {
+    // Capture any day with revenue, even when "Qtd. Vendas" is blank — those
+    // days (e.g. a manual entry with only the total filled) still count toward
+    // faturamento. Only skip days with no revenue at all (blank / R$ 0,00).
+    if (revenue <= 0) {
       return [];
     }
 

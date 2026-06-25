@@ -192,6 +192,9 @@ export default async function ConnectorsPage({
     context.currentMembership.role,
   );
   const connectorCounts = new Map<ConnectorProvider, number>();
+  // Accounts whose token is broken (ERROR / TOKEN_EXPIRED). They still count as
+  // "connected" but need re-auth — surfaced as a warning so managers reconnect.
+  const erroredCounts = new Map<ConnectorProvider, number>();
   const providerConfigs = new Set<ConnectorProvider>();
 
   // Single connector read (was a redundant groupBy + findMany on the same
@@ -226,6 +229,15 @@ export default async function ConnectorsPage({
       account.provider,
       (connectorCounts.get(account.provider) ?? 0) + 1,
     );
+    if (
+      account.status === ConnectorStatus.ERROR ||
+      account.status === ConnectorStatus.TOKEN_EXPIRED
+    ) {
+      erroredCounts.set(
+        account.provider,
+        (erroredCounts.get(account.provider) ?? 0) + 1,
+      );
+    }
   }
 
   for (const config of configs) {
@@ -284,14 +296,28 @@ export default async function ConnectorsPage({
     count: number,
     unit: string,
   ) {
-    if (count > 0) return `${count} ${unit}(s) ativa(s)`;
+    const errored = erroredCounts.get(provider) ?? 0;
+    const active = count - errored;
+    if (active > 0) {
+      return errored > 0
+        ? `${active} ${unit}(s) ativa(s) · ${errored} com erro — reconectar`
+        : `${active} ${unit}(s) ativa(s)`;
+    }
+    if (errored > 0) {
+      return `Reconexão necessária (${errored} com erro)`;
+    }
     if (providerConfigs.has(provider)) return "Pronto para conectar";
 
     return "Aguardando configuração W3";
   }
 
   function statusTone(provider: ConnectorProvider, count: number) {
-    if (count > 0) return "success" as const;
+    const errored = erroredCounts.get(provider) ?? 0;
+    const active = count - errored;
+    // A broken token is the most important signal — show it even if there are
+    // other healthy accounts on the same provider.
+    if (errored > 0) return "warning" as const;
+    if (active > 0) return "success" as const;
     if (providerConfigs.has(provider)) return "info" as const;
 
     return "warning" as const;

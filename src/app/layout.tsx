@@ -26,7 +26,7 @@ const jetBrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Adstart W3",
+  title: "W3 Relatórios",
   description: "Dashboard unificado de marketing analytics para e-commerce.",
 };
 

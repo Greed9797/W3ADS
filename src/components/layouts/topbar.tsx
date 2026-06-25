@@ -32,7 +32,7 @@ export function Topbar({ context }: { context: AppContext }) {
           <W3Logo />
         </Link>
         <TopbarHeading
-          title="Central de crescimento W3"
+          title="W3 Relatórios"
           workspaceLabel={`${context.currentWorkspace.name} / ${role.label}`}
         />
       </div>

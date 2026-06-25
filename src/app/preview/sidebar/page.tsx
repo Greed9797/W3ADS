@@ -70,7 +70,7 @@ export default function SidebarPreviewPage() {
                 Adstart W3 / Proprietário
               </p>
               <h1 className="mt-1 font-sans text-[1.75rem] font-semibold leading-tight tracking-[-0.02em]">
-                Central de crescimento W3
+                W3 Relatórios
               </h1>
             </div>
             <span className="rounded-[var(--radius-pill)] bg-[var(--w3-red-bg)] px-3 py-1.5 text-xs font-semibold text-[var(--w3-red)]">

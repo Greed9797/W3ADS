@@ -137,6 +137,22 @@ export async function POST(_request: NextRequest, context: RouteContext) {
 
   const durationMs = Date.now() - start;
 
+  // Advance the workspace sync marker so the open dashboard auto-refreshes.
+  // DashboardAutoRefresh polls WorkspaceSyncState.lastSyncedAt and calls
+  // router.refresh() when it moves; without this bump a manual per-connector
+  // "Sincronizar agora" updated the DB but left the dashboard showing stale
+  // numbers (diverging from the Marcas view, which renders fresh on navigation).
+  try {
+    await prisma.workspaceSyncState.upsert({
+      where: { workspaceId: account.workspaceId },
+      update: { lastSyncedAt: new Date() },
+      create: { workspaceId: account.workspaceId, lastSyncedAt: new Date() },
+    });
+  } catch {
+    // Non-fatal: the sync itself succeeded; the dashboard still refreshes on the
+    // next background sync if this marker write fails transiently.
+  }
+
   await logAudit({
     action: "connector.manual.connect",
     userId: userContext.user.id,

@@ -26,7 +26,6 @@ import {
   canViewBrands,
 } from "@/lib/auth/platform-permissions";
 import { getActiveSession } from "@/lib/timer/queries";
-import { TimerControl } from "@/components/timer/timer-control";
 import { BrandTimerButton } from "@/components/timer/brand-timer-button";
 import { prisma } from "@/lib/db/prisma";
 import {
@@ -462,15 +461,6 @@ export default async function DashboardsPage({
                   ? "Sem permissão para usar o timer."
                   : "Não foi possível atualizar o timer."}
             </p>
-          ) : null}
-          {activeSession ? (
-            <TimerControl
-              activeSession={{
-                id: activeSession.id,
-                startedAt: activeSession.startedAt.toISOString(),
-                brandName: activeSession.workspaceName,
-              }}
-            />
           ) : null}
         </>
       ) : null}

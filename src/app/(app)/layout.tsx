@@ -4,7 +4,10 @@ import { MobileNavProvider } from "@/components/layouts/mobile-nav-context";
 import { Sidebar } from "@/components/layouts/sidebar";
 import { Topbar } from "@/components/layouts/topbar";
 import { AnalyticsProvider } from "@/components/observability/analytics-provider";
+import { TimerControl } from "@/components/timer/timer-control";
 import { getCurrentUserContext } from "@/lib/auth/current";
+import { canUseAccountTimer } from "@/lib/auth/permissions";
+import { getActiveSession } from "@/lib/timer/queries";
 import { triggerWorkspaceSyncIfStale } from "@/lib/workspace/sync-orchestrator";
 
 export default async function AppLayout({
@@ -13,6 +16,13 @@ export default async function AppLayout({
   children: React.ReactNode;
 }) {
   const context = await getCurrentUserContext();
+
+  // Account-handover timer follows the manager across every page (not just the
+  // brand list) so the running session and its Stop button stay reachable while
+  // they work inside a client's dashboard. Server session = source of truth.
+  const activeTimerSession = canUseAccountTimer(context.user)
+    ? await getActiveSession(context.user.id)
+    : null;
 
   // Fire background sync on every page visit. after() sends the response
   // first, then keeps the function alive to complete the sync.
@@ -40,7 +50,20 @@ export default async function AppLayout({
         <Sidebar context={context} />
         <div className="min-h-screen">
           <Topbar context={context} />
-          <div className="px-4 py-6 sm:px-6 lg:px-8">{children}</div>
+          <div className="px-4 py-6 sm:px-6 lg:px-8">
+            {activeTimerSession ? (
+              <div className="mb-6">
+                <TimerControl
+                  activeSession={{
+                    id: activeTimerSession.id,
+                    startedAt: activeTimerSession.startedAt.toISOString(),
+                    brandName: activeTimerSession.workspaceName,
+                  }}
+                />
+              </div>
+            ) : null}
+            {children}
+          </div>
         </div>
       </MobileNavProvider>
       <AnalyticsProvider

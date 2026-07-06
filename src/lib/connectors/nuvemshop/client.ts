@@ -409,7 +409,6 @@ export class NuvemshopClient {
     // deterministic across runs; past windows are stable so the same page
     // returns the same rows.
     let page = Math.max(1, Math.trunc(input.startPage ?? 1));
-    const firstPage = page;
     const MAX_PAGES = 1000; // safety cap: 1000 * 200 = 200k orders per window
 
     for (let i = 0; i < MAX_PAGES; i += 1) {
@@ -436,16 +435,13 @@ export class NuvemshopClient {
           }),
         );
       } catch (error: unknown) {
-        // Nuvemshop returns 404 ("Last page is N") when a page past the last is
-        // requested — happens when the previous page was exactly full (200), so
-        // the `< 200` check below never fires. Treat it as end-of-pagination,
-        // but only after the first page; a 404 on the first page is a real
-        // error (bad store/endpoint) and must surface.
-        if (
-          error instanceof NuvemshopApiError &&
-          error.status === 404 &&
-          page > firstPage
-        ) {
+        // Nuvemshop returns 404 ("Last page is N") for the orders list whenever
+        // the query window has no more results — INCLUDING page 1 when the window
+        // matches zero orders (e.g. a store with no paid orders in the current
+        // month). It's end-of-pagination, not an error: swallow it and return
+        // what we have (empty on page 1). A truly broken store/token fails the
+        // auth (/store 401/404) elsewhere, not here.
+        if (error instanceof NuvemshopApiError && error.status === 404) {
           return { orders: out, complete: true, nextPage: page };
         }
         throw error;

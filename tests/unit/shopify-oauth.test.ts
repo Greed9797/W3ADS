@@ -2,6 +2,7 @@ import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import {
+  SHOPIFY_DEFAULT_SCOPES,
   buildShopifyOAuthUrl,
   normalizeShopDomain,
   verifyShopifyQueryHmac,
@@ -22,6 +23,10 @@ describe("Shopify OAuth helpers", () => {
     );
     expect(normalizeShopDomain("loja-teste")).toBe("loja-teste.myshopify.com");
     expect(() => normalizeShopDomain("bad host")).toThrow("Invalid Shopify shop domain");
+  });
+
+  it("requests read_all_orders so the Admin API returns orders older than 60 days", () => {
+    expect(SHOPIFY_DEFAULT_SCOPES.split(",")).toContain("read_all_orders");
   });
 
   it("builds the shop authorization URL", () => {

@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 export const SHOPIFY_DEFAULT_API_VERSION = "2026-04";
-export const SHOPIFY_DEFAULT_SCOPES = "read_orders,read_products,read_customers,read_analytics";
+export const SHOPIFY_DEFAULT_SCOPES = "read_orders,read_all_orders,read_products,read_customers,read_analytics";
 
 export type ShopifyConfig = {
   apiVersion: string;

@@ -1,0 +1,25 @@
+# External sync scheduler — Vercel Hobby only allows one daily cron, so GitHub
+# Actions pings the cron route every 15 minutes. The route's atomic claim +
+# cooldown make frequent calls safe (no duplicate work). The Vercel daily cron
+# stays as fallback.
+name: sync-cron
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: sync-cron
+  cancel-in-progress: false
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Trigger workspace sync
+        run: |
+          curl -fsS --max-time 300 \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "https://w3-ads.vercel.app/api/cron/workspace-sync"

@@ -477,5 +477,17 @@ export async function manualSyncAction(): Promise<{
     includeBackfill: true,
     thresholdMs: 0,
   });
-  return { ok: outcome.triggered, reason: outcome.reason };
+  if (!outcome.triggered) {
+    return { ok: false, reason: outcome.reason };
+  }
+  // The sync ran synchronously inside the trigger — read the real outcome so
+  // the button doesn't report success for a run that FAILED.
+  const state = await prisma.workspaceSyncState.findUnique({
+    where: { workspaceId: context.currentWorkspace.id },
+    select: { lastSyncStatus: true },
+  });
+  if (state?.lastSyncStatus === "FAILED") {
+    return { ok: false, reason: "sync_failed" };
+  }
+  return { ok: true, reason: outcome.reason };
 }

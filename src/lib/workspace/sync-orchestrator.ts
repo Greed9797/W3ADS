@@ -30,8 +30,15 @@ function estimatedBatchMs(provider: ConnectorProvider): number {
 }
 
 export const COOLDOWN_MS = 30 * 60 * 1000; // 30min on-login
-export const BACKGROUND_THRESHOLD_MS = 90 * 60 * 1000; // 90min cron
+// 30min: the external scheduler (GitHub Actions) hits the cron route every
+// 15min, so a workspace goes at most ~45min without sync. 90min only made
+// sense when the Vercel daily cron was the sole background trigger.
+export const BACKGROUND_THRESHOLD_MS = 30 * 60 * 1000;
 export const LOCK_STALE_MS = 5 * 60 * 1000; // 5min — release stuck locks fast
+// After a FAILED sync, lastSyncedAt is backdated so the workspace becomes
+// stale again this soon — the 15-min scheduler then retries naturally instead
+// of waiting out the full threshold ("a failure must not count as a sync").
+export const RETRY_DELAY_MS = 10 * 60 * 1000;
 
 export type TriggerOutcome = {
   triggered: boolean;
@@ -116,7 +123,16 @@ export async function triggerWorkspaceSyncIfStale(
         SET "lastSyncStartedAt" = EXCLUDED."lastSyncStartedAt",
             "lastSyncStatus"    = EXCLUDED."lastSyncStatus",
             "triggeredBy"       = EXCLUDED."triggeredBy",
-            "updatedAt"         = EXCLUDED."updatedAt"
+            "updatedAt"         = EXCLUDED."updatedAt",
+            -- Claiming over a still-set (expired) lock means the previous run
+            -- was killed before its finally block (maxDuration). Leave a trace:
+            -- if this run also dies, the row keeps this error + a stale
+            -- lastSyncStartedAt, which the health banner surfaces.
+            "lastSyncError" = CASE
+              WHEN w3ads."WorkspaceSyncState"."lastSyncStartedAt" IS NOT NULL
+                THEN 'sync anterior interrompido antes de concluir (timeout da função)'
+              ELSE w3ads."WorkspaceSyncState"."lastSyncError"
+            END
         WHERE (
           w3ads."WorkspaceSyncState"."lastSyncedAt" IS NULL
           OR w3ads."WorkspaceSyncState"."lastSyncedAt" < ${cooldownCutoff}
@@ -205,28 +221,51 @@ export async function runWorkspaceSync(
     // batch in flight never gets killed mid-write. A caller-supplied deadlineAt
     // (cron passing down its own remaining budget) tightens this further — a
     // sync claimed late in the cron run gets only what's left, never 270s.
+    // 240s: 60s of real headroom under Vercel's 300s kill so helpers that
+    // respect the deadline stop in time and the finally block always runs
+    // (270s left only 30s — heavy providers overshot it and got killed).
     const hardDeadline = Math.min(
-      Date.now() + 270_000,
+      Date.now() + 240_000,
       options.deadlineAt ?? Number.POSITIVE_INFINITY,
     );
 
     // Phase 1 — Foreground for every account first (current UTC month → today).
     // These are small/fast, so doing them all up front guarantees the dashboard
     // is current before the (slower) backfill consumes the rest of the budget.
+    // FAIR per-account slice (same contract as phase 2): one slow connector
+    // must not starve the remaining connectors of the same workspace.
     const syncable = accounts.filter((a) => SYNC_HELPERS[a.provider]);
-    for (const account of syncable) {
+    for (let i = 0; i < syncable.length; i += 1) {
+      const account = syncable[i];
       const helper = SYNC_HELPERS[account.provider]!;
+      const remainingAccounts = syncable.length - i;
+      const fairSlice = Math.floor(
+        (hardDeadline - Date.now()) / remainingAccounts,
+      );
+      const accountDeadline = Math.min(
+        hardDeadline,
+        Date.now() + Math.max(fairSlice, 0),
+      );
       try {
         await helper({
           connectorAccountId: account.id,
           range: computeForegroundRange(),
           // Bound heavy providers (iSET) so a big foreground window can't run
           // past the function limit and get killed (orphaned RUNNING job).
-          deadlineMs: hardDeadline,
+          deadlineMs: accountDeadline,
         });
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : "unknown";
         errors.push(`${account.provider} foreground: ${message}`);
+        Sentry.captureException(err, {
+          tags: {
+            module: "sync-orchestrator",
+            phase: "foreground",
+            provider: account.provider,
+            connectorAccountId: account.id,
+            workspaceId,
+          },
+        });
       }
     }
 
@@ -291,6 +330,15 @@ export async function runWorkspaceSync(
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : "unknown";
           errors.push(`${account.provider} backfill: ${message}`);
+          Sentry.captureException(err, {
+            tags: {
+              module: "sync-orchestrator",
+              phase: "backfill",
+              provider: account.provider,
+              connectorAccountId: account.id,
+              workspaceId,
+            },
+          });
         }
       }
     }
@@ -309,10 +357,16 @@ export async function runWorkspaceSync(
     // set and the workspace is locked until the 5-min stale TTL. Surface it to
     // Sentry; the TTL still provides eventual recovery.
     try {
+      // A failure must not count as a full sync: backdate lastSyncedAt so the
+      // workspace turns stale again in RETRY_DELAY_MS and the 15-min external
+      // scheduler retries it, instead of the failure buying a full cooldown.
+      const syncedAt = aggregateError
+        ? new Date(Date.now() - (BACKGROUND_THRESHOLD_MS - RETRY_DELAY_MS))
+        : new Date();
       await prisma.workspaceSyncState.update({
         where: { workspaceId },
         data: {
-          lastSyncedAt: new Date(),
+          lastSyncedAt: syncedAt,
           lastSyncStartedAt: null,
           lastSyncStatus: aggregateError ? "FAILED" : "SUCCESS",
           lastSyncError: aggregateError,

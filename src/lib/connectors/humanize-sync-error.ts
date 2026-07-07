@@ -28,6 +28,7 @@ const PROVIDER_LABEL: Record<ConnectorProvider, string> = {
   MAGAZORD: "Magazord",
   GOOGLE_SHEETS: "Google Sheets",
   LOJA_INTEGRADA: "Loja Integrada",
+  LEVANE: "Levane",
 };
 
 type Rule = {

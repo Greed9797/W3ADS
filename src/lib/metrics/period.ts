@@ -50,6 +50,7 @@ export const dashboardCommerceProviders = [
   ConnectorProvider.MAGAZORD,
   ConnectorProvider.GOOGLE_SHEETS,
   ConnectorProvider.LOJA_INTEGRADA,
+  ConnectorProvider.LEVANE,
 ] as const;
 
 export const dashboardTrafficProviderLabels: Record<
@@ -73,6 +74,7 @@ export const dashboardCommerceProviderLabels: Record<
   [ConnectorProvider.MAGAZORD]: "Magazord",
   [ConnectorProvider.GOOGLE_SHEETS]: "Google Sheets / WhatsApp",
   [ConnectorProvider.LOJA_INTEGRADA]: "Loja Integrada",
+  [ConnectorProvider.LEVANE]: "Levane",
 };
 
 const dateFormatter = new Intl.DateTimeFormat("pt-BR", {

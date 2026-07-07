@@ -48,6 +48,22 @@ function moneyFromMaybeObject(value: unknown): string | null {
 }
 
 /**
+ * Magazord stamps `dataHora` as "2026-07-01 09:20:54-03" (space separator, a
+ * 2-digit timezone offset with no minutes). Date.parse is unreliable on that
+ * exact shape, so normalize to strict ISO ("...T...-03:00") before it reaches
+ * parsePlacedAt — otherwise every Magazord order is dropped as "invalid placedAt".
+ */
+function magazordDate(value: unknown): string | null {
+  const s = asString(value);
+  if (!s) return null;
+  const m = s.match(
+    /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})([+-]\d{2}):?(\d{2})?$/,
+  );
+  if (!m) return null;
+  return `${m[1]}T${m[2]}${m[3]}:${m[4] ?? "00"}`;
+}
+
+/**
  * Some providers send status as an object (WBuy: `status: { id, nome }`).
  * Extract the human label, else treat as a scalar.
  */
@@ -256,6 +272,7 @@ export function normalizeManualCommerceOrder(
   }
 
   const placedAt =
+    magazordDate(payload.dataHora) ??
     firstString(
       payload.created_at,
       payload.data,
@@ -297,6 +314,8 @@ export function normalizeManualCommerceOrder(
       normalizeMoney(
         firstString(
           moneyFromMaybeObject(payload.valor_total),
+          // Magazord uses camelCase valorTotal.
+          moneyFromMaybeObject(payload.valorTotal),
           payload.total,
           payload.total_price,
           payload.valor,

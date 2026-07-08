@@ -474,7 +474,11 @@ function extractDailyGoogleSheetPayloads(
         valor: cells[revenueIndex]?.trim() ?? "",
         status: "APPROVED",
         origem: "whatsapp",
-        data: `${dateKey}T00:00:00.000Z`,
+        // Noon UTC (09:00 BRT), NOT midnight: the dashboard buckets revenue by
+        // São Paulo day, and a midnight-UTC stamp lands at 21:00 the PREVIOUS
+        // BRT day — shifting every sheet day back one and leaking month-boundary
+        // days (01/07 counted in June). Noon keeps each day on its own date.
+        data: `${dateKey}T12:00:00.000Z`,
         qtd_vendas: String(quantity),
         items_count: String(quantity),
       },

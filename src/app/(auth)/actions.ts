@@ -59,7 +59,9 @@ export async function loginAction(formData: FormData) {
     ...getLaxCookieOptions({ expires: session.expires }),
   });
 
-  redirect("/dashboard");
+  // "/" routes internal users (brand-viewers) to Marcas and bounces clients to
+  // their own dashboard — the single entry point, so login always lands on Marcas.
+  redirect("/");
 }
 
 export async function googleSignInAction() {
@@ -70,7 +72,7 @@ export async function googleSignInAction() {
     redirect("/login?error=google-not-configured");
   }
 
-  await signIn("google", { redirectTo: "/dashboard" });
+  await signIn("google", { redirectTo: "/" });
 }
 
 export async function signUpAction(formData: FormData) {
@@ -116,7 +118,9 @@ export async function signUpAction(formData: FormData) {
       ...getLaxCookieOptions({ expires: session.expires }),
     });
 
-    redirect("/dashboard");
+    // "/" routes internal users (brand-viewers) to Marcas and bounces clients to
+  // their own dashboard — the single entry point, so login always lands on Marcas.
+  redirect("/");
   } catch (error) {
     if (error instanceof AuthServiceError && error.code === "EMAIL_IN_USE") {
       redirect("/sign-up?error=email-in-use");

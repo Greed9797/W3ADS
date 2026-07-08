@@ -65,6 +65,8 @@ const WBUY_PAID_FULFILLMENT_TERMS: ReadonlyArray<string> = [
   "transito",
   "enviado",
   "postado",
+  "entrega", // "Saiu para entrega" — out for delivery, post-payment
+  "retirada", // "Disponível para retirada" — ready for pickup, post-payment
 ];
 
 const DIACRITICS_RE = /[̀-ͯ]/g;

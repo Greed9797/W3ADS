@@ -403,6 +403,14 @@ function buildPageHref(
   return qs ? `/dashboards?${qs}` : "/dashboards";
 }
 
+// Marcas aggregates EVERY workspace, but its only freshness signal
+// (DashboardAutoRefresh) is tied to the CURRENT workspace's sync. A brand can
+// update in the DB while the current workspace is idle, leaving the Marcas card
+// stale/zeroed. force-dynamic guarantees a fresh server render (fresh DB read)
+// on every request/navigation instead of serving a cached one.
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export default async function DashboardsPage({
   searchParams,
 }: DashboardsPageProps) {

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { ConnectorProvider, ConnectorStatus, SyncStatus } from "@prisma/client";
+import { ConnectorProvider } from "@prisma/client";
 
 import { connectorAccessTokenFromAccount } from "@/lib/connectors/credentials";
 import {
@@ -8,7 +8,10 @@ import {
 } from "@/lib/connectors/provider-config";
 import { prisma } from "@/lib/db/prisma";
 import {
-  buildSyncJobCreateInput,
+  createSyncJob,
+  recordSyncFailure,
+  recordSyncSuccess,
+  throwClassifiedSyncFailure,
   type ProductionSyncType,
 } from "@/lib/jobs/sync-operations";
 
@@ -135,12 +138,10 @@ export async function syncMetaDailyMetrics(input: {
   const connector = await prisma.connectorAccount.findUniqueOrThrow({
     where: { id: input.connectorAccountId },
   });
-  const syncJob = await prisma.syncJob.create({
-    data: buildSyncJobCreateInput({
-      connector,
-      syncType: input.syncType ?? "BACKFILL",
-      metadata: input.range,
-    }),
+  const syncJob = await createSyncJob({
+    connector,
+    syncType: input.syncType ?? "BACKFILL",
+    metadata: input.range,
   });
 
   try {
@@ -207,26 +208,13 @@ export async function syncMetaDailyMetrics(input: {
       );
     }
 
-    await prisma.connectorAccount.update({
-      where: { id: connector.id },
-      data: {
-        lastSyncedAt: new Date(),
-        lastSyncError: truncated
-          ? "Sincronizando histórico em segundo plano — aguarde os próximos ciclos."
-          : null,
-        status: ConnectorStatus.ACTIVE,
-        // historicalSyncedAt / historicalBackfillUntil are managed by the
-        // orchestrator (see sync-orchestrator.ts) to keep this layer
-        // agnostic of the foreground/backfill split.
-      },
-    });
-    await prisma.syncJob.update({
-      where: { id: syncJob.id },
-      data: {
-        status: SyncStatus.SUCCESS,
-        finishedAt: new Date(),
-        rowsUpdated: insights.length,
-      },
+    await recordSyncSuccess({
+      connectorAccountId: connector.id,
+      syncJobId: syncJob.id,
+      rowsUpdated: insights.length,
+      lastSyncError: truncated
+        ? "Sincronizando histórico em segundo plano — aguarde os próximos ciclos."
+        : null,
     });
 
     return { rowsUpserted: insights.length };
@@ -242,24 +230,14 @@ export async function syncMetaDailyMetrics(input: {
     }
     const tokenExpired = isMetaTokenExpiredError(caught);
 
-    await prisma.connectorAccount.update({
-      where: { id: input.connectorAccountId },
-      data: {
-        status: tokenExpired
-          ? ConnectorStatus.TOKEN_EXPIRED
-          : ConnectorStatus.ERROR,
-        lastSyncError: message,
-      },
-    });
-    await prisma.syncJob.update({
-      where: { id: syncJob.id },
-      data: {
-        status: SyncStatus.FAILED,
-        finishedAt: new Date(),
-        errorMessage: message,
-      },
+    const classification = await recordSyncFailure({
+      connectorAccountId: input.connectorAccountId,
+      syncJobId: syncJob.id,
+      previousFailureCount: connector.syncFailureCount,
+      error: tokenExpired ? new Error("Meta access token expired") : caught,
+      message,
     });
 
-    throw caught;
+    throwClassifiedSyncFailure({ classification, message, cause: caught });
   }
 }

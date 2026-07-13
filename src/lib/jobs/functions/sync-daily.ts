@@ -2,7 +2,12 @@ import { ConnectorStatus } from "@prisma/client";
 import { cron } from "inngest";
 
 import { prisma } from "@/lib/db/prisma";
-import { buildSyncRunEvents, isSyncableProvider } from "@/lib/jobs/sync-operations";
+import {
+  buildSyncRunEvents,
+  isSyncableProvider,
+  recoverOrphanedSyncJobs,
+  recoverTransientSyncErrors,
+} from "@/lib/jobs/sync-operations";
 import { inngest } from "@/lib/jobs/inngest-client";
 
 export const syncActiveConnectorsDaily = inngest.createFunction(
@@ -12,10 +17,23 @@ export const syncActiveConnectorsDaily = inngest.createFunction(
     triggers: [cron("TZ=UTC 0 9 * * *")],
   },
   async ({ step }) => {
+    await step.run("recover stale sync state", async () => {
+      const [orphanedJobs, transientConnectors] = await Promise.all([
+        recoverOrphanedSyncJobs(),
+        recoverTransientSyncErrors(),
+      ]);
+      return {
+        orphanedJobs: orphanedJobs.count,
+        transientConnectors: transientConnectors.count,
+      };
+    });
+
+    const now = new Date();
     const connectors = await step.run("load active connectors", () =>
       prisma.connectorAccount.findMany({
         where: {
           status: ConnectorStatus.ACTIVE,
+          OR: [{ syncRetryAt: null }, { syncRetryAt: { lte: now } }],
         },
         select: {
           id: true,

@@ -40,4 +40,16 @@ describe("callWithRetry", () => {
 
     expect(sleep).toHaveBeenCalledWith(2000);
   });
+
+  it("caps an abusive retry-after so a function is not held indefinitely", async () => {
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const fn = vi
+      .fn<() => Promise<string>>()
+      .mockRejectedValueOnce({ response: { status: 429, headers: { "retry-after": "86400" } } })
+      .mockResolvedValueOnce("ok");
+
+    await expect(callWithRetry(fn, { sleep })).resolves.toBe("ok");
+
+    expect(sleep).toHaveBeenCalledWith(30_000);
+  });
 });

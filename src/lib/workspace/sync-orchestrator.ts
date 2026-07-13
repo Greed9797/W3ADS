@@ -33,6 +33,14 @@ export const COOLDOWN_MS = 30 * 60 * 1000; // 30min on-login
 export const BACKGROUND_THRESHOLD_MS = 90 * 60 * 1000; // 90min cron
 export const LOCK_STALE_MS = 5 * 60 * 1000; // 5min — release stuck locks fast
 
+type SyncRunStatus = "SUCCESS" | "FAILED" | "PARTIAL";
+
+export type WorkspaceSyncResult = {
+  status: SyncRunStatus;
+  errors: string[];
+  skippedForRetry: number;
+};
+
 export type TriggerOutcome = {
   triggered: boolean;
   reason:
@@ -58,9 +66,21 @@ export type TriggerWorkspaceSyncInput = {
   runner?: (
     workspaceId: string,
     triggeredBy: string,
-    options: { includeBackfill: boolean; deadlineAt?: number },
+    options: {
+      includeBackfill: boolean;
+      deadlineAt?: number;
+      ignoreRetryBackoff?: boolean;
+    },
   ) => Promise<void> | void;
+  ignoreRetryBackoff?: boolean;
 };
+
+function eligibleConnectorWhere(now: Date): Prisma.ConnectorAccountWhereInput {
+  return {
+    status: ConnectorStatus.ACTIVE,
+    OR: [{ syncRetryAt: null }, { syncRetryAt: { lte: now } }],
+  };
+}
 
 /**
  * Attempts to claim a workspace sync slot via atomic compare-and-swap.
@@ -91,7 +111,12 @@ export async function triggerWorkspaceSyncIfStale(
   }
 
   const activeCount = await prisma.connectorAccount.count({
-    where: { workspaceId: input.workspaceId, status: ConnectorStatus.ACTIVE },
+    where: {
+      workspaceId: input.workspaceId,
+      ...(input.ignoreRetryBackoff
+        ? { status: ConnectorStatus.ACTIVE }
+        : eligibleConnectorWhere(now)),
+    },
   });
   if (activeCount === 0) {
     return { triggered: false, reason: "no_active_connectors" };
@@ -120,6 +145,7 @@ export async function triggerWorkspaceSyncIfStale(
         WHERE (
           w3ads."WorkspaceSyncState"."lastSyncedAt" IS NULL
           OR w3ads."WorkspaceSyncState"."lastSyncedAt" < ${cooldownCutoff}
+          OR w3ads."WorkspaceSyncState"."lastSyncStatus" IN ('FAILED', 'PARTIAL')
         )
         AND (
           w3ads."WorkspaceSyncState"."lastSyncStartedAt" IS NULL
@@ -149,6 +175,7 @@ export async function triggerWorkspaceSyncIfStale(
     await runner(input.workspaceId, input.triggeredBy, {
       includeBackfill,
       deadlineAt: input.deadlineAt,
+      ...(input.ignoreRetryBackoff ? { ignoreRetryBackoff: true } : {}),
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "unknown error";
@@ -163,7 +190,11 @@ export async function triggerWorkspaceSyncIfStale(
 async function defaultRunner(
   workspaceId: string,
   _triggeredBy: string,
-  options: { includeBackfill: boolean; deadlineAt?: number },
+  options: {
+    includeBackfill: boolean;
+    deadlineAt?: number;
+    ignoreRetryBackoff?: boolean;
+  },
 ) {
   await runWorkspaceSync(workspaceId, options);
 }
@@ -171,14 +202,20 @@ async function defaultRunner(
 /**
  * Runs sync across every ACTIVE connector of the workspace.
  * Failures per-connector are recorded but do not abort the loop.
- * Always releases the lock and updates `lastSyncedAt` in the `finally` block.
+ * Always releases the lock. `lastSyncedAt` advances only after a full success.
  */
 export async function runWorkspaceSync(
   workspaceId: string,
-  options: { includeBackfill?: boolean; deadlineAt?: number } = {},
-): Promise<void> {
+  options: {
+    includeBackfill?: boolean;
+    deadlineAt?: number;
+    ignoreRetryBackoff?: boolean;
+  } = {},
+): Promise<WorkspaceSyncResult> {
   const includeBackfill = options.includeBackfill ?? true;
-  let aggregateError: string | null = null;
+  const errors: string[] = [];
+  let skippedForRetry = 0;
+  let status: SyncRunStatus = "SUCCESS";
   const startedAt = Date.now();
 
   console.info(`[sync-orchestrator] start workspace=${workspaceId}`);
@@ -190,17 +227,31 @@ export async function runWorkspaceSync(
   });
 
   try {
+    const now = new Date();
     const accounts = await prisma.connectorAccount.findMany({
       where: { workspaceId, status: ConnectorStatus.ACTIVE },
       select: {
         id: true,
         provider: true,
+        syncRetryAt: true,
+        syncFailureCount: true,
         historicalSyncedAt: true,
         historicalBackfillUntil: true,
       },
     });
 
-    const errors: string[] = [];
+    const eligibleAccounts = options.ignoreRetryBackoff
+      ? accounts
+      : accounts.filter(
+          (account) =>
+            !account.syncRetryAt || account.syncRetryAt.getTime() <= now.getTime(),
+        );
+    skippedForRetry = accounts.filter(
+      (account) =>
+        Boolean(account.syncRetryAt) &&
+        account.syncRetryAt!.getTime() > now.getTime() &&
+        Boolean(SYNC_HELPERS[account.provider]),
+    ).length;
     // Hard wall-clock budget, kept ~30s under Vercel's 300s function limit so a
     // batch in flight never gets killed mid-write. A caller-supplied deadlineAt
     // (cron passing down its own remaining budget) tightens this further — a
@@ -213,7 +264,7 @@ export async function runWorkspaceSync(
     // Phase 1 — Foreground for every account first (current UTC month → today).
     // These are small/fast, so doing them all up front guarantees the dashboard
     // is current before the (slower) backfill consumes the rest of the budget.
-    const syncable = accounts.filter((a) => SYNC_HELPERS[a.provider]);
+    const syncable = eligibleAccounts.filter((a) => SYNC_HELPERS[a.provider]);
     for (const account of syncable) {
       const helper = SYNC_HELPERS[account.provider]!;
       try {
@@ -296,10 +347,13 @@ export async function runWorkspaceSync(
     }
 
     if (errors.length > 0) {
-      aggregateError = errors.join(" | ").slice(0, 1000);
+      status = "FAILED";
+    } else if (skippedForRetry > 0) {
+      status = "PARTIAL";
     }
   } catch (err: unknown) {
-    aggregateError = err instanceof Error ? err.message : "unknown";
+    errors.push(err instanceof Error ? err.message : "unknown");
+    status = "FAILED";
     Sentry.captureException(err, {
       tags: { module: "sync-orchestrator", workspaceId },
     });
@@ -312,10 +366,15 @@ export async function runWorkspaceSync(
       await prisma.workspaceSyncState.update({
         where: { workspaceId },
         data: {
-          lastSyncedAt: new Date(),
+          ...(status === "SUCCESS" ? { lastSyncedAt: new Date() } : {}),
           lastSyncStartedAt: null,
-          lastSyncStatus: aggregateError ? "FAILED" : "SUCCESS",
-          lastSyncError: aggregateError,
+          lastSyncStatus: status,
+          lastSyncError:
+            errors.length > 0
+              ? errors.join(" | ").slice(0, 1000)
+              : skippedForRetry > 0
+                ? `${skippedForRetry} connector(s) aguardando retry automático.`
+                : null,
           syncCount: { increment: 1 },
         },
       });
@@ -333,18 +392,24 @@ export async function runWorkspaceSync(
 
     console.info(
       `[sync-orchestrator] done workspace=${workspaceId} elapsed=${elapsedSec}s status=${
-        aggregateError ? "FAILED" : "SUCCESS"
+        status
       }`,
     );
     Sentry.addBreadcrumb({
       category: "sync",
-      level: aggregateError ? "error" : "info",
+      level: status === "FAILED" ? "error" : "info",
       message: "runWorkspaceSync done",
       data: {
         workspaceId,
         elapsedSec,
-        status: aggregateError ? "FAILED" : "SUCCESS",
+        status,
       },
     });
   }
+
+  return {
+    status,
+    errors,
+    skippedForRetry,
+  };
 }

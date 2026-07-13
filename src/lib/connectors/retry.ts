@@ -11,6 +11,7 @@ type RetryHeaders = Headers | Record<string, string | undefined> | undefined;
 type RetryOptions = {
   maxAttempts?: number;
   baseDelayMs?: number;
+  maxDelayMs?: number;
   sleep?: (delayMs: number) => Promise<void>;
   random?: () => number;
 };
@@ -65,6 +66,7 @@ export async function callWithRetry<T>(
   const {
     maxAttempts = 5,
     baseDelayMs = 1000,
+    maxDelayMs = 30_000,
     sleep = defaultSleep,
     random = Math.random,
   } = options;
@@ -89,7 +91,7 @@ export async function callWithRetry<T>(
         getHeader((error as RetryError).response?.headers, "retry-after"),
       );
       const delay = retryAfter ?? baseDelayMs * 2 ** attempt + random() * 300;
-      await sleep(Math.round(delay));
+      await sleep(Math.min(Math.round(delay), maxDelayMs));
     }
   }
 

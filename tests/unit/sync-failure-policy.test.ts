@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   classifySyncFailure,
+  isKnownTransientSyncFailure,
   nextSyncRetryAt,
   syncRetryDelayMs,
 } from "@/lib/connectors/sync-failure";
@@ -29,6 +30,7 @@ describe("sync failure policy", () => {
 
   it.each([
     "HTTP 403 permission denied",
+    "HTTP 400 invalid parameter",
     "Meta provider config is missing",
     "Credentials missing: no vault secret and no inline ciphertext",
     "HTTP 404 account not found",
@@ -45,16 +47,22 @@ describe("sync failure policy", () => {
     });
   });
 
+  it("only marks explicit outage signals as safe for legacy ERROR recovery", () => {
+    expect(isKnownTransientSyncFailure("HTTP 503 from provider")).toBe(true);
+    expect(isKnownTransientSyncFailure("refresh token expired")).toBe(false);
+    expect(isKnownTransientSyncFailure("manual configuration error")).toBe(false);
+  });
+
   it("uses progressive delays capped at six hours", () => {
-    expect(syncRetryDelayMs(1, () => 0)).toBe(5 * 60 * 1000);
-    expect(syncRetryDelayMs(2, () => 0)).toBe(10 * 60 * 1000);
-    expect(syncRetryDelayMs(20, () => 0)).toBe(6 * 60 * 60 * 1000);
+    expect(syncRetryDelayMs(1, () => 0.5)).toBe(5 * 60 * 1000);
+    expect(syncRetryDelayMs(2, () => 0.5)).toBe(10 * 60 * 1000);
+    expect(syncRetryDelayMs(20, () => 0.5)).toBe(6 * 60 * 60 * 1000);
   });
 
   it("calculates the next retry timestamp from the failure count", () => {
     const now = new Date("2026-07-13T12:00:00.000Z");
 
-    expect(nextSyncRetryAt(now, 1, () => 0)).toEqual(
+    expect(nextSyncRetryAt(now, 1, () => 0.5)).toEqual(
       new Date("2026-07-13T12:05:00.000Z"),
     );
   });

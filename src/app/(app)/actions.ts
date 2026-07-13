@@ -476,6 +476,7 @@ export async function manualSyncAction(): Promise<{
     // 3-year window is covered).
     includeBackfill: true,
     thresholdMs: 0,
+    ignoreRetryBackoff: true,
   });
   return { ok: outcome.triggered, reason: outcome.reason };
 }

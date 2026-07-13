@@ -20,13 +20,13 @@ model User {
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
 
-  accounts            Account[]
-  memberships         Membership[]
-  sessions            Session[]
-  auditLogs           AuditLog[]
-  passwordResetTokens PasswordResetToken[]
-  sentInvites         WorkspaceInvite[]    @relation("WorkspaceInviteInviter")
-  betaFeedbacks       BetaFeedback[]
+  accounts              Account[]
+  memberships           Membership[]
+  sessions              Session[]
+  auditLogs             AuditLog[]
+  passwordResetTokens   PasswordResetToken[]
+  sentInvites           WorkspaceInvite[]      @relation("WorkspaceInviteInviter")
+  betaFeedbacks         BetaFeedback[]
   accountReviewSessions AccountReviewSession[]
 }
 
@@ -182,7 +182,10 @@ model ConnectorAccount {
   tokenExpiresAt            DateTime?
   metadata                  Json?
   lastSyncedAt              DateTime?
+  lastSyncAttemptedAt       DateTime?
   lastSyncError             String?
+  syncFailureCount          Int                  @default(0)
+  syncRetryAt               DateTime?
   historicalSyncedAt        DateTime?
   historicalBackfillUntil   DateTime?
   createdAt                 DateTime             @default(now())
@@ -195,6 +198,7 @@ model ConnectorAccount {
 
   @@unique([workspaceId, provider, externalAccountId])
   @@index([workspaceId, provider])
+  @@index([workspaceId, status, syncRetryAt])
 }
 
 model ConnectorProviderConfig {

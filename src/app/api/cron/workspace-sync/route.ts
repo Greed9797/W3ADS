@@ -3,6 +3,10 @@ import { ConnectorStatus, type Prisma } from "@prisma/client";
 
 import { prisma } from "@/lib/db/prisma";
 import {
+  recoverOrphanedSyncJobs,
+  recoverTransientSyncErrors,
+} from "@/lib/jobs/sync-operations";
+import {
   BACKGROUND_THRESHOLD_MS,
   triggerWorkspaceSyncIfStale,
 } from "@/lib/workspace/sync-orchestrator";
@@ -34,13 +38,69 @@ export async function GET(request: NextRequest) {
   // Severe staleness: 2× the background threshold. Anything older than this that
   // the per-run BATCH_SIZE can't reach is a coverage gap we must surface.
   const severeCutoff = new Date(Date.now() - 2 * BACKGROUND_THRESHOLD_MS);
+  const failureStatuses = ["FAILED", "PARTIAL"];
+  const now = new Date();
+  const eligibleConnector: Prisma.ConnectorAccountWhereInput = {
+    status: ConnectorStatus.ACTIVE,
+    OR: [{ syncRetryAt: null }, { syncRetryAt: { lte: now } }],
+  };
+  const retryDueConnector: Prisma.ConnectorAccountWhereInput = {
+    status: ConnectorStatus.ACTIVE,
+    syncRetryAt: { not: null, lte: now },
+  };
+
+  const [recoveredOrphanedJobs, recoveredTransientConnectors] =
+    await Promise.all([
+      recoverOrphanedSyncJobs(),
+      recoverTransientSyncErrors(),
+    ]);
+  if (recoveredOrphanedJobs.count > 0) {
+    console.warn(
+      `[cron/workspace-sync] recovered orphaned jobs=${recoveredOrphanedJobs.count}`,
+    );
+  }
+  if (recoveredTransientConnectors.count > 0) {
+    console.warn(
+      `[cron/workspace-sync] reactivated transient ERROR connectors=${recoveredTransientConnectors.count}`,
+    );
+  }
 
   const staleWhere: Prisma.WorkspaceWhereInput = {
-    connectors: { some: { status: ConnectorStatus.ACTIVE } },
-    OR: [
-      { syncState: null },
-      { syncState: { lastSyncedAt: { lt: cutoff } } },
-      { syncState: { lastSyncedAt: null } },
+    AND: [
+      { connectors: { some: eligibleConnector } },
+      {
+        OR: [
+          { syncState: null },
+          {
+            syncState: {
+              lastSyncedAt: { lt: cutoff },
+              lastSyncStatus: null,
+            },
+          },
+          {
+            syncState: {
+              lastSyncedAt: { lt: cutoff },
+              lastSyncStatus: { notIn: failureStatuses },
+            },
+          },
+          {
+            syncState: {
+              lastSyncedAt: null,
+              lastSyncStatus: null,
+            },
+          },
+          {
+            syncState: {
+              lastSyncedAt: null,
+              lastSyncStatus: { notIn: failureStatuses },
+            },
+          },
+          {
+            syncState: { lastSyncStatus: { in: failureStatuses } },
+            connectors: { some: retryDueConnector },
+          },
+        ],
+      },
     ],
   };
 
@@ -61,7 +121,7 @@ export async function GET(request: NextRequest) {
     prisma.workspace.count({ where: staleWhere }),
     prisma.workspace.count({
       where: {
-        connectors: { some: { status: ConnectorStatus.ACTIVE } },
+        connectors: { some: eligibleConnector },
         OR: [
           { syncState: null },
           { syncState: { lastSyncedAt: { lt: severeCutoff } } },
@@ -141,6 +201,8 @@ export async function GET(request: NextRequest) {
     notReached,
     backlog,
     severeBacklog,
+    recoveredOrphanedJobs: recoveredOrphanedJobs.count,
+    recoveredTransientConnectors: recoveredTransientConnectors.count,
     outcomes,
   });
 }

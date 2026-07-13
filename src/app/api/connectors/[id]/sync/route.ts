@@ -102,18 +102,9 @@ export async function POST(_request: NextRequest, context: RouteContext) {
         ? error.message
         : "Erro desconhecido ao sincronizar.";
 
-    try {
-      await prisma.connectorAccount.update({
-        where: { id: account.id },
-        data: {
-          status: "ERROR",
-          lastSyncError: message,
-          lastSyncedAt: new Date(),
-        },
-      });
-    } catch {
-      // Defensive: ignore DB update failure so we still return a response.
-    }
+    // The connector helper already persisted the classified failure, retry
+    // timestamp, SyncJob status, and connector status. Do not overwrite a
+    // transient failure with ERROR or advance lastSyncedAt here.
 
     await logAudit({
       action: "connector.manual.connect",

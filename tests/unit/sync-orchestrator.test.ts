@@ -223,6 +223,8 @@ describe("runWorkspaceSync", () => {
       select: {
         id: true,
         provider: true,
+        syncRetryAt: true,
+        syncFailureCount: true,
         historicalSyncedAt: true,
         historicalBackfillUntil: true,
       },

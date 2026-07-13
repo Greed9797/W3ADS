@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { ConnectorProvider, ConnectorStatus, SyncStatus } from "@prisma/client";
+import { ConnectorProvider, ConnectorStatus } from "@prisma/client";
 
 import {
   connectorAccessTokenFromAccount,
@@ -12,7 +12,10 @@ import {
 } from "@/lib/connectors/provider-config";
 import { prisma } from "@/lib/db/prisma";
 import {
-  buildSyncJobCreateInput,
+  createSyncJob,
+  recordSyncFailure,
+  recordSyncSuccess,
+  throwClassifiedSyncFailure,
   type ProductionSyncType,
 } from "@/lib/jobs/sync-operations";
 
@@ -117,12 +120,10 @@ export async function syncGoogleAdsDailyMetrics(input: {
   const connector = await prisma.connectorAccount.findUniqueOrThrow({
     where: { id: input.connectorAccountId },
   });
-  const syncJob = await prisma.syncJob.create({
-    data: buildSyncJobCreateInput({
-      connector,
-      syncType: input.syncType ?? "BACKFILL",
-      metadata: input.range,
-    }),
+  const syncJob = await createSyncJob({
+    connector,
+    syncType: input.syncType ?? "BACKFILL",
+    metadata: input.range,
   });
 
   try {
@@ -205,21 +206,10 @@ export async function syncGoogleAdsDailyMetrics(input: {
       );
     }
 
-    await prisma.connectorAccount.update({
-      where: { id: connector.id },
-      data: {
-        lastSyncedAt: new Date(),
-        lastSyncError: null,
-        status: ConnectorStatus.ACTIVE,
-      },
-    });
-    await prisma.syncJob.update({
-      where: { id: syncJob.id },
-      data: {
-        status: SyncStatus.SUCCESS,
-        finishedAt: new Date(),
-        rowsUpdated: metrics.length,
-      },
+    await recordSyncSuccess({
+      connectorAccountId: connector.id,
+      syncJobId: syncJob.id,
+      rowsUpdated: metrics.length,
     });
 
     return { rowsUpserted: metrics.length };
@@ -235,26 +225,14 @@ export async function syncGoogleAdsDailyMetrics(input: {
     ) {
       message = `${message} | body: ${caught.body.slice(0, 200)}`;
     }
-    const status = message.includes("refresh token")
-      ? ConnectorStatus.TOKEN_EXPIRED
-      : ConnectorStatus.ERROR;
-
-    await prisma.connectorAccount.update({
-      where: { id: input.connectorAccountId },
-      data: {
-        status,
-        lastSyncError: message,
-      },
-    });
-    await prisma.syncJob.update({
-      where: { id: syncJob.id },
-      data: {
-        status: SyncStatus.FAILED,
-        finishedAt: new Date(),
-        errorMessage: message,
-      },
+    const classification = await recordSyncFailure({
+      connectorAccountId: input.connectorAccountId,
+      syncJobId: syncJob.id,
+      previousFailureCount: connector.syncFailureCount,
+      error: caught,
+      message,
     });
 
-    throw caught;
+    throwClassifiedSyncFailure({ classification, message, cause: caught });
   }
 }

@@ -1,10 +1,10 @@
-import { ConnectorStatus } from "@prisma/client";
+import { ConnectorProvider, ConnectorStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { prismaMocks } = vi.hoisted(() => ({
   prismaMocks: {
     workspace: { findUnique: vi.fn() },
-    connectorAccount: { count: vi.fn(), findMany: vi.fn() },
+    connectorAccount: { count: vi.fn(), findMany: vi.fn(), update: vi.fn() },
     workspaceSyncState: {
       upsert: vi.fn(),
       updateMany: vi.fn(),
@@ -15,12 +15,16 @@ const { prismaMocks } = vi.hoisted(() => ({
   },
 }));
 
+const { syncHelpersMock } = vi.hoisted(() => ({
+  syncHelpersMock: {} as Record<string, ReturnType<typeof vi.fn>>,
+}));
+
 vi.mock("@/lib/db/prisma", () => ({
   prisma: prismaMocks,
 }));
 
 vi.mock("@/lib/connectors/sync-helpers", () => ({
-  SYNC_HELPERS: {},
+  SYNC_HELPERS: syncHelpersMock,
   isoDaysAgo: (n: number) => `iso-${n}d`,
   todayIso: () => "iso-today",
 }));
@@ -35,10 +39,14 @@ import {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  for (const key of Object.keys(syncHelpersMock)) {
+    delete syncHelpersMock[key];
+  }
   prismaMocks.workspace.findUnique.mockResolvedValue({ id: "ws-1" });
   prismaMocks.connectorAccount.count.mockResolvedValue(2);
   prismaMocks.workspaceSyncState.upsert.mockResolvedValue({});
   prismaMocks.workspaceSyncState.update.mockResolvedValue({});
+  prismaMocks.connectorAccount.update.mockResolvedValue({});
   prismaMocks.workspaceSyncState.findUnique.mockResolvedValue(null);
   prismaMocks.$queryRaw.mockResolvedValue([]);
 });
@@ -219,5 +227,26 @@ describe("runWorkspaceSync", () => {
         historicalBackfillUntil: true,
       },
     });
+  });
+
+  it("does not advance lastSyncedAt when a connector fails", async () => {
+    syncHelpersMock.META_ADS = vi
+      .fn()
+      .mockRejectedValue(new Error("HTTP 503 from provider"));
+    prismaMocks.connectorAccount.findMany.mockResolvedValueOnce([
+      {
+        id: "meta-1",
+        provider: ConnectorProvider.META_ADS,
+        historicalSyncedAt: null,
+        historicalBackfillUntil: null,
+      },
+    ]);
+
+    await runWorkspaceSync("ws-1");
+
+    const updateArgs = prismaMocks.workspaceSyncState.update.mock.calls[0][0];
+    expect(updateArgs.data.lastSyncStatus).toBe("FAILED");
+    expect(updateArgs.data).not.toHaveProperty("lastSyncedAt");
+    expect(updateArgs.data.lastSyncError).toContain("HTTP 503");
   });
 });

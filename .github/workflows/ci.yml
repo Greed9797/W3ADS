@@ -8,15 +8,35 @@ on:
       - master
       - feat/connectors-expanded
 
+permissions:
+  contents: read
+
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: w3ads_ci_ephemeral
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d w3ads_ci_ephemeral"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     env:
       AUTH_SECRET: ci-local-secret-ci-local-secret-ci
       NEXTAUTH_SECRET: ci-local-secret-ci-local-secret-ci
-      AUTH_DISABLED: "true"
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/adstart_w3
-      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/adstart_w3
+      AUTH_DISABLED: "false"
+      DEV_AUTH_BYPASS_EMAIL: gustavo@w3ads.local
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/w3ads_ci_ephemeral?schema=w3ads
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/w3ads_ci_ephemeral?schema=w3ads
+      NEXT_TELEMETRY_DISABLED: "1"
     steps:
       - uses: actions/checkout@v4
       - name: Reject sync-conflict shadow files
@@ -32,10 +52,25 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm run lint
-      - run: npm test
-      - run: npm run build
-      - run: npm run e2e
-      - run: npm audit --audit-level=high
+      - name: Install dependencies
+        run: npm ci
+      - name: Bootstrap Supabase compatibility
+        run: npx prisma db execute --url "$DIRECT_URL" --file scripts/ci/bootstrap-supabase.sql
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
+      - name: Unit tests
+        run: npm test
+      - name: Production build and migrations
+        run: npm run build
+      - name: Verify tenant RLS isolation
+        run: npx prisma db execute --url "$DIRECT_URL" --file scripts/ci/verify-rls.sql
+      - name: Seed E2E database
+        run: node --import tsx prisma/seed.ts
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+      - name: End-to-end tests
+        run: npm run e2e
+      - name: Dependency audit
+        run: npm audit --audit-level=high

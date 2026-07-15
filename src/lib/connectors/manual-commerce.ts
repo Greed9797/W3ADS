@@ -336,6 +336,11 @@ export function normalizeManualCommerceOrder(
     items,
     status:
       firstString(
+        // Magazord exposes the business status under
+        // `pedidoSituacaoDescricao` (for example "Aguardando Pagamento",
+        // "Cancelado", "Crédito e Cadastro Aprovados" or "Transporte"). If
+        // ignored, every order falls through to APPROVED and inflates revenue.
+        statusFromMaybeObject(payload.pedidoSituacaoDescricao),
         // Loja Integrada situacao FK (code/URI) → PT term. Wins over the raw
         // `payload.situacao` (which may be a non-matching URI string).
         lojaIntegradaSituacaoLabel(payload.situacao),

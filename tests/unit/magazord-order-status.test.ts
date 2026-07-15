@@ -49,4 +49,10 @@ describe("Magazord order status → approved revenue", () => {
     expect(approved).toHaveLength(2);
     expect(revenue).toBe(2100);
   });
+
+  it("does not treat Transporte as paid outside Magazord", () => {
+    expect(
+      isApprovedOrderStatus("Transporte", ConnectorProvider.SHOPIFY),
+    ).toBe(false);
+  });
 });

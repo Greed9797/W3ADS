@@ -70,6 +70,11 @@ const WBUY_PAID_FULFILLMENT_TERMS: ReadonlyArray<string> = [
   // excludes ready-for-pickup until it's actually collected, so we mirror that.
 ];
 
+// Magazord order status 7 ("Transporte") is post-payment according to the
+// provider's official order-status lifecycle. Keep it provider-scoped: the same
+// word from another commerce platform does not prove payment.
+const MAGAZORD_PAID_FULFILLMENT_TERMS: ReadonlyArray<string> = ["transporte"];
+
 const DIACRITICS_RE = /[̀-ͯ]/g;
 
 export function isApprovedOrderStatus(
@@ -99,6 +104,13 @@ export function isApprovedOrderStatus(
   if (
     provider === "WBUY" &&
     WBUY_PAID_FULFILLMENT_TERMS.some((term) => normalized.includes(term))
+  ) {
+    return true;
+  }
+
+  if (
+    provider === "MAGAZORD" &&
+    MAGAZORD_PAID_FULFILLMENT_TERMS.some((term) => normalized.includes(term))
   ) {
     return true;
   }

@@ -105,5 +105,11 @@ describe("dashboard period", () => {
     expect(toBrtDateKey(new Date("2026-07-01T03:00:00.000Z"))).toBe(
       "2026-07-01",
     );
+    expect(toBrtDateKey(new Date("2026-07-16T02:59:59.999Z"))).toBe(
+      "2026-07-15",
+    );
+    expect(toBrtDateKey(new Date("2026-07-16T03:00:00.000Z"))).toBe(
+      "2026-07-16",
+    );
   });
 });

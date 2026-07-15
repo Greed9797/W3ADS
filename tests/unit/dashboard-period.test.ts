@@ -3,8 +3,10 @@ import { describe, expect, it } from "vitest";
 import { ConnectorProvider } from "@prisma/client";
 
 import {
+  getBrtOrderPeriodBounds,
   getDashboardFilters,
   getDashboardPeriod,
+  toBrtDateKey,
   toDateKey,
 } from "@/lib/metrics/period";
 
@@ -82,5 +84,26 @@ describe("dashboard period", () => {
     );
 
     expect(defaultFilters.comparisonEnabled).toBe(false);
+  });
+
+  it("maps an inclusive dashboard period to the same BRT order window on every surface", () => {
+    const bounds = getBrtOrderPeriodBounds(
+      new Date("2026-07-01T00:00:00.000Z"),
+      new Date("2026-07-15T00:00:00.000Z"),
+    );
+
+    expect(bounds.from).toEqual(new Date("2026-07-01T03:00:00.000Z"));
+    expect(bounds.toExclusive).toEqual(
+      new Date("2026-07-16T03:00:00.000Z"),
+    );
+  });
+
+  it("assigns UTC instants to their BRT calendar date", () => {
+    expect(toBrtDateKey(new Date("2026-07-01T02:59:59.999Z"))).toBe(
+      "2026-06-30",
+    );
+    expect(toBrtDateKey(new Date("2026-07-01T03:00:00.000Z"))).toBe(
+      "2026-07-01",
+    );
   });
 });

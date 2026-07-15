@@ -84,6 +84,10 @@ const dateFormatter = new Intl.DateTimeFormat("pt-BR", {
   timeZone: "UTC",
 });
 
+// Brazil (America/Sao_Paulo) has remained UTC-3 since 2019. Dashboard period
+// values are UTC-midnight date keys, while commerce orders are UTC instants.
+const BRT_OFFSET_MS = 3 * 60 * 60 * 1000;
+
 function firstParam(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
 }
@@ -212,6 +216,17 @@ function normalizePreset(
 
 export function toDateKey(date: Date) {
   return date.toISOString().slice(0, 10);
+}
+
+export function toBrtDateKey(date: Date) {
+  return toDateKey(new Date(date.getTime() - BRT_OFFSET_MS));
+}
+
+export function getBrtOrderPeriodBounds(from: Date, to: Date) {
+  return {
+    from: new Date(from.getTime() + BRT_OFFSET_MS),
+    toExclusive: new Date(addDays(to, 1).getTime() + BRT_OFFSET_MS),
+  };
 }
 
 export function listDateKeys(from: Date, to: Date) {

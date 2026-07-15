@@ -35,6 +35,7 @@ import {
 } from "@/lib/metrics/aggregator";
 import {
   dashboardTrafficProviders,
+  getBrtOrderPeriodBounds,
   getDashboardFilters,
   getDashboardPeriod,
 } from "@/lib/metrics/period";
@@ -230,12 +231,12 @@ function BrandCard({
 }
 
 async function getRealBrands(from: Date, to: Date): Promise<BrandRow[]> {
-  // `to` is start-of-UTC-day (today at 00:00). Use an exclusive upper bound one
-  // day later so the FULL current day is included — matching the per-workspace
-  // dashboard (which uses dayAfter(to)). A bare `lte: to` dropped today's
-  // orders and made the Marcas card diverge from the brand dashboard.
-  const toExclusive = new Date(to);
-  toExclusive.setUTCDate(toExclusive.getUTCDate() + 1);
+  // Commerce orders use the store's BRT calendar day on the single-workspace
+  // dashboard. Reuse the exact same bounds here so Marcas cannot include the
+  // first three UTC hours of the month as if they belonged to the next BRT day.
+  const orderBounds = getBrtOrderPeriodBounds(from, to);
+  const metricToExclusive = new Date(to);
+  metricToExclusive.setUTCDate(metricToExclusive.getUTCDate() + 1);
 
   // Fetch the workspace set FIRST, then scope the order/metric reads by
   // `workspaceId IN (...)`. Same result (this view aggregates every workspace),
@@ -257,8 +258,8 @@ async function getRealBrands(from: Date, to: Date): Promise<BrandRow[]> {
       where: {
         workspaceId: { in: workspaceIds },
         placedAt: {
-          gte: from,
-          lt: toExclusive,
+          gte: orderBounds.from,
+          lt: orderBounds.toExclusive,
         },
       },
       select: {
@@ -273,7 +274,7 @@ async function getRealBrands(from: Date, to: Date): Promise<BrandRow[]> {
         workspaceId: { in: workspaceIds },
         date: {
           gte: from,
-          lt: toExclusive,
+          lt: metricToExclusive,
         },
         // Spend/ROAS only from traffic providers — same contract as the
         // per-workspace dashboard. Without this, a future ad connector writing

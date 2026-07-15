@@ -7,7 +7,9 @@ import { isApprovedOrderStatus } from "./order-status";
 import {
   dashboardCommerceProviders,
   dashboardTrafficProviders,
+  getBrtOrderPeriodBounds,
   listDateKeys,
+  toBrtDateKey,
   toDateKey,
   type DashboardPeriod,
 } from "./period";
@@ -211,28 +213,9 @@ function isWithin(date: Date, from: Date, to: Date) {
   return key >= toDateKey(from) && key <= toDateKey(to);
 }
 
-// Brazil (America/Sao_Paulo) is a fixed UTC-3 — no DST since 2019. Order
-// timestamps are stored in UTC, but the dashboard's calendar day must follow
-// the store's LOCAL (BRT) day. Otherwise late-night BRT orders, which fall on
-// the next UTC day, are bucketed into the wrong day's GMV (a 21:39 BRT sale on
-// the 15th showed up under the 16th). Traffic DailyMetric rows are date-keyed
-// in the provider's own day and are intentionally NOT shifted here.
-const BRT_OFFSET_MS = 3 * 60 * 60 * 1000;
-
-// BRT calendar date of a UTC instant.
-function brtDateKey(date: Date) {
-  return toDateKey(new Date(date.getTime() - BRT_OFFSET_MS));
-}
-
 function isWithinBrt(date: Date, from: Date, to: Date) {
-  const key = brtDateKey(date);
+  const key = toBrtDateKey(date);
   return key >= toDateKey(from) && key <= toDateKey(to);
-}
-
-// UTC instant of the BRT midnight that corresponds to a UTC-midnight period
-// bound. Used to scope the SQL placedAt fetch to the BRT day window.
-function brtBound(date: Date) {
-  return new Date(date.getTime() + BRT_OFFSET_MS);
 }
 
 function round(value: number, decimals = 2) {
@@ -639,7 +622,7 @@ export function buildDashboardSnapshot(input: {
   );
 
   for (const order of currentOrders) {
-    const item = daily.get(brtDateKey(order.placedAt));
+    const item = daily.get(toBrtDateKey(order.placedAt));
     if (item) {
       const approved = approvedOrderCount(order);
       // Same rule as the headline revenue: only paid orders count toward the
@@ -686,7 +669,7 @@ export function buildDashboardSnapshot(input: {
   );
 
   for (const order of previousOrders) {
-    const currentKey = alignedByPreviousDate.get(brtDateKey(order.placedAt));
+    const currentKey = alignedByPreviousDate.get(toBrtDateKey(order.placedAt));
     const item = currentKey ? daily.get(currentKey) : null;
     if (item) {
       const approved = approvedOrderCount(order);
@@ -1247,6 +1230,10 @@ function dayAfter(date: Date): Date {
 async function findDashboardOrders(
   input: DashboardSnapshotQueryInput,
 ): Promise<DashboardOrderRow[]> {
+  const orderBounds = getBrtOrderPeriodBounds(
+    input.period.comparison.from,
+    input.period.to,
+  );
   const where = {
     workspaceId: input.workspaceId,
     platform: {
@@ -1254,10 +1241,10 @@ async function findDashboardOrders(
     },
     // BRT day window (UTC-3): shift the UTC-midnight bounds by +3h so the fetch
     // covers the store's local day. Precise per-day bucketing happens in-memory
-    // via brtDateKey/isWithinBrt.
+    // via toBrtDateKey/isWithinBrt.
     placedAt: {
-      gte: brtBound(input.period.comparison.from),
-      lt: brtBound(dayAfter(input.period.to)),
+      gte: orderBounds.from,
+      lt: orderBounds.toExclusive,
     },
   };
 
@@ -1308,6 +1295,10 @@ async function findDashboardOrders(
 async function findDashboardOrderItems(
   input: DashboardSnapshotQueryInput,
 ): Promise<DashboardOrderItemRow[]> {
+  const orderBounds = getBrtOrderPeriodBounds(
+    input.period.from,
+    input.period.to,
+  );
   try {
     const rows = await prisma.ecommerceOrderItem.findMany({
       where: {
@@ -1319,8 +1310,8 @@ async function findDashboardOrderItems(
         },
         // BRT day window (UTC-3) — see findDashboardOrders.
         placedAt: {
-          gte: brtBound(input.period.from),
-          lt: brtBound(dayAfter(input.period.to)),
+          gte: orderBounds.from,
+          lt: orderBounds.toExclusive,
         },
       },
       select: {

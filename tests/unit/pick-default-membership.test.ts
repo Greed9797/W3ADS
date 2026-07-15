@@ -1,4 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("@/lib/auth/auth", () => ({ auth: vi.fn() }));
+vi.mock("@/lib/db/prisma", () => ({ prisma: {} }));
+vi.mock("next/headers", () => ({ cookies: vi.fn() }));
+vi.mock("next/navigation", () => ({ redirect: vi.fn() }));
+vi.mock("@sentry/nextjs", () => ({
+  setUser: vi.fn(),
+  setTag: vi.fn(),
+}));
 
 import { pickDefaultMembership } from "@/lib/auth/current";
 

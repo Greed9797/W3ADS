@@ -33,6 +33,7 @@ export const SYNC_HELPERS: Partial<Record<ConnectorProvider, SyncHelper>> = {
   WBUY: (i) => syncEcommerceOrders({ ...i, syncType: BACKFILL }),
   MAGAZORD: (i) => syncEcommerceOrders({ ...i, syncType: BACKFILL }),
   LOJA_INTEGRADA: (i) => syncEcommerceOrders({ ...i, syncType: BACKFILL }),
+  LEVANE: (i) => syncEcommerceOrders({ ...i, syncType: BACKFILL }),
   NUVEMSHOP: (i) => syncEcommerceOrders({ ...i, syncType: BACKFILL }),
   SHOPIFY: (i) => syncEcommerceOrders({ ...i, syncType: BACKFILL }),
   META_ADS: (i) => syncMetaDailyMetrics({ ...i, syncType: BACKFILL }),

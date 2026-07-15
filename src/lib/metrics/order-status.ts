@@ -65,6 +65,9 @@ const WBUY_PAID_FULFILLMENT_TERMS: ReadonlyArray<string> = [
   "transito",
   "enviado",
   "postado",
+  "entrega", // "Saiu para entrega" — out for delivery, post-payment. NOT
+  // "retirada" ("disponível para retirada"): the store's own faturamento
+  // excludes ready-for-pickup until it's actually collected, so we mirror that.
 ];
 
 const DIACRITICS_RE = /[̀-ͯ]/g;
@@ -97,6 +100,14 @@ export function isApprovedOrderStatus(
     provider === "WBUY" &&
     WBUY_PAID_FULFILLMENT_TERMS.some((term) => normalized.includes(term))
   ) {
+    return true;
+  }
+
+  // Levane (Supabase wholesale): an order that exists is a confirmed sale. Its
+  // "novo" state is a placed/paid order (not an abandoned cart), so it counts;
+  // "concluido" already matches APPROVED_TERMS. Scoped to LEVANE so the generic
+  // "new != paid" rule keeps holding for every other provider.
+  if (provider === "LEVANE" && normalized.includes("novo")) {
     return true;
   }
 

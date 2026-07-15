@@ -500,13 +500,13 @@ export class NuvemshopClient {
           }),
         );
       } catch (error: unknown) {
-        // 404 past the last page (previous page was exactly full) → stop, not
-        // an error. A 404 on page 1 is a real failure and must surface.
-        if (
-          error instanceof NuvemshopApiError &&
-          error.status === 404 &&
-          page > 1
-        ) {
+        // Nuvemshop returns 404 ("Last page is N") for a list whenever there
+        // are no more results — INCLUDING page 1 when the catalog is empty.
+        // Same contract as the orders loop above: treat 404 as end-of-pages,
+        // not a failure. A broken store/token fails auth (/store) elsewhere, so
+        // a 404 here must never abort the whole sync (it was freezing stores
+        // whose product catalog 404s on page 1, e.g. Cotton Chic).
+        if (error instanceof NuvemshopApiError && error.status === 404) {
           break;
         }
         throw error;

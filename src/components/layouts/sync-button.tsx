@@ -26,12 +26,19 @@ export function SyncButton() {
     setState("syncing");
     try {
       const result = await manualSyncAction();
-      setState(result.ok ? "done" : "locked");
+      // "sync_failed" = the run executed but a connector errored — surface the
+      // real failure instead of pretending the sync is merely locked.
+      setState(
+        result.ok
+          ? "done"
+          : result.reason === "sync_failed"
+            ? "error"
+            : "locked",
+      );
       // Sync ran synchronously across every ACTIVE connector — pull fresh
       // server data into the dashboard so the new metrics show immediately.
-      if (result.ok) {
-        router.refresh();
-      }
+      // Refresh on failure too: partial results + the health banner must show.
+      router.refresh();
     } catch {
       setState("error");
     }

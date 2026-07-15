@@ -263,6 +263,7 @@ enum ConnectorProvider {
   GA4
   SEARCH_CONSOLE
   LOJA_INTEGRADA
+  LEVANE
 }
 
 enum ConnectorStatus {

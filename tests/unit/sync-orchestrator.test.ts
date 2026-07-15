@@ -155,7 +155,7 @@ describe("triggerWorkspaceSyncIfStale", () => {
     expect(runner).not.toHaveBeenCalled();
   });
 
-  it("passes correct threshold for cron (90min) vs login default (30min)", async () => {
+  it("passes an explicit thresholdMs through to the cooldown cutoff", async () => {
     prismaMocks.$queryRaw.mockResolvedValue([{ workspaceId: "ws-1" }]);
     const runner = vi.fn().mockResolvedValue(undefined);
 
@@ -174,26 +174,26 @@ describe("triggerWorkspaceSyncIfStale", () => {
 
     await triggerWorkspaceSyncIfStale({
       workspaceId: "ws-1",
-      triggeredBy: "cron",
-      thresholdMs: BACKGROUND_THRESHOLD_MS,
+      triggeredBy: "manual",
+      thresholdMs: 0,
       runner,
     });
-    const cronValues = (
+    const manualValues = (
       prismaMocks.$queryRaw.mock.calls[1][0] as unknown as { values: unknown[] }
     ).values;
-    const cronCutoff = cronValues[5] as Date;
+    const manualCutoff = manualValues[5] as Date;
 
-    // login cutoff is more recent (less ago) than cron cutoff
-    expect(loginCutoff.getTime()).toBeGreaterThan(cronCutoff.getTime());
-    const diff = loginCutoff.getTime() - cronCutoff.getTime();
-    // approx 60min difference
-    expect(diff).toBeGreaterThan(50 * 60 * 1000);
-    expect(diff).toBeLessThan(70 * 60 * 1000);
+    // thresholdMs=0 (manual) → cutoff ~now; default (30min) → 30min ago.
+    const diff = manualCutoff.getTime() - loginCutoff.getTime();
+    expect(diff).toBeGreaterThan(25 * 60 * 1000);
+    expect(diff).toBeLessThan(35 * 60 * 1000);
   });
 
   it("constants reflect business rules", () => {
     expect(COOLDOWN_MS).toBe(30 * 60 * 1000);
-    expect(BACKGROUND_THRESHOLD_MS).toBe(90 * 60 * 1000);
+    // 30min: the 15-min external scheduler is the background driver now — a
+    // workspace goes at most ~45min without sync.
+    expect(BACKGROUND_THRESHOLD_MS).toBe(30 * 60 * 1000);
     expect(LOCK_STALE_MS).toBe(5 * 60 * 1000);
   });
 });
@@ -211,6 +211,35 @@ describe("runWorkspaceSync", () => {
     expect(updateArgs.data.lastSyncStatus).toBe("SUCCESS");
     expect(updateArgs.data.lastSyncedAt).toBeInstanceOf(Date);
     expect(updateArgs.data.syncCount).toEqual({ increment: 1 });
+  });
+
+  it("backdates lastSyncedAt on FAILED so the scheduler retries in ~10min", async () => {
+    const { SYNC_HELPERS } = await import("@/lib/connectors/sync-helpers");
+    (SYNC_HELPERS as Record<string, unknown>).MAGAZORD = vi
+      .fn()
+      .mockRejectedValue(new Error("boom"));
+    prismaMocks.connectorAccount.findMany.mockResolvedValueOnce([
+      {
+        id: "conn-1",
+        provider: "MAGAZORD",
+        historicalSyncedAt: new Date(),
+        historicalBackfillUntil: new Date(),
+      },
+    ]);
+
+    try {
+      await runWorkspaceSync("ws-1");
+    } finally {
+      delete (SYNC_HELPERS as Record<string, unknown>).MAGAZORD;
+    }
+
+    const updateArgs = prismaMocks.workspaceSyncState.update.mock.calls[0][0];
+    expect(updateArgs.data.lastSyncStatus).toBe("FAILED");
+    expect(updateArgs.data.lastSyncError).toContain("boom");
+    // Backdated by threshold - retry delay (30min - 10min = 20min ago).
+    const ageMs = Date.now() - updateArgs.data.lastSyncedAt.getTime();
+    expect(ageMs).toBeGreaterThan(19 * 60 * 1000);
+    expect(ageMs).toBeLessThan(21 * 60 * 1000);
   });
 
   it("filters to ACTIVE connectors only and loads historicalSyncedAt", async () => {
@@ -231,7 +260,7 @@ describe("runWorkspaceSync", () => {
     });
   });
 
-  it("does not advance lastSyncedAt when a connector fails", async () => {
+  it("backdates lastSyncedAt instead of advancing it when a connector fails", async () => {
     syncHelpersMock.META_ADS = vi
       .fn()
       .mockRejectedValue(new Error("HTTP 503 from provider"));
@@ -248,7 +277,9 @@ describe("runWorkspaceSync", () => {
 
     const updateArgs = prismaMocks.workspaceSyncState.update.mock.calls[0][0];
     expect(updateArgs.data.lastSyncStatus).toBe("FAILED");
-    expect(updateArgs.data).not.toHaveProperty("lastSyncedAt");
+    const ageMs = Date.now() - updateArgs.data.lastSyncedAt.getTime();
+    expect(ageMs).toBeGreaterThan(19 * 60 * 1000);
+    expect(ageMs).toBeLessThan(21 * 60 * 1000);
     expect(updateArgs.data.lastSyncError).toContain("HTTP 503");
   });
 });

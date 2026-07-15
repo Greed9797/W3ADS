@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { ConnectorProvider } from "@prisma/client";
 
+import { ConnectorHealthBanner } from "@/components/connectors/connector-health-banner";
 import { DashboardAutoRefresh } from "@/components/dashboard/dashboard-auto-refresh";
 import { DashboardFilterBar } from "@/components/dashboards/dashboard-filter-bar";
 import { OperationalKpiCard } from "@/components/dashboards/operational-kpi-card";
@@ -82,6 +83,7 @@ export default async function DashboardPage({
   return (
     <div className="space-y-5">
       <DashboardAutoRefresh />
+      <ConnectorHealthBanner workspaceId={context.currentWorkspace.id} />
       <section>
         <DashboardFilterBar filters={filters} showProviderFilters={false} />
       </section>

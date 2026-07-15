@@ -24,6 +24,7 @@ describe("connector registry", () => {
         ConnectorProvider.TRAY,
         ConnectorProvider.WBUY,
         ConnectorProvider.LOJA_INTEGRADA,
+        ConnectorProvider.LEVANE,
       ].sort(),
     );
   });
@@ -45,6 +46,7 @@ describe("connector registry", () => {
       ConnectorProvider.MAGAZORD,
       ConnectorProvider.GOOGLE_SHEETS,
       ConnectorProvider.LOJA_INTEGRADA,
+      ConnectorProvider.LEVANE,
     ]);
   });
 });

@@ -244,7 +244,9 @@ describe("documented ecommerce API clients", () => {
     );
     // URLSearchParams encodes brackets — verify decoded form.
     expect(url1.searchParams.get("dataHora[gte]")).toBe("2026-05-01");
-    expect(url1.searchParams.get("dataHora[lt]")).toBe("2026-05-18");
+    // `lt` is exclusive in Magazord. An inclusive dashboard range ending on
+    // May 18 must therefore query up to (but not including) May 19.
+    expect(url1.searchParams.get("dataHora[lt]")).toBe("2026-05-19");
     expect(url1.searchParams.get("limit")).toBe("100");
     expect(url1.searchParams.get("page")).toBe("1");
     expect(init1.headers).toMatchObject({
@@ -258,6 +260,33 @@ describe("documented ecommerce API clients", () => {
     expect(orders).toHaveLength(112);
     expect(orders[0]).toMatchObject({ codigo: "PED-1" });
     expect(orders[111]).toMatchObject({ codigo: "PED-112" });
+  });
+
+  it("keeps a one-day Magazord range non-empty", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      Response.json({
+        status: "success",
+        data: { items: [] },
+      }),
+    );
+    const client = new ManualCommerceClient({
+      provider: ConnectorProvider.MAGAZORD,
+      credentials: {
+        baseUrl: "https://loja.example.com.br",
+        apiUser: "usuario",
+        apiPassword: "senha",
+      },
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+
+    await client.listOrders({
+      since: "2026-06-01T00:00:00.000Z",
+      until: "2026-06-01T23:59:59.999Z",
+    });
+
+    const [url] = fetchMock.mock.calls[0] as unknown as [URL, RequestInit];
+    expect(url.searchParams.get("dataHora[gte]")).toBe("2026-06-01");
+    expect(url.searchParams.get("dataHora[lt]")).toBe("2026-06-02");
   });
 
   it("reads Google Sheets daily WhatsApp sales from CSV", async () => {

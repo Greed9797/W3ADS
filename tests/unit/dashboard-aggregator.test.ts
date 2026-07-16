@@ -468,6 +468,51 @@ describe("dashboard aggregator", () => {
     ]);
   });
 
+  it("applies the parent provider when filtering Magazord order items", () => {
+    const period = getDashboardPeriod(
+      { period: "week" },
+      new Date("2026-05-16T12:00:00.000Z"),
+    );
+    const snapshot = buildDashboardSnapshot({
+      period,
+      orders: [],
+      metrics: [],
+      orderItems: [
+        {
+          productName: "Pedido em transporte",
+          platform: ConnectorProvider.MAGAZORD,
+          categoryName: "Aprovados",
+          quantity: 1,
+          total: "200.00",
+          status: "MAGAZORD_STATUS_7",
+          placedAt: new Date("2026-05-10T10:00:00.000Z"),
+        },
+        {
+          productName: "Pedido cancelado",
+          platform: ConnectorProvider.MAGAZORD,
+          categoryName: "Cancelados",
+          quantity: 1,
+          total: "999.00",
+          status: "MAGAZORD_STATUS_2",
+          placedAt: new Date("2026-05-10T10:00:00.000Z"),
+        },
+      ],
+    });
+
+    expect(snapshot.products).toEqual([
+      expect.objectContaining({
+        productName: "Pedido em transporte",
+        revenue: 200,
+      }),
+    ]);
+    expect(snapshot.categories).toEqual([
+      expect.objectContaining({
+        categoryName: "Aprovados",
+        revenue: 200,
+      }),
+    ]);
+  });
+
   it("resolves stock into number / unlimited / no-data states", () => {
     const period = getDashboardPeriod(
       { period: "week" },

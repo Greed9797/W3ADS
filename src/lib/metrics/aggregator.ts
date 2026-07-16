@@ -33,6 +33,7 @@ export type DashboardOrderRow = {
 
 export type DashboardOrderItemRow = {
   productName: string;
+  platform?: ConnectorProvider;
   sku?: string | null;
   categoryName?: string | null;
   quantity: number;
@@ -277,7 +278,9 @@ function orderCount(order: DashboardOrderRow) {
 }
 
 function approvedOrderCount(order: DashboardOrderRow) {
-  return isApprovedOrderStatus(order.status, order.platform) ? orderCount(order) : 0;
+  return isApprovedOrderStatus(order.status, order.platform)
+    ? orderCount(order)
+    : 0;
 }
 
 // isApprovedOrderStatus is imported from ./order-status and re-exported above.
@@ -499,7 +502,8 @@ export function buildDashboardSnapshot(input: {
       // without their own status — count them unless the status is explicitly a
       // non-approved (pending / cancelled / refunded) term. Orders themselves
       // keep the stricter "must be approved" rule (see revenue below).
-      (item.status == null || isApprovedOrderStatus(item.status)),
+      (item.status == null ||
+        isApprovedOrderStatus(item.status, item.platform)),
   );
   const currentOrders = filteredOrders.filter((order) =>
     isWithinBrt(order.placedAt, period.from, period.to),
@@ -524,13 +528,17 @@ export function buildDashboardSnapshot(input: {
   const revenue = currentOrders.reduce(
     (sum, order) =>
       sum +
-      (isApprovedOrderStatus(order.status, order.platform) ? asNumber(order.orderTotal) : 0),
+      (isApprovedOrderStatus(order.status, order.platform)
+        ? asNumber(order.orderTotal)
+        : 0),
     0,
   );
   const previousRevenue = previousOrders.reduce(
     (sum, order) =>
       sum +
-      (isApprovedOrderStatus(order.status, order.platform) ? asNumber(order.orderTotal) : 0),
+      (isApprovedOrderStatus(order.status, order.platform)
+        ? asNumber(order.orderTotal)
+        : 0),
     0,
   );
   const spend = currentMetrics.reduce(
@@ -1322,6 +1330,7 @@ async function findDashboardOrderItems(
         placedAt: true,
         ecommerceOrder: {
           select: {
+            platform: true,
             status: true,
           },
         },
@@ -1334,6 +1343,7 @@ async function findDashboardOrderItems(
       quantity: row.quantity,
       total: row.total,
       placedAt: row.placedAt,
+      platform: row.ecommerceOrder.platform,
       status: row.ecommerceOrder.status,
       categoryName: null,
     }));

@@ -33,6 +33,28 @@ function firstString(...values: unknown[]) {
   return null;
 }
 
+function magazordOrderStatus(payload: ManualCommerceOrderPayload) {
+  const raw = payload.pedidoSituacao;
+  const candidate =
+    raw && typeof raw === "object" && !Array.isArray(raw)
+      ? firstString(
+          (raw as Record<string, unknown>).id,
+          (raw as Record<string, unknown>).codigo,
+          (raw as Record<string, unknown>).code,
+          (raw as Record<string, unknown>).value,
+        )
+      : firstString(raw);
+  const code = Number(candidate);
+
+  // Magazord publishes stable numeric situation codes. Keep the raw code in a
+  // provider-scoped canonical value so revenue classification never depends on
+  // a translated description. Missing/malformed codes deliberately fail
+  // closed in isApprovedOrderStatus().
+  return Number.isInteger(code) && code > 0
+    ? `MAGAZORD_STATUS_${code}`
+    : "MAGAZORD_STATUS_UNKNOWN";
+}
+
 /**
  * Some providers nest the order total in an object (WBuy:
  * `valor_total: { total, subtotal, frete, ... }`). Pull a usable amount from
@@ -252,6 +274,7 @@ function normalizeItems(value: unknown) {
 
 export function normalizeManualCommerceOrder(
   payload: ManualCommerceOrderPayload,
+  provider?: ConnectorProvider,
 ): ShopifyOrder {
   const externalOrderId = firstString(
     payload.id,
@@ -283,7 +306,8 @@ export function normalizeManualCommerceOrder(
       payload.data_criacao,
       payload.date,
       payload.placed_at,
-    ) ?? "";
+    ) ??
+    "";
   // No parseable date → "" so the downstream parsePlacedAt guard SKIPS the
   // order instead of attributing it to now() (which inflated today's revenue).
 
@@ -335,22 +359,19 @@ export function normalizeManualCommerceOrder(
     itemsCount,
     items,
     status:
-      firstString(
-        // Magazord exposes the business status under
-        // `pedidoSituacaoDescricao` (for example "Aguardando Pagamento",
-        // "Cancelado", "Crédito e Cadastro Aprovados" or "Transporte"). If
-        // ignored, every order falls through to APPROVED and inflates revenue.
-        statusFromMaybeObject(payload.pedidoSituacaoDescricao),
-        // Loja Integrada situacao FK (code/URI) → PT term. Wins over the raw
-        // `payload.situacao` (which may be a non-matching URI string).
-        lojaIntegradaSituacaoLabel(payload.situacao),
-        lojaIntegradaSituacaoLabel(payload.situacao_id),
-        statusFromMaybeObject(payload.status),
-        statusFromMaybeObject(payload.situacao),
-        payload.payment_status,
-        payload.status_pagamento,
-        payload.aprovacao,
-      ) ?? "APPROVED",
+      provider === ConnectorProvider.MAGAZORD
+        ? magazordOrderStatus(payload)
+        : (firstString(
+            // Loja Integrada situacao FK (code/URI) → PT term. Wins over the raw
+            // `payload.situacao` (which may be a non-matching URI string).
+            lojaIntegradaSituacaoLabel(payload.situacao),
+            lojaIntegradaSituacaoLabel(payload.situacao_id),
+            statusFromMaybeObject(payload.status),
+            statusFromMaybeObject(payload.situacao),
+            payload.payment_status,
+            payload.status_pagamento,
+            payload.aprovacao,
+          ) ?? "APPROVED"),
     shippingState: firstString(
       payload.uf,
       payload.estado,

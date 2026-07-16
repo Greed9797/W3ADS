@@ -70,10 +70,18 @@ const WBUY_PAID_FULFILLMENT_TERMS: ReadonlyArray<string> = [
   // excludes ready-for-pickup until it's actually collected, so we mirror that.
 ];
 
-// Magazord order status 7 ("Transporte") is post-payment according to the
-// provider's official order-status lifecycle. Keep it provider-scoped: the same
-// word from another commerce platform does not prove payment.
+// Legacy rows created before canonical Magazord status codes were persisted can
+// still contain the description "Transporte". Keep that compatibility scoped
+// to Magazord; new rows use MAGAZORD_STATUS_<code> below.
 const MAGAZORD_PAID_FULFILLMENT_TERMS: ReadonlyArray<string> = ["transporte"];
+
+// Magazord's documented lifecycle codes whose labels unambiguously mean an
+// approved or post-payment order: approved (4/5), invoiced (6/23), in transit
+// or delivered (7/8), payment analysis approved (12), chargeback recovered
+// (29). Every other numeric code fails closed until deliberately classified.
+const MAGAZORD_APPROVED_STATUS_CODES: ReadonlySet<number> = new Set([
+  4, 5, 6, 7, 8, 12, 23, 29,
+]);
 
 const DIACRITICS_RE = /[̀-ͯ]/g;
 
@@ -95,6 +103,16 @@ export function isApprovedOrderStatus(
     .normalize("NFD")
     .replace(DIACRITICS_RE, "")
     .toLowerCase();
+
+  if (provider === "MAGAZORD") {
+    const canonical = /^magazord_status_(\d+)$/.exec(normalized);
+    if (canonical) {
+      return MAGAZORD_APPROVED_STATUS_CODES.has(Number(canonical[1]));
+    }
+    if (normalized === "magazord_status_unknown") {
+      return false;
+    }
+  }
 
   if (REJECTED_TERMS.some((term) => normalized.includes(term))) {
     return false;

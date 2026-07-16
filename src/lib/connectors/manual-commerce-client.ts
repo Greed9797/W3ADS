@@ -420,6 +420,16 @@ function parseSheetDateKey(value: string) {
   return null;
 }
 
+function nextUtcDateKey(value: string) {
+  const dateKey = value.slice(0, 10);
+  const date = new Date(`${dateKey}T00:00:00.000Z`);
+  if (Number.isNaN(date.getTime())) {
+    throw new Error(`Invalid commerce range date: ${value}`);
+  }
+  date.setUTCDate(date.getUTCDate() + 1);
+  return date.toISOString().slice(0, 10);
+}
+
 function inRange(dateKey: string, range?: { since: string; until: string }) {
   if (!range) {
     return true;
@@ -610,7 +620,7 @@ export class ManualCommerceClient {
       // in listOrders() which loops with the Magazord-specific URL builder.
       if (range) {
         url.searchParams.set("dataHora[gte]", range.since.slice(0, 10));
-        url.searchParams.set("dataHora[lt]", range.until.slice(0, 10));
+        url.searchParams.set("dataHora[lt]", nextUtcDateKey(range.until));
         url.searchParams.set("limit", "100");
         url.searchParams.set("page", "1");
       } else {
@@ -784,7 +794,7 @@ export class ManualCommerceClient {
       ),
     );
     url.searchParams.set("dataHora[gte]", input.range.since.slice(0, 10));
-    url.searchParams.set("dataHora[lt]", input.range.until.slice(0, 10));
+    url.searchParams.set("dataHora[lt]", nextUtcDateKey(input.range.until));
     url.searchParams.set("limit", String(input.pageSize));
     url.searchParams.set("page", String(input.page));
     return url;
@@ -932,9 +942,12 @@ export class ManualCommerceClient {
 
     for (let page = 0; page < MAX_PAGES; page += 1) {
       const response = await callWithRetry(() =>
-        this.fetchImpl(this.levaneOrdersUrl({ range, limit: pageSize, offset }), {
-          headers,
-        }),
+        this.fetchImpl(
+          this.levaneOrdersUrl({ range, limit: pageSize, offset }),
+          {
+            headers,
+          },
+        ),
       );
 
       if (!response.ok) {

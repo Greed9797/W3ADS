@@ -16,6 +16,14 @@ graphify-out
 .playwright-mcp
 .git.corrupt.bak
 .agents
+.fastcontext
+coverage
+playwright-report
+test-results
+output
+reports
+scripts/_qa-*
+*.tsbuildinfo
 
 # Untracked local scratch — keep out of production builds.
 # NOTE: anchor screenshot PNGs to the repo ROOT (leading slash). A bare

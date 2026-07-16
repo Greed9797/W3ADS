@@ -11,12 +11,12 @@ function magazordOrder(
 ) {
   return normalizeManualCommerceOrder(
     {
-    id: `pedido-${code ?? "missing"}`,
-    codigo: `PED-${code ?? "missing"}`,
-    dataHora: "2026-07-14 10:42:16-03",
-    valorTotal: total,
-    pedidoSituacao: code,
-    pedidoSituacaoDescricao: description,
+      id: `pedido-${code ?? "missing"}`,
+      codigo: `PED-${code ?? "missing"}`,
+      dataHora: "2026-07-14 10:42:16-03",
+      valorTotal: total,
+      pedidoSituacao: code,
+      pedidoSituacaoDescricao: description,
     },
     ConnectorProvider.MAGAZORD,
   );
@@ -80,21 +80,24 @@ describe("Magazord order status → approved revenue", () => {
   });
 
   it("does not let Magazord fields override another provider status", () => {
-    const order = normalizeManualCommerceOrder({
-      id: "other-provider-order",
-      created_at: "2026-07-14T10:42:16.000Z",
-      total: "100.00",
-      status: "pago",
-      pedidoSituacao: 2,
-      pedidoSituacaoDescricao: "Cancelado",
-    });
+    const order = normalizeManualCommerceOrder(
+      {
+        id: "other-provider-order",
+        created_at: "2026-07-14T10:42:16.000Z",
+        total: "100.00",
+        status: "pago",
+        pedidoSituacao: 2,
+        pedidoSituacaoDescricao: "Cancelado",
+      },
+      ConnectorProvider.SHOPIFY,
+    );
 
     expect(order.status).toBe("pago");
   });
 
   it("does not treat Transporte as paid outside Magazord", () => {
-    expect(
-      isApprovedOrderStatus("Transporte", ConnectorProvider.SHOPIFY),
-    ).toBe(false);
+    expect(isApprovedOrderStatus("Transporte", ConnectorProvider.SHOPIFY)).toBe(
+      false,
+    );
   });
 });

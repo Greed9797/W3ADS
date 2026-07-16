@@ -1,8 +1,5 @@
 import { createHash } from "node:crypto";
-import {
-  ConnectorProvider,
-  Prisma,
-} from "@prisma/client";
+import { ConnectorProvider, Prisma } from "@prisma/client";
 import Decimal from "decimal.js";
 
 import { isApprovedOrderStatus } from "@/lib/metrics/order-status";
@@ -757,7 +754,12 @@ async function loadOrdersForConnector(input: {
   });
   const payloads = await manualClient.listOrders(input.range);
 
-  return { orders: payloads.map(normalizeManualCommerceOrder), complete: true };
+  return {
+    orders: payloads.map((payload) =>
+      normalizeManualCommerceOrder(payload, input.provider),
+    ),
+    complete: true,
+  };
 }
 
 export async function syncEcommerceOrders(input: {
